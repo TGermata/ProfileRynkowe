@@ -1,0 +1,113 @@
+﻿namespace MarketProfile.Core;
+
+/// <summary>
+/// Silnik budujący profile z napływających danych (ticków na żywo i świec historycznych).
+/// Dla każdej transakcji ustala:
+///  1) do której sesji należy (dzienna/nocna) – i tworzy nowy profil, gdy zaczyna się nowa sesja,
+///  2) do którego okresu TPO należy (A, B, C...),
+/// a następnie przekazuje dane do odpowiedniego obiektu <see cref="SessionProfile"/>.
+/// Transakcje spoza zdefiniowanych sesji są pomijane.
+/// </summary>
+public sealed class ProfileBuilder
+{
+    private readonly object _sync = new();
+    private readonly Dictionary<(string Session, DateTime Start), SessionProfile> _byKey = new();
+    private readonly List<SessionProfile> _profiles = [];
+
+    public ProfileBuilder(ProfileSettings settings)
+    {
+        Settings = settings;
+    }
+
+    /// <summary>Ustawienia, według których budowane są profile.</summary>
+    public ProfileSettings Settings { get; }
+
+    /// <summary>Zdarzenie wywoływane, gdy powstaje nowy profil (zaczęła się nowa sesja).</summary>
+    public event EventHandler<SessionProfile>? ProfileCreated;
+
+    /// <summary>Kopia listy wszystkich profili posortowanych chronologicznie.</summary>
+    public IReadOnlyList<SessionProfile> Profiles
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return [.. _profiles];
+            }
+        }
+    }
+
+    /// <summary>Przetwarza pojedynczy tick (transakcję na żywo).</summary>
+    public void ProcessTick(Tick tick)
+    {
+        if (TryResolve(tick.Time, out var profile, out var periodIndex))
+        {
+            profile.AddPriceRange(periodIndex, tick.Price, tick.Price, tick.Price, tick.Volume);
+        }
+    }
+
+    /// <summary>
+    /// Przetwarza świecę historyczną. Świeca jest przypisywana do okresu TPO według czasu jej rozpoczęcia,
+    /// a jej zakres High–Low oznaczany jest literą okresu. (Świece 1-minutowe zawsze mieszczą się w jednym okresie.)
+    /// </summary>
+    public void ProcessBar(Bar bar)
+    {
+        if (TryResolve(bar.Time, out var profile, out var periodIndex))
+        {
+            profile.AddPriceRange(periodIndex, bar.Low, bar.High, bar.Close, bar.Volume, bar.Open);
+        }
+    }
+
+    /// <summary>
+    /// Znajduje (lub tworzy) profil dla danego czasu i wylicza numer okresu TPO.
+    /// </summary>
+    private bool TryResolve(DateTimeOffset time, out SessionProfile profile, out int periodIndex)
+    {
+        // Przeliczamy czas transakcji na strefę czasową giełdy (godziny sesji są podane w tej strefie).
+        var local = TimeZoneInfo.ConvertTime(time, Settings.TimeZone).DateTime;
+
+        foreach (var session in Settings.Sessions)
+        {
+            if (!session.TryGetSessionStart(local, out var sessionStart))
+            {
+                continue;
+            }
+
+            profile = GetOrCreate(session, sessionStart);
+            periodIndex = (int)((local - sessionStart).Ticks / Settings.TpoPeriod.Ticks);
+            return true;
+        }
+
+        profile = null!;
+        periodIndex = -1;
+        return false;
+    }
+
+    private SessionProfile GetOrCreate(SessionDefinition session, DateTime sessionStart)
+    {
+        SessionProfile? created = null;
+        SessionProfile profile;
+
+        lock (_sync)
+        {
+            if (!_byKey.TryGetValue((session.Name, sessionStart), out profile!))
+            {
+                profile = new SessionProfile(session, sessionStart, Settings);
+                _byKey[(session.Name, sessionStart)] = profile;
+
+                // Wstawiamy w kolejności chronologicznej (dane historyczne mogą przyjść po żywych).
+                var index = _profiles.FindIndex(p => p.SessionStart > sessionStart);
+                _profiles.Insert(index < 0 ? _profiles.Count : index, profile);
+                created = profile;
+            }
+        }
+
+        // Zdarzenie wywołujemy poza blokadą, żeby uniknąć zakleszczeń.
+        if (created is not null)
+        {
+            ProfileCreated?.Invoke(this, created);
+        }
+
+        return profile;
+    }
+}

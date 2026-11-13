@@ -1,0 +1,19 @@
+# Wyniki kompilacji
+bin/
+obj/
+TestResults/
+
+# Pliki Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+
+# Biblioteka Interactive Brokers (TWS API) – do pobrania osobno (patrz README)
+TWS API/
+
+# Lokalne bazy danych
+*.db
+*.db-shm
+*.db-wal

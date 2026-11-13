@@ -1,0 +1,77 @@
+<Window x:Class="MarketProfile.App.PriceLineWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Linia cenowa" SizeToContent="WidthAndHeight" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="4" />
+        </Style>
+    </Window.Resources>
+
+    <StackPanel Margin="14">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition />
+                <RowDefinition />
+                <RowDefinition />
+                <RowDefinition />
+                <RowDefinition />
+                <RowDefinition />
+            </Grid.RowDefinitions>
+
+            <!-- Opis wyświetlany przy linii – na samej górze okna, razem ze stroną wykresu. -->
+            <TextBlock Grid.Row="0" Text="Opis" />
+            <TextBox Grid.Row="0" Grid.Column="1" x:Name="LabelBox" Width="236" HorizontalAlignment="Left" Margin="4" />
+
+            <TextBlock Grid.Row="1" Text="Położenie opisu" />
+            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="4">
+                <RadioButton x:Name="LabelLeftBox" Content="Z lewej strony" Margin="0,0,12,0" />
+                <RadioButton x:Name="LabelRightBox" Content="Z prawej strony" />
+            </StackPanel>
+
+            <!-- Cena linii. -->
+            <TextBlock Grid.Row="2" Text="Cena" />
+            <TextBox Grid.Row="2" Grid.Column="1" x:Name="PriceBox" Width="100" HorizontalAlignment="Left" Margin="4" />
+
+            <!-- Kolor: gotowe kolory do kliknięcia + pole na własny kolor w formacie #RRGGBB. -->
+            <TextBlock Grid.Row="3" Text="Kolor" VerticalAlignment="Top" Margin="4,8,4,4" />
+            <StackPanel Grid.Row="3" Grid.Column="1" Margin="4">
+                <WrapPanel x:Name="PalettePanel" Width="236" />
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <TextBox x:Name="ColorBox" Width="80" TextChanged="OnColorTextChanged" />
+                    <Border x:Name="ColorPreview" Width="40" Height="20" Margin="8,0,0,0"
+                            BorderBrush="Gray" BorderThickness="1" />
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Grubość linii (1–10 px). -->
+            <TextBlock Grid.Row="4" Text="Grubość" />
+            <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Margin="4">
+                <Slider x:Name="ThicknessSlider" Width="160" Minimum="1" Maximum="10"
+                        IsSnapToTickEnabled="True" TickFrequency="1" TickPlacement="BottomRight" />
+                <TextBlock Text="{Binding Value, ElementName=ThicknessSlider, StringFormat={}{0} px}" Width="40" />
+            </StackPanel>
+
+            <!-- Styl linii. -->
+            <TextBlock Grid.Row="5" Text="Styl" />
+            <ComboBox Grid.Row="5" Grid.Column="1" x:Name="StyleBox" Width="140" HorizontalAlignment="Left" Margin="4" />
+        </Grid>
+
+        <!-- Blokada: zablokowanej linii nie da się przypadkowo przesunąć myszą. -->
+        <CheckBox x:Name="LockedBox" Content="🔒 Zablokuj linię (nie można jej przesunąć myszą)" Margin="4,8,4,4" />
+
+        <TextBlock x:Name="ErrorText" Foreground="Firebrick" TextWrapping="Wrap" MaxWidth="300" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Content="Zapisz" Width="80" IsDefault="True" Click="OnSaveClick" />
+            <Button Content="Anuluj" Width="80" Margin="6,0,0,0" IsCancel="True" />
+        </StackPanel>
+    </StackPanel>
+</Window>

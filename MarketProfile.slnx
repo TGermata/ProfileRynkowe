@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MarketProfile.App/MarketProfile.App.csproj" />
+    <Project Path="src/MarketProfile.Core/MarketProfile.Core.csproj" />
+    <Project Path="src/MarketProfile.DataFeed.IB/MarketProfile.DataFeed.IB.csproj" />
+    <Project Path="src/MarketProfile.DataFeed/MarketProfile.DataFeed.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MarketProfile.Core.Tests/MarketProfile.Core.Tests.csproj" />
+  </Folder>
+</Solution>

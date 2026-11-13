@@ -1,0 +1,144 @@
+﻿<Window x:Class="MarketProfile.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:MarketProfile.App.Controls"
+        Title="Market Profile – TPO" Height="800" Width="1300"
+        Background="#14171C" WindowStartupLocation="CenterScreen" WindowState="Maximized">
+
+    <Window.Resources>
+        <!-- Zamiana true/false na widoczny/ukryty (do pokazywania paska symulacji). -->
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+
+        <Style x:Key="BarText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#C8CDD4" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="SimButton" TargetType="Button">
+            <Setter Property="MinWidth" Value="34" />
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Margin" Value="3,0" />
+            <Setter Property="Padding" Value="6,0" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+    </Window.Resources>
+
+    <!-- Układ okna: paski narzędzi u góry, pasek statusu na dole, wykres w środku. -->
+    <DockPanel>
+
+        <!-- Pasek narzędzi: wybór instrumentu, tryb pracy, start/stop, ustawienia. -->
+        <Border DockPanel.Dock="Top" Background="#1E2229" Padding="8,6">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Instrument:" Style="{StaticResource BarText}" Margin="0,0,6,0" />
+                <ComboBox Width="230" MaxDropDownHeight="500"
+                          ItemsSource="{Binding Instruments}"
+                          SelectedItem="{Binding SelectedInstrument}" />
+
+                <!-- Tryb pracy: dane na żywo albo symulacja z lokalnej bazy. -->
+                <TextBlock Text="Tryb:" Style="{StaticResource BarText}" Margin="20,0,6,0" />
+                <RadioButton Content="Na żywo" IsChecked="{Binding IsLiveMode}" Foreground="#C8CDD4"
+                             VerticalAlignment="Center" Margin="0,0,10,0" />
+                <RadioButton Content="Symulacja" IsChecked="{Binding IsSimulationMode}" Foreground="#C8CDD4"
+                             VerticalAlignment="Center" />
+
+                <!-- Start/Stop tylko dla generatora (symulacją sterują przyciski paska symulacji, a dane od brokera
+                     łączą się same – przy brokerze przycisk pojawia się jako „⟳ Połącz” tylko, gdy połączenie nie działa). -->
+                <Button Content="{Binding StartStopText}" Command="{Binding StartStopCommand}"
+                        Width="80" Margin="12,0,0,0"
+                        Visibility="{Binding ShowStartStop, Converter={StaticResource BoolToVisibility}}" />
+                <Button Content="⚙ Ustawienia" Click="OnSettingsClick" Width="100" Margin="6,0,0,0" />
+
+                <!-- Szybkie pokazywanie/ukrywanie profili poszczególnych sesji. -->
+                <TextBlock Text="Sesje:" Foreground="#C8CDD4" VerticalAlignment="Center" Margin="20,0,6,0" />
+                <CheckBox Content="Nocna" IsChecked="{Binding ShowNightSession}" Foreground="#C8CDD4"
+                          VerticalAlignment="Center" Margin="0,0,10,0" />
+                <CheckBox Content="Dzienna" IsChecked="{Binding ShowDaySession}" Foreground="#C8CDD4"
+                          VerticalAlignment="Center" />
+
+                <!-- Ile ostatnich profili ma się mieścić na ekranie (dopasowanie szerokości + wczytanie historii). -->
+                <TextBlock Text="Profile na ekranie:" Style="{StaticResource BarText}" Margin="20,0,6,0" />
+                <ComboBox Width="55" ItemsSource="{Binding ProfileCountOptions}" SelectedItem="{Binding ProfilesOnScreen}"
+                          ToolTip="Ile ostatnich profili zmieścić na ekranie przy dopasowaniu (⤢ / 2× klik / klawisz 0)." />
+
+                <!-- Powiększanie widoku: oddal / przybliż / dopasuj do liczby profili. -->
+                <Button Content="−" Width="26" Margin="8,0,0,0" Click="OnZoomOutClick"
+                        ToolTip="Oddal – więcej profili na ekranie (kółko myszy w dół, klawisz −)" />
+                <Button Content="+" Width="26" Margin="3,0,0,0" Click="OnZoomInClick"
+                        ToolTip="Przybliż – zbliżenie na profil (kółko myszy w górę, klawisz +)" />
+                <Button Content="⤢ Dopasuj" Padding="6,0" Margin="3,0,0,0" Click="OnZoomFitClick"
+                        ToolTip="Dopasuj do wybranej liczby profili i wróć do najnowszych (2× klik na wykresie, klawisz 0)&#x0a;Kółko – powiększenie w obu osiach, Ctrl+kółko – tylko poziomo, Shift+kółko – tylko pionowo, przeciągnij – przesuń.&#x0a;Przesunięcie w lewo za najstarszy profil doczytuje starszą historię." />
+
+                <!-- Profil wolumenowy: brak / tylko bieżący profil / wszystkie profile. -->
+                <TextBlock Text="Wolumen:" Foreground="#C8CDD4" VerticalAlignment="Center" Margin="20,0,6,0" />
+                <ComboBox Width="170" ItemsSource="{Binding VolumeModes}"
+                          DisplayMemberPath="Value" SelectedValuePath="Key"
+                          SelectedValue="{Binding SelectedVolumeMode}" />
+
+                <TextBlock Text="{Binding SourceName}" Foreground="#808894" VerticalAlignment="Center" Margin="20,0,0,0" />
+            </StackPanel>
+        </Border>
+
+        <!-- Pasek symulacji (widoczny tylko w trybie symulacji):
+             start (data + godzina), ▶ Play, ⏸ Pauza, ⏭ Krok, ⏹ Reset, suwak prędkości, zegar symulacji. -->
+        <Border DockPanel.Dock="Top" Background="#262B33" Padding="8,5" BorderBrush="#3A4250" BorderThickness="0,1,0,0"
+                Visibility="{Binding IsSimulationMode, Converter={StaticResource BoolToVisibility}}">
+            <DockPanel>
+                <!-- Zakres danych w bazie – po prawej stronie paska. -->
+                <TextBlock DockPanel.Dock="Right" Text="{Binding SimDataRange}" Foreground="#808894"
+                           VerticalAlignment="Center" Margin="12,0,0,0" />
+
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Start od:" Style="{StaticResource BarText}" Margin="0,0,6,0" />
+                    <DatePicker SelectedDate="{Binding SimStartDate}" Width="120" VerticalAlignment="Center"
+                                ToolTip="Dzień, od którego zaczyna się symulacja" />
+                    <TextBox Text="{Binding SimStartTime, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="4,0,0,0"
+                             VerticalContentAlignment="Center" ToolTip="Godzina startu GG:MM (w strefie czasowej instrumentu)" />
+                    <TextBlock Text="{Binding TimeZoneLabel}" Foreground="#808894" VerticalAlignment="Center" Margin="4,0,12,0" />
+
+                    <Button Content="▶" ToolTip="Play – odtwarzaj (po zmianie startu wczytuje symulację od nowa)"
+                            Command="{Binding SimPlayCommand}" IsEnabled="{Binding CanSimPlay}" Style="{StaticResource SimButton}" />
+                    <Button Content="⏸" ToolTip="Pauza"
+                            Command="{Binding SimPauseCommand}" IsEnabled="{Binding IsSimPlaying}" Style="{StaticResource SimButton}" />
+                    <Button Content="⏭" ToolTip="Krok – przesuń czas o jeden okres TPO (działa także w pauzie)"
+                            Command="{Binding SimStepCommand}" Style="{StaticResource SimButton}" />
+                    <Button Content="⏹" ToolTip="Reset – zatrzymaj symulację; ▶ zacznie od ustawionego startu"
+                            Command="{Binding SimResetCommand}" Style="{StaticResource SimButton}" />
+
+                    <!-- Prędkość: suwak w skali logarytmicznej (×1 … ×3600), działa także w trakcie odtwarzania. -->
+                    <TextBlock Text="Prędkość:" Style="{StaticResource BarText}" Margin="16,0,6,0" />
+                    <Slider Width="180" Minimum="0" Maximum="100" Value="{Binding SimSpeedSlider}"
+                            VerticalAlignment="Center" SmallChange="1" LargeChange="10"
+                            ToolTip="Prędkość symulacji (×1 – ×3600)" />
+                    <TextBlock Text="{Binding SimSpeedText}" Style="{StaticResource BarText}" Width="140" Margin="8,0,0,0" />
+
+                    <!-- Zegar symulacji. -->
+                    <TextBlock Text="Czas:" Style="{StaticResource BarText}" Margin="10,0,6,0" />
+                    <TextBlock Text="{Binding SimClock}" Foreground="#30C070" FontFamily="Consolas" FontSize="14"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding TimeZoneLabel}" Foreground="#808894" VerticalAlignment="Center" Margin="4,0,0,0" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Pasek statusu: stan połączenia i podsumowanie bieżącego profilu. -->
+        <Border DockPanel.Dock="Bottom" Background="#1E2229" Padding="8,4">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding Status}" Foreground="#808894" />
+                <TextBlock Text="{Binding Summary}" Foreground="#C8CDD4" FontFamily="Consolas" />
+            </DockPanel>
+        </Border>
+
+        <!-- Wykres profili – kontrolka dostaje tylko migawki danych (oddzielenie prezentacji od modelu). -->
+        <!-- Akcje użytkownika (linie, rozbijanie profili) kontrolka zgłasza zdarzeniami obsługiwanymi w MainWindow.xaml.cs. -->
+        <controls:ProfileChartControl x:Name="Chart"
+                                      Profiles="{Binding Profiles}"
+                                      Lines="{Binding Lines}"
+                                      Appearance="{Binding Appearance}"
+                                      PeriodTimerText="{Binding PeriodTimerText}"
+                                      ProfilesToFit="{Binding ProfilesOnScreen}" />
+        <!--
+            Obsługa wykresu:
+            przeciągnij – przesuń | kółko – zoom pionowy | Ctrl+kółko – zoom poziomy | 2× klik – śledź cenę
+            prawy przycisk – menu: linie cenowe, rozbijanie i łączenie profili | przeciągnij linię – zmień jej cenę
+        -->
+    </DockPanel>
+</Window>

@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\MarketProfile.Core\MarketProfile.Core.csproj" />
+    <ProjectReference Include="..\MarketProfile.DataFeed\MarketProfile.DataFeed.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Zależność biblioteki TWS API. -->
+    <PackageReference Include="Google.Protobuf" Version="3.29.5" />
+  </ItemGroup>
+
+  <!--
+    Biblioteka klienta Interactive Brokers (TWS API) – używana tylko do kompilacji.
+    Private=false: biblioteka NIE jest kopiowana do folderu aplikacji. W czasie działania ładujemy ją
+    ze ścieżki wskazanej w ustawieniach (patrz IbApiLoader), dzięki czemu można wskazać inną instalację TWS API.
+  -->
+  <ItemGroup>
+    <Reference Include="CSharpAPI">
+      <HintPath>..\..\TWS API\CSharpClient\client\bin\Release\net8.0\CSharpAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
