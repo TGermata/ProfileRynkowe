@@ -38,6 +38,7 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     private long _pendingStepTicks;   // zlecone przesunięcie czasu (w tickach .NET), wykonywane przez pętlę
     private long _pendingSeekTicks;   // zlecony przeskok do momentu (UTC, w tickach .NET); 0 = brak
     private long _currentTimeTicks;   // bieżący czas symulacji (UTC, w tickach .NET)
+    private long _stopAtTicks;        // czas końca odtwarzania (UTC, w tickach .NET); 0 = bez ograniczeń
 
     /// <param name="store">Baza danych.</param>
     /// <param name="from">Początek odtwarzania.</param>
@@ -72,6 +73,20 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
         get => BitConverter.Int64BitsToDouble(Interlocked.Read(ref _speedBits));
         set => Interlocked.Exchange(ref _speedBits, BitConverter.DoubleToInt64Bits(Math.Max(0.1, value)));
     }
+
+    /// <summary>
+    /// Czas końca symulacji (null = bez ograniczeń). Gdy odtwarzanie dojdzie do tego momentu, zegar zatrzymuje się
+    /// dokładnie na nim i włącza się pauza (<see cref="StopReached"/>). Działa tylko na samoczynny upływ czasu –
+    /// ręczne kroki i przeskoki mogą wyjść poza koniec. Można go zmieniać w trakcie odtwarzania.
+    /// </summary>
+    public DateTimeOffset? StopAt
+    {
+        get => Interlocked.Read(ref _stopAtTicks) is var t and > 0 ? new DateTimeOffset(t, TimeSpan.Zero) : null;
+        set => Interlocked.Exchange(ref _stopAtTicks, value?.UtcTicks ?? 0);
+    }
+
+    /// <summary>Odtwarzanie doszło do <see cref="StopAt"/> i zostało wstrzymane (argument – czas końca).</summary>
+    public event EventHandler<DateTimeOffset>? StopReached;
 
     /// <summary>Czy odtwarzanie jest wstrzymane.</summary>
     public bool IsPaused => _paused;
@@ -192,7 +207,9 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
             var elapsed = clock.Elapsed;
             if (!_paused)
             {
+                var before = simNow;
                 simNow += (elapsed - lastElapsed) * Speed;
+                simNow = ClampToStop(before, simNow);
             }
 
             lastElapsed = elapsed;
@@ -220,8 +237,11 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
             // 3. Długa przerwa w danych (noc, weekend) – przeskakujemy ją od razu.
             if (!_paused && items.Current.Time - simNow > GapToSkip)
             {
-                simNow = items.Current.Time;
-                StatusChanged?.Invoke(this, $"Symulacja: przeskok przerwy do {Format(simNow)}");
+                simNow = ClampToStop(simNow, items.Current.Time); // czas końca w przerwie – zatrzymanie na nim
+                if (!_paused)
+                {
+                    StatusChanged?.Invoke(this, $"Symulacja: przeskok przerwy do {Format(simNow)}");
+                }
             }
 
             // 4. Wysyłamy wszystkie zdarzenia, których czas już minął.
@@ -260,6 +280,23 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
         TimeChanged?.Invoke(this, CurrentTime);
         StatusChanged?.Invoke(this, $"Symulacja zakończona – koniec danych ({Format(CurrentTime)})");
         Completed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Samoczynny upływ czasu z <paramref name="from"/> do <paramref name="to"/>: jeśli po drodze jest czas końca
+    /// (<see cref="StopAt"/>), zegar zatrzymuje się dokładnie na nim, włącza się pauza i wywoływane jest <see cref="StopReached"/>.
+    /// </summary>
+    private DateTimeOffset ClampToStop(DateTimeOffset from, DateTimeOffset to)
+    {
+        if (StopAt is not { } stop || from >= stop || to < stop)
+        {
+            return to;
+        }
+
+        _paused = true;
+        StatusChanged?.Invoke(this, $"Symulacja wstrzymana – osiągnięto czas końca {Format(stop)}");
+        StopReached?.Invoke(this, stop);
+        return stop;
     }
 
     public async Task DisconnectAsync()

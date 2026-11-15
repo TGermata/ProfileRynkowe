@@ -423,6 +423,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Prośba do widoku o dopasowanie wykresu (np. po zmianie instrumentu – inne ceny, inne profile).</summary>
     public event Action? FitRequested;
 
+    /// <summary>
+    /// Prośba do widoku o przypięcie najnowszego widocznego profilu w 0,3 szerokości ekranu (bez zmiany powiększenia) –
+    /// po cofnięciu czasu symulacji: profil, do którego się cofnęliśmy, jest na ekranie, a po prawej jest miejsce
+    /// na dalsze rysowanie.
+    /// </summary>
+    public event Action? PinLatestRequested;
+
     /// <summary>Dopasowanie do wykonania po wczytaniu danych (po starcie aplikacji i po zmianie instrumentu).</summary>
     private bool _fitPending = true;
 
@@ -470,7 +477,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Status = $"Błąd biblioteki TWS API: {ex.Message} – sprawdź ścieżkę w Ustawieniach → Interactive Brokers.";
+            Status = $"Błąd biblioteki TWS API: {ex.Message} – sprawdź ścieżkę w Ustawieniach → Dane i broker → Źródło i połączenie.";
             return;
         }
 
@@ -514,7 +521,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _backgroundError = $"biblioteka TWS API: {ex.Message} – sprawdź ścieżkę w Ustawieniach → Interactive Brokers";
+            _backgroundError = $"biblioteka TWS API: {ex.Message} – sprawdź ścieżkę w Ustawieniach → Dane i broker → Źródło i połączenie";
             RefreshTickDownloadText();
             return;
         }
@@ -624,7 +631,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    /// <summary>Czy pokazać pasek stanu pobierania ticków (można go ukryć w Ustawieniach → Dane).</summary>
+    /// <summary>Czy pokazać pasek stanu pobierania ticków (można go ukryć w Ustawieniach → Dane i broker → Pobieranie i baza).</summary>
     public bool HasTickDownloadText => _settings.ShowTickDownloadBar && TickDownloadText.Length > 0;
 
     /// <summary>Przelicza tekst stanu pobierania ticków (stan pobierania + komplet dni w bazie).</summary>
@@ -648,7 +655,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (_backgroundCts is null)
         {
             state = !_settings.RecordToDatabase
-                ? "⏸ Pobieranie ticków wyłączone – włącz „Zapisuj dane od brokera do bazy” w Ustawieniach → Dane"
+                ? "⏸ Pobieranie ticków wyłączone – włącz „Zapisuj dane od brokera do bazy” w Ustawieniach → Dane i broker → Pobieranie i baza"
                 : _settings.LiveSource != LiveSourceKind.InteractiveBrokers
                     ? "⏸ Pobieranie ticków nieaktywne – źródłem danych nie jest Interactive Brokers"
                     : _backgroundError is { } startError
@@ -733,6 +740,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 replay.TimeChanged += OnSimTimeChanged;
                 replay.BarReceived += OnBarReceived;
                 replay.DataKindChanged += OnReplayDataKindChanged;
+                replay.StopReached += OnSimStopReached;
             }
 
             await _feed.ConnectAsync(_settings.Instrument);
@@ -812,6 +820,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 replay.TimeChanged -= OnSimTimeChanged;
                 replay.BarReceived -= OnBarReceived;
                 replay.DataKindChanged -= OnReplayDataKindChanged;
+                replay.StopReached -= OnSimStopReached;
             }
 
             _feed = null;

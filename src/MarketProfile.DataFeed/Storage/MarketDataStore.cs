@@ -39,9 +39,8 @@ public sealed class MarketDataStore
     /// <summary>Ścieżka pliku bazy.</summary>
     public string FilePath { get; }
 
-    /// <summary>Domyślna lokalizacja bazy: %AppData%\MarketProfile\marketdata.db.</summary>
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MarketProfile", "marketdata.db");
+    /// <summary>Domyślna lokalizacja bazy: podfolder „data” w folderze aplikacji (obok pliku .exe).</summary>
+    public static string DefaultPath => Path.Combine(AppContext.BaseDirectory, "data", "marketdata.db");
 
     /// <summary>Tworzy tabele i indeksy, jeśli jeszcze nie istnieją.</summary>
     private void EnsureCreated()
@@ -273,6 +272,29 @@ public sealed class MarketDataStore
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT MIN(time) FROM bars WHERE symbol = $s AND time >= $from AND time < $to";
         AddRange(command, symbol, from, to);
+        var value = command.ExecuteScalar();
+        return value is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null;
+    }
+
+    /// <summary>
+    /// Czas ostatnich danych instrumentu ściśle przed <paramref name="before"/>: ostatni tick albo początek ostatniej
+    /// świecy 1-min (null, gdy wcześniej nie ma danych). Używane przy kroku symulacji wstecz, żeby przeskoczyć
+    /// przerwę w handlu (noc, weekend) do ostatniego okresu z transakcjami.
+    /// </summary>
+    /// <param name="source">Tylko dane z tego źródła (null = ze wszystkich).</param>
+    public DateTimeOffset? LastDataTimeBefore(string symbol, DateTimeOffset before, string? source = null)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT MAX(t) FROM (
+                SELECT MAX(time) AS t FROM ticks WHERE symbol = $s AND time < $before AND ($src IS NULL OR source = $src)
+                UNION ALL SELECT MAX(time) FROM bars WHERE symbol = $s AND time < $before AND ($src IS NULL OR source = $src)
+            )
+            """;
+        command.Parameters.AddWithValue("$s", symbol);
+        command.Parameters.AddWithValue("$before", before.ToUnixTimeMilliseconds());
+        command.Parameters.AddWithValue("$src", (object?)source ?? DBNull.Value);
         var value = command.ExecuteScalar();
         return value is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null;
     }

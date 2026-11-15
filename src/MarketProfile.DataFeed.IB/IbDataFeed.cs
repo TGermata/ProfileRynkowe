@@ -678,7 +678,7 @@ public sealed class IbDataFeed : IMarketDataFeed
 
             case >= FirstLiveRequestId when NoSubscriptionCodes.Contains(code):
                 Status($"IB: brak subskrypcji danych {_settings.DataTypeName} ({code}). " +
-                       "Zmień w Ustawieniach → Dane rodzaj danych na „Opóźnione”.");
+                       "Zmień w Ustawieniach → Dane i broker → Źródło i połączenie rodzaj danych na „Opóźnione”.");
                 return;
         }
 

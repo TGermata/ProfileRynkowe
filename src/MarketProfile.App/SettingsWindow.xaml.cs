@@ -6,7 +6,8 @@ using MarketProfile.DataFeed.Storage;
 namespace MarketProfile.App;
 
 /// <summary>
-/// Okno ustawień: sesje i TPO, źródło danych i symulator, profil wolumenowy, kolory.
+/// Okno ustawień w trzech grupach: Instrumenty; Profile (TPO, kolory, linie i znaczniki, profil wolumenowy, zegar);
+/// Dane i broker (źródło i połączenie, pobieranie i baza, generator i dane testowe).
 /// </summary>
 public partial class SettingsWindow : Window
 {

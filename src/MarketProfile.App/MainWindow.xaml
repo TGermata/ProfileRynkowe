@@ -20,6 +20,26 @@
             <Setter Property="Padding" Value="6,0" />
             <Setter Property="FontSize" Value="13" />
         </Style>
+        <!-- Skok o cały profil (sesję) – ciemniejszy, pogrubiony; odróżnia się od kroku o jeden słupek. -->
+        <Style x:Key="SimProfileButton" TargetType="Button" BasedOn="{StaticResource SimButton}">
+            <Setter Property="Background" Value="#3A4F6B" />
+            <Setter Property="Foreground" Value="#E8EEF6" />
+            <Setter Property="BorderBrush" Value="#5A7598" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="8,0" />
+        </Style>
+        <!-- Krok o jeden słupek (okres TPO) – jasny, pojedyncza strzałka (ikona Windows: szewron w lewo / w prawo). -->
+        <Style x:Key="SimBarButton" TargetType="Button" BasedOn="{StaticResource SimButton}">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Padding" Value="6,0" />
+        </Style>
+        <Style x:Key="SimSeparator" TargetType="Border">
+            <Setter Property="Width" Value="1" />
+            <Setter Property="Height" Value="20" />
+            <Setter Property="Margin" Value="5,0" />
+            <Setter Property="Background" Value="#4A5260" />
+        </Style>
     </Window.Resources>
 
     <!-- Układ okna: paski narzędzi u góry, pasek statusu na dole, wykres w środku. -->
@@ -84,37 +104,60 @@
         </Border>
 
         <!-- Pasek symulacji (widoczny tylko w trybie symulacji):
-             start (data + godzina), ⏮ Profil wstecz, ▶ Play, ⏸ Pauza, ⏭ Krok, ⏩ Profil w przód, ⏹ Reset, suwak prędkości, zegar symulacji. -->
+             czas (data + godzina), ⏮ Profil, ◄ słupek wstecz, ▶ Play, ⏸ Pauza, ► słupek w przód, Profil ⏭, ⏹ Reset, czas końca, suwak prędkości, zegar. -->
         <Border DockPanel.Dock="Top" Background="#262B33" Padding="8,5" BorderBrush="#3A4250" BorderThickness="0,1,0,0"
                 Visibility="{Binding IsSimulationMode, Converter={StaticResource BoolToVisibility}}">
-            <DockPanel>
-                <!-- Zakres danych w bazie – po prawej stronie paska. -->
-                <TextBlock DockPanel.Dock="Right" Text="{Binding SimDataRange}" Foreground="#808894"
-                           VerticalAlignment="Center" Margin="12,0,0,0" />
-
-                <StackPanel Orientation="Horizontal">
+            <!-- Grupy kontrolek zawijają się do drugiego wiersza, gdy okno jest za wąskie (nic nie jest ucinane). -->
+            <WrapPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
                     <TextBlock Text="Czas:" Style="{StaticResource BarText}" Margin="0,0,6,0" />
                     <DatePicker SelectedDate="{Binding SimStartDate}" Width="120" VerticalAlignment="Center"
                                 ToolTip="Dzień symulacji – zmiana przenosi symulację do tego dnia" />
                     <TextBox Text="{Binding SimStartTime, UpdateSourceTrigger=PropertyChanged}" Width="50" Margin="4,0,0,0"
                              VerticalContentAlignment="Center"
                              GotKeyboardFocus="OnSimTimeGotFocus" LostKeyboardFocus="OnSimTimeLostFocus" KeyDown="OnSimTimeKeyDown"
-                             ToolTip="Czas aktualnie rysowanego TPO (GG:MM, strefa instrumentu). Wpisz inną godzinę i naciśnij Enter: w przód – profile dorysują się płynnie, wstecz – płynnie znikną." />
+                             ToolTip="Czas aktualnie rysowanego TPO (GG:MM, strefa instrumentu). Wpisz inną godzinę i naciśnij Enter: w przód – profile dorysują się płynnie, wstecz – od razu znikną. Wykres zostaje dopasowany do ekranu." />
                     <TextBlock Text="{Binding TimeZoneLabel}" Foreground="#808894" VerticalAlignment="Center" Margin="4,0,12,0" />
 
-                    <Button Content="⏮" ToolTip="Profil wstecz – cofnij do początku bieżącego profilu (z jego początku – do poprzedniego)"
-                            Command="{Binding SimPrevProfileCommand}" Style="{StaticResource SimButton}" />
+                    <!-- Skoki: o cały profil (ciemne, pogrubione) i o jeden słupek TPO (jasne) – wstecz i w przód. -->
+                    <Button Content="⏮ Profil" ToolTip="Profil wstecz – cofnij do początku bieżącego profilu (z jego początku – do poprzedniego)"
+                            Command="{Binding SimPrevProfileCommand}" Style="{StaticResource SimProfileButton}" />
+                    <Button ToolTip="Słupek wstecz – cofnij czas o jeden okres TPO (działa także w pauzie; przerwy bez danych są pomijane)"
+                            Command="{Binding SimStepBackCommand}" Style="{StaticResource SimBarButton}">
+                        <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Border Style="{StaticResource SimSeparator}" />
                     <Button Content="▶" ToolTip="Play – odtwarzaj (po zmianie startu wczytuje symulację od nowa)"
                             Command="{Binding SimPlayCommand}" IsEnabled="{Binding CanSimPlay}" Style="{StaticResource SimButton}" />
                     <Button Content="⏸" ToolTip="Pauza"
                             Command="{Binding SimPauseCommand}" IsEnabled="{Binding IsSimPlaying}" Style="{StaticResource SimButton}" />
-                    <Button Content="⏭" ToolTip="Krok – przesuń czas o jeden okres TPO (działa także w pauzie)"
-                            Command="{Binding SimStepCommand}" Style="{StaticResource SimButton}" />
-                    <Button Content="⏩" ToolTip="Profil w przód – przeskocz do początku następnego profilu (działa także w pauzie)"
-                            Command="{Binding SimNextProfileCommand}" Style="{StaticResource SimButton}" />
-                    <Button Content="⏹" ToolTip="Reset – pauza i płynny powrót do momentu, od którego wczytano symulację"
+                    <Border Style="{StaticResource SimSeparator}" />
+                    <Button ToolTip="Słupek w przód – przesuń czas o jeden okres TPO (działa także w pauzie)"
+                            Command="{Binding SimStepCommand}" Style="{StaticResource SimBarButton}">
+                        <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" />
+                    </Button>
+                    <Button Content="Profil ⏭" ToolTip="Profil w przód – przeskocz do początku następnego profilu (działa także w pauzie)"
+                            Command="{Binding SimNextProfileCommand}" Style="{StaticResource SimProfileButton}" />
+                    <Border Style="{StaticResource SimSeparator}" />
+                    <Button Content="⏹" ToolTip="Reset – pauza i powrót do momentu, od którego wczytano symulację"
                             Command="{Binding SimResetCommand}" Style="{StaticResource SimButton}" />
 
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
+                    <!-- Opcjonalny czas końca: puste = bez ograniczeń; zatrzymuje tylko, gdy wpisano datę i godzinę. -->
+                    <TextBlock Text="Koniec:" Style="{StaticResource BarText}" Margin="14,0,6,0" />
+                    <DatePicker SelectedDate="{Binding SimEndDate}" Width="120" VerticalAlignment="Center"
+                                ToolTip="Dzień końca symulacji – puste = bez ograniczeń. Zatrzymanie działa tylko, gdy wpisano też godzinę." />
+                    <TextBox Text="{Binding SimEndTime}" Width="50" Margin="4,0,0,0" VerticalContentAlignment="Center"
+                             KeyDown="OnSimEndTimeKeyDown"
+                             ToolTip="Godzina końca (GG:MM, strefa instrumentu) – po dojściu do niej odtwarzanie się wstrzymuje. Puste = bez ograniczeń." />
+                    <Button Content="✕" Width="24" Margin="3,0,0,0" Command="{Binding SimClearEndCommand}"
+                            ToolTip="Usuń czas końca – odtwarzanie bez ograniczeń" />
+
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
                     <!-- Prędkość: suwak w skali logarytmicznej (×1 … ×3600), działa także w trakcie odtwarzania. -->
                     <TextBlock Text="Prędkość:" Style="{StaticResource BarText}" Margin="16,0,6,0" />
                     <Slider Width="180" Minimum="0" Maximum="100" Value="{Binding SimSpeedSlider}"
@@ -128,7 +171,10 @@
                                VerticalAlignment="Center" />
                     <TextBlock Text="{Binding TimeZoneLabel}" Foreground="#808894" VerticalAlignment="Center" Margin="4,0,0,0" />
                 </StackPanel>
-            </DockPanel>
+
+                <!-- Zakres danych w bazie. -->
+                <TextBlock Text="{Binding SimDataRange}" Foreground="#808894" VerticalAlignment="Center" Margin="12,2,0,2" />
+            </WrapPanel>
         </Border>
 
         <!-- Pasek statusu: stan połączenia i podsumowanie bieżącego profilu. -->
@@ -140,7 +186,7 @@
         </Border>
 
         <!-- Stan pobierania w tle (nad paskiem statusu): czy trwa, dla której doby ticków i ile procent; ile dób ma komplet
-             ticków. Można go ukryć w Ustawieniach → Dane. -->
+             ticków. Można go ukryć w Ustawieniach → Dane i broker → Pobieranie i baza. -->
         <Border DockPanel.Dock="Bottom" Background="#1B2A3A" Padding="10,4" BorderBrush="#2E4A66" BorderThickness="0,1,0,0"
                 Visibility="{Binding HasTickDownloadText, Converter={StaticResource BoolToVisibility}}">
             <TextBlock Text="{Binding TickDownloadText}" Foreground="#9CC9F0" TextTrimming="CharacterEllipsis"

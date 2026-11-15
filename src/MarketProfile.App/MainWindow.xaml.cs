@@ -32,7 +32,8 @@ public partial class MainWindow : Window
         Chart.OlderHistoryRequested += () => _ = _viewModel.LoadOlderHistoryAsync();
 
         // Po zmianie instrumentu (i po pierwszym wczytaniu danych) – dopasowanie wykresu do ekranu.
-        _viewModel.FitRequested += Chart.FitToScreen;
+        _viewModel.FitRequested += Chart.FitAndPinLatest; // „Dopasuj” po starcie, po zmianie instrumentu i po zmianie czasu symulacji
+        _viewModel.PinLatestRequested += () => Chart.PinLatest();
 
         // Dane od brokera (na żywo lub opóźnione) łączą się same po otwarciu okna – bez przycisku Start.
         // Parametr --autostart uruchamia od razu także generator.
@@ -67,6 +68,16 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Pole godziny końca symulacji: Enter zatwierdza wpisaną godzinę (tak jak wyjście z pola).</summary>
+    private void OnSimEndTimeKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter && sender is System.Windows.Controls.TextBox box)
+        {
+            e.Handled = true;
+            box.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty)?.UpdateSource();
+        }
+    }
+
     /// <summary>Otwiera okno ustawień; po zatwierdzeniu przekazuje nowe ustawienia do modelu widoku.</summary>
     private async void OnSettingsClick(object sender, RoutedEventArgs e)
     {
@@ -82,7 +93,7 @@ public partial class MainWindow : Window
 
     private void OnZoomInClick(object sender, RoutedEventArgs e) => Chart.ZoomIn();
 
-    private void OnZoomFitClick(object sender, RoutedEventArgs e) => Chart.FitToScreen();
+    private void OnZoomFitClick(object sender, RoutedEventArgs e) => Chart.FitAndPinLatest();
 
     /// <summary>Otwiera okno edycji linii; po zatwierdzeniu dodaje nową linię lub zapisuje zmiany.</summary>
     private void EditLine(PriceLine line, bool isNew)

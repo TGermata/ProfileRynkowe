@@ -9,13 +9,18 @@ namespace MarketProfile.App.ViewModels;
 
 /// <summary>
 /// Tryb symulacji (odtwarzanie danych z lokalnej bazy) – sterowanie z paska w oknie głównym:
-///  - pole czasu (data + godzina) – pokazuje czas aktualnie rysowanego TPO; wpisanie innego czasu płynnie
-///    dorysowuje (w przód) albo wymazuje (wstecz) części profili,
+///  - pole czasu (data + godzina) – pokazuje czas aktualnie rysowanego TPO; wpisanie innego czasu dorysowuje
+///    płynnie (w przód) części profili albo od razu chowa (wstecz) profile po tym momencie; nowa data/godzina = „Dopasuj”
+///    i bieżący profil od 0,3 szerokości ekranu,
 ///  - ▶ Play / ⏸ Pauza,
-///  - ⏭ Krok – przesunięcie czasu o jeden okres TPO (działa także w pauzie),
-///  - ⏮ / ⏩ Profil wstecz / w przód – przeskok do początku bieżącego (poprzedniego) / następnego profilu,
-///  - ⏹ Reset – pauza i płynny powrót do momentu, od którego wczytano symulację,
-///  - suwak prędkości – zmiana tempa w trakcie odtwarzania, bez restartu.
+///  - ◄ / ► – słupek wstecz / w przód – przesunięcie czasu o jeden okres TPO wstecz / w przód (działa także w pauzie),
+///  - ⏮ Profil / Profil ⏭ – przeskok do początku bieżącego (poprzedniego) / następnego profilu,
+///  - ⏹ Reset – pauza i powrót do momentu, od którego wczytano symulację,
+///  - suwak prędkości – zmiana tempa w trakcie odtwarzania, bez restartu,
+///  - czas końca (opcjonalny) – po dojściu do niego odtwarzanie się wstrzymuje; puste = bez ograniczeń.
+///
+/// Przejście do trybu „Na żywo” wstrzymuje symulację i zapamiętuje dokładny moment – po powrocie wykres
+/// pokazuje stan z tej chwili (w pauzie), a ▶ rysuje dalej od tego miejsca.
 ///
 /// Wykres pokazuje dokładnie to, co "wydarzyło się" do bieżącego czasu symulacji: historię sprzed startu
 /// oraz profile budowane na bieżąco z odtwarzanych ticków – prawdziwych transakcji z giełdy, przesuniętych w czasie.
@@ -47,8 +52,21 @@ public sealed partial class MainViewModel
 
     /// <summary>Najwięcej klatek płynnego przewijania (dłuższe odcinki – kilka okresów TPO na klatkę).</summary>
     private const int SimAnimationMaxFrames = 40;
-    private ICommand? _simPlayCommand, _simPauseCommand, _simStepCommand, _simResetCommand;
-    private ICommand? _simPrevProfileCommand, _simNextProfileCommand;
+    private ICommand? _simPlayCommand, _simPauseCommand, _simStepCommand, _simStepBackCommand, _simResetCommand;
+    private ICommand? _simPrevProfileCommand, _simNextProfileCommand, _simClearEndCommand;
+
+    private DateTime? _simEndDate;             // dzień końca symulacji (null = bez ograniczeń)
+    private string _simEndTime = string.Empty; // godzina końca "GG:MM" (pusta = bez ograniczeń)
+    private bool _loadingSimEnd;               // pola końca ustawia program (wczytanie ustawień) – bez zapisu
+
+    /// <summary>
+    /// Miejsce, w którym symulację przerwano przejściem do trybu „Na żywo”.
+    /// <paramref name="Loaded"/> – czy symulacja była wczytana (false = tylko podgląd na wybraną chwilę);
+    /// <paramref name="Origin"/> – moment, od którego ją wczytano (powrót przez ⏹).
+    /// </summary>
+    private sealed record SimResumePoint(string Symbol, DateTimeOffset At, bool Loaded, DateTimeOffset? Origin);
+
+    private SimResumePoint? _simResume;
 
     /// <summary>Bieżąca symulacja (jeśli wczytana).</summary>
     private DatabaseReplayFeed? SimFeed => _feed as DatabaseReplayFeed;
@@ -93,6 +111,11 @@ public sealed partial class MainViewModel
     /// </summary>
     private async Task SwitchModeAsync(bool simulation)
     {
+        if (!simulation)
+        {
+            RememberSimPoint(); // przed zatrzymaniem – potem symulacji już nie ma
+        }
+
         await StopAsync(simulation
             ? "Tryb symulacji – ustaw datę i godzinę, potem ▶"
             : "Tryb na żywo – naciśnij Start");
@@ -105,7 +128,11 @@ public sealed partial class MainViewModel
         {
             InitializeSimulation();
             StartBackgroundDownload(); // ticki pobierają się także w trakcie symulacji (jeśli pobieranie jeszcze nie działa)
-            await ShowSimPreviewAsync(null);
+            if (!await ResumeSimAsync())
+            {
+                await ShowSimPreviewAsync(null);
+            }
+
             return;
         }
 
@@ -119,7 +146,81 @@ public sealed partial class MainViewModel
         await AutoStartBrokerAsync(); // dane od brokera – bez naciskania Start
     }
 
-    /// <summary>Wczytuje ostatnio używany start i prędkość oraz informację o danych w bazie.</summary>
+    /// <summary>
+    /// Przejście do trybu „Na żywo”: wstrzymuje symulację i zapamiętuje dokładny moment (także w ustawieniach,
+    /// żeby przetrwał ponowne uruchomienie). Podgląd zapamiętujemy tylko, gdy wybrano konkretną chwilę.
+    /// </summary>
+    private void RememberSimPoint()
+    {
+        var symbol = _settings.InstrumentSymbol;
+        SimResumePoint? point = null;
+
+        if (SimFeed is { } feed)
+        {
+            feed.Pause();
+            point = new SimResumePoint(symbol, feed.CurrentTime, Loaded: true, _loadedSimStart);
+        }
+        else if (_viewCutoff is { } cutoff)
+        {
+            point = new SimResumePoint(symbol, cutoff, Loaded: false, Origin: null);
+        }
+
+        IsSimPlaying = false;
+        if (point is null)
+        {
+            return;
+        }
+
+        _simResume = point;
+        SaveSimSettings();
+        if (point.Loaded)
+        {
+            _settings = _settings with
+            {
+                SimResumeAt = point.At.ToString("o", CultureInfo.InvariantCulture),
+                SimResumeSymbol = symbol,
+            };
+            MarketProfile.App.Settings.SettingsStore.Save(_settings);
+        }
+    }
+
+    /// <summary>
+    /// Powrót do symulacji: jeśli zapamiętano miejsce przerwania (dla tego instrumentu i w zakresie danych) –
+    /// wczytuje symulację dokładnie od niego, w pauzie (rysowanie rusza po ▶). False = nie ma do czego wracać.
+    /// </summary>
+    private async Task<bool> ResumeSimAsync()
+    {
+        var symbol = _settings.InstrumentSymbol;
+        var point = _simResume;
+        if (point is null && _settings.SimResumeSymbol == symbol && _settings.ParseSimResumeAt() is { } saved)
+        {
+            point = new SimResumePoint(symbol, saved, Loaded: true, Origin: null); // po ponownym uruchomieniu aplikacji
+        }
+
+        if (point is null || point.Symbol != symbol ||
+            SimDataRangeOf(symbol) is not { } range || point.At < range.From || point.At >= range.To)
+        {
+            return false;
+        }
+
+        if (!point.Loaded)
+        {
+            await ShowSimPreviewAsync(point.At);
+            return true;
+        }
+
+        if (!await LoadSimulationAsync(point.At, paused: true))
+        {
+            return false;
+        }
+
+        _loadedSimStart = point.Origin ?? point.At;
+        IsSimPlaying = false;
+        Status = "Symulacja wstrzymana w miejscu przerwania – ▶ rysuje dalej od tego momentu";
+        return true;
+    }
+
+    /// <summary>Wczytuje ostatnio używany start, prędkość i czas końca oraz informację o danych w bazie.</summary>
     private void InitializeSimulation()
     {
         SimSpeedSlider = SpeedToSlider(_settings.SimSpeed);
@@ -129,6 +230,7 @@ public sealed partial class MainViewModel
             SetSimStart(saved);
         }
 
+        LoadSimEnd();
         RefreshSimDataRange();
     }
 
@@ -238,6 +340,115 @@ public sealed partial class MainViewModel
         private set => SetProperty(ref _simDataRange, value);
     }
 
+    // =====================================================================
+    // Czas końca symulacji (opcjonalny)
+    // =====================================================================
+
+    /// <summary>Dzień końca symulacji (null = bez ograniczeń).</summary>
+    public DateTime? SimEndDate
+    {
+        get => _simEndDate;
+        set
+        {
+            if (SetProperty(ref _simEndDate, value))
+            {
+                ApplySimEnd();
+            }
+        }
+    }
+
+    /// <summary>Godzina końca symulacji "GG:MM" w strefie instrumentu (pusta = bez ograniczeń).</summary>
+    public string SimEndTime
+    {
+        get => _simEndTime;
+        set
+        {
+            if (SetProperty(ref _simEndTime, value ?? string.Empty))
+            {
+                ApplySimEnd();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Czas końca symulacji – tylko gdy wpisano i dzień, i poprawną godzinę; w przeciwnym razie null
+    /// (odtwarzanie bez ograniczeń).
+    /// </summary>
+    private DateTimeOffset? SimEnd =>
+        SimEndDate is { } date && !string.IsNullOrWhiteSpace(SimEndTime) &&
+        TimeOnly.TryParseExact(SimEndTime.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out _) &&
+        _settings.TryParseExchangeTime($"{date:yyyy-MM-dd} {SimEndTime.Trim()}", out var end)
+            ? end
+            : null;
+
+    /// <summary>Zmiana czasu końca: działa od razu (także w trakcie odtwarzania) i jest zapamiętywana w ustawieniach.</summary>
+    private void ApplySimEnd()
+    {
+        if (_loadingSimEnd)
+        {
+            return;
+        }
+
+        var end = SimEnd;
+        if (SimEndDate is not null && !string.IsNullOrWhiteSpace(SimEndTime) && end is null)
+        {
+            Status = "Czas końca symulacji: godzinę podaj w formacie GG:MM – do tego czasu odtwarzanie jest bez ograniczeń.";
+        }
+
+        if (SimFeed is { } feed)
+        {
+            feed.StopAt = end;
+        }
+
+        var text = SimEndDate is { } date ? $"{date:yyyy-MM-dd} {SimEndTime.Trim()}".Trim() : string.Empty;
+        if (text != _settings.SimEnd)
+        {
+            _settings = _settings with { SimEnd = text };
+            MarketProfile.App.Settings.SettingsStore.Save(_settings);
+        }
+    }
+
+    /// <summary>Wczytuje zapisany czas końca do pól (bez ponownego zapisu).</summary>
+    private void LoadSimEnd()
+    {
+        var parts = _settings.SimEnd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        _loadingSimEnd = true;
+        try
+        {
+            SimEndDate = parts.Length > 0 && DateTime.TryParseExact(parts[0], "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var date) ? date : null;
+            SimEndTime = parts.Length > 1 ? parts[1] : string.Empty;
+        }
+        finally
+        {
+            _loadingSimEnd = false;
+        }
+    }
+
+    /// <summary>✕ – usuwa czas końca (odtwarzanie bez ograniczeń).</summary>
+    private Task ClearSimEndAsync()
+    {
+        _loadingSimEnd = true;
+        try
+        {
+            SimEndDate = null;
+            SimEndTime = string.Empty;
+        }
+        finally
+        {
+            _loadingSimEnd = false;
+        }
+
+        ApplySimEnd();
+        Status = "Czas końca usunięty – symulacja odtwarza bez ograniczeń";
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Komunikat o osiągnięciu czasu końca.</summary>
+    private string SimEndReachedMessage(DateTimeOffset end) =>
+        $"Osiągnięto czas końca symulacji ({TimeZoneInfo.ConvertTime(end, _settings.ExchangeTimeZone):yyyy-MM-dd HH:mm}) – " +
+        "zmień lub usuń czas końca (✕), aby odtwarzać dalej";
+
     /// <summary>Czy symulacja jest odtwarzana (nie wstrzymana).</summary>
     public bool IsSimPlaying
     {
@@ -261,6 +472,8 @@ public sealed partial class MainViewModel
     public ICommand SimPlayCommand => _simPlayCommand ??= new AsyncRelayCommand(PlayAsync);
     public ICommand SimPauseCommand => _simPauseCommand ??= new AsyncRelayCommand(PauseAsync);
     public ICommand SimStepCommand => _simStepCommand ??= new AsyncRelayCommand(StepAsync);
+    public ICommand SimStepBackCommand => _simStepBackCommand ??= new AsyncRelayCommand(StepBackAsync);
+    public ICommand SimClearEndCommand => _simClearEndCommand ??= new AsyncRelayCommand(ClearSimEndAsync);
     public ICommand SimResetCommand => _simResetCommand ??= new AsyncRelayCommand(ResetAsync);
     public ICommand SimPrevProfileCommand => _simPrevProfileCommand ??= new AsyncRelayCommand(PrevProfileAsync);
     public ICommand SimNextProfileCommand => _simNextProfileCommand ??= new AsyncRelayCommand(NextProfileAsync);
@@ -273,6 +486,14 @@ public sealed partial class MainViewModel
     {
         if (_simNavigating)
         {
+            return;
+        }
+
+        // Czas końca już osiągnięty – odtwarzanie dalej wymaga zmiany albo usunięcia czasu końca.
+        var at = SimFeed?.CurrentTime ?? (TryGetSimStart(out var start) ? start : (DateTimeOffset?)null);
+        if (SimEnd is { } end && at >= end)
+        {
+            Status = SimEndReachedMessage(end);
             return;
         }
 
@@ -338,7 +559,50 @@ public sealed partial class MainViewModel
         SimFeed?.Step(TimeSpan.FromMinutes(_settings.TpoMinutes));
     }
 
-    /// <summary>⏹ Reset – pauza i płynny powrót do momentu, od którego wczytano symulację.</summary>
+    /// <summary>
+    /// ◄ (słupek wstecz) – cofa czas symulacji o jeden okres TPO (profile po tym momencie od razu znikają, stan Play/Pauza zostaje zachowany).
+    /// Jeśli w tym okresie nie ma danych (noc, weekend), cofa się do ostatniego okresu z danymi –
+    /// tak jak krok w przód przeskakuje przerwy, żeby krok nie był „pusty”.
+    /// </summary>
+    private async Task StepBackAsync()
+    {
+        if (_simNavigating || !await EnsureSimLoadedAsync(paused: true))
+        {
+            return;
+        }
+
+        var symbol = _settings.InstrumentSymbol;
+        if (SimFeed is not { } feed || SimDataRangeOf(symbol) is not { } range)
+        {
+            return;
+        }
+
+        var now = feed.CurrentTime;
+        var period = TimeSpan.FromMinutes(_settings.TpoMinutes);
+        var target = now - period;
+
+        var store = GetStore();
+        var source = store.SimulationSource(symbol);
+        if (!store.HasData(symbol, target, now, source) && store.LastDataTimeBefore(symbol, now, source) is { } last)
+        {
+            target = last + TimeSpan.FromMinutes(1) - period; // ostatni okres z transakcjami przed przerwą
+        }
+
+        if (target < range.From)
+        {
+            target = range.From;
+        }
+
+        if (target >= now)
+        {
+            Status = "To początek danych w bazie – nie można cofnąć dalej";
+            return;
+        }
+
+        await MoveSimTimeAsync(target);
+    }
+
+    /// <summary>⏹ Reset – pauza i powrót do momentu, od którego wczytano symulację.</summary>
     private async Task ResetAsync()
     {
         if (SimFeed is not { } feed || _loadedSimStart is not { } origin)
@@ -376,7 +640,10 @@ public sealed partial class MainViewModel
 
         // Bieżący profil (sesja, w której jest start) – w całości z ticków z bazy; wcześniejsze profile – ze świec 1-min.
         var ticksFrom = SessionBoundaries.CurrentSessionStart(_settings.ToProfileSettings(), start);
-        var feed = new DatabaseReplayFeed(GetStore(), start, range.To.AddMinutes(1), SimSpeed, _settings.ExchangeTimeZone, ticksFrom);
+        var feed = new DatabaseReplayFeed(GetStore(), start, range.To.AddMinutes(1), SimSpeed, _settings.ExchangeTimeZone, ticksFrom)
+        {
+            StopAt = SimEnd, // opcjonalny czas końca – po dojściu do niego pauza
+        };
         if (paused)
         {
             feed.Pause();
@@ -432,6 +699,9 @@ public sealed partial class MainViewModel
             return;
         }
 
+        // Nowa data/godzina startu – „Dopasuj”, żeby profile z tego momentu były od razu widoczne.
+        FitRequested?.Invoke();
+
         if (SimFeed is { } feed)
         {
             // Pole pokazuje pełne minuty – ta sama minuta co bieżący czas = brak zmiany.
@@ -446,6 +716,9 @@ public sealed partial class MainViewModel
         {
             await MovePreviewAsync(target);
         }
+
+        // Profil z tego momentu (w przód i wstecz) od 0,3 szerokości ekranu, po prawej miejsce na dalsze rysowanie.
+        PinLatestRequested?.Invoke();
     }
 
     // =====================================================================
@@ -522,7 +795,7 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>
-    /// Zmiana czasu przed uruchomieniem symulacji: profile po tym momencie płynnie znikają (wstecz) albo wracają (w przód),
+    /// Zmiana czasu przed uruchomieniem symulacji: profile po tym momencie od razu znikają (wstecz) albo wracają (w przód),
     /// okres po okresie. Moment spoza wczytanego podglądu – nowy podgląd kończący się w tym momencie.
     /// </summary>
     private async Task MovePreviewAsync(DateTimeOffset target)
@@ -546,11 +819,21 @@ public sealed partial class MainViewModel
         try
         {
             var current = _viewCutoff ?? _previewEnd!.Value;
-            foreach (var step in TimeSteps.Between(current, target, TimeSpan.FromMinutes(_settings.TpoMinutes), SimAnimationMaxFrames))
+            if (target < current)
             {
-                SetViewCutoff(step >= _previewEnd ? null : step);
-                ShowSimTime(step);
-                await Task.Delay(SimAnimationFrame);
+                // Wstecz bez animacji – profile po tym momencie od razu znikają.
+                SetViewCutoff(target);
+                ShowSimTime(target);
+                PinLatestRequested?.Invoke();
+            }
+            else
+            {
+                foreach (var step in TimeSteps.Between(current, target, TimeSpan.FromMinutes(_settings.TpoMinutes), SimAnimationMaxFrames))
+                {
+                    SetViewCutoff(step >= _previewEnd ? null : step);
+                    ShowSimTime(step);
+                    await Task.Delay(SimAnimationFrame);
+                }
             }
 
             Status = "Podgląd na wybraną chwilę – ▶ uruchamia odtwarzanie (bieżący profil z ticków z bazy)";
@@ -564,7 +847,7 @@ public sealed partial class MainViewModel
     /// <summary>
     /// Płynne przejście symulacji do podanego momentu; stan Play/Pauza zostaje zachowany.
     ///  - w przód: odtwarzanie przeskakuje okres po okresie TPO – części profili dorysowują się po kolei,
-    ///  - wstecz: części profili znikają okres po okresie (odcięcie widoku), a potem symulacja jest wczytywana
+    ///  - wstecz: profile po tym momencie od razu znikają (odcięcie widoku, bez animacji), a potem symulacja jest wczytywana
     ///    od nowa od tego momentu – bez czyszczenia wykresu, więc nic nie miga.
     /// </summary>
     private async Task MoveSimTimeAsync(DateTimeOffset target)
@@ -619,12 +902,11 @@ public sealed partial class MainViewModel
             }
             else if (target < now)
             {
-                foreach (var step in steps)
-                {
-                    SetViewCutoff(step);
-                    ShowSimTime(step);
-                    await Task.Delay(SimAnimationFrame);
-                }
+                // Wstecz bez animacji: profile po tym momencie od razu znikają, a widok wraca do profilu,
+                // do którego się cofnęliśmy (najnowszy widoczny – przy prawej krawędzi).
+                SetViewCutoff(target);
+                ShowSimTime(target);
+                PinLatestRequested?.Invoke();
 
                 // Dokładny stan w tym momencie (z tickami do tej chwili) – nowe wczytanie bez czyszczenia wykresu.
                 var loaded = await LoadSimulationAsync(target, paused: !wasPlaying, keepView: true, keepOrigin: true);
@@ -677,7 +959,7 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>
-    /// ⏮ Profil wstecz – płynny powrót do początku bieżącego profilu, a jeśli jesteśmy już na jego początku –
+    /// ⏮ Profil wstecz – powrót do początku bieżącego profilu, a jeśli jesteśmy już na jego początku –
     /// do początku poprzedniego. Stan Play/Pauza zostaje zachowany.
     /// </summary>
     private async Task PrevProfileAsync()
@@ -778,7 +1060,7 @@ public sealed partial class MainViewModel
                       "z generatora, NIE prawdziwy rynek. Uruchom TWS – prawdziwe dane pobiorą się w tle do bazy (także w trakcie " +
                       "symulacji) i będą używane zamiast testowych."
                     : "⚠  DANE TESTOWE – brak dostępu do danych brokera: źródłem jest generator losowych cen, NIE prawdziwy rynek. " +
-                      "Wybierz Interactive Brokers w Ustawieniach → Źródło danych.");
+                      "Wybierz Interactive Brokers w Ustawieniach → Dane i broker → Źródło i połączenie.");
             }
 
             if (IsSimulationMode && _replayingBarsOnly && !IsUsingTestData)
@@ -811,7 +1093,7 @@ public sealed partial class MainViewModel
         if (!_settings.RecordToDatabase)
         {
             return $"Brak danych {symbol} w bazie: zapisywanie danych od brokera jest WYŁĄCZONE – włącz „Zapisuj dane od brokera do bazy” " +
-                   "w Ustawieniach → Dane (pobieranie ruszy w tle, gdy działa TWS).";
+                   "w Ustawieniach → Dane i broker → Pobieranie i baza (pobieranie ruszy w tle, gdy działa TWS).";
         }
 
         return _settings.Instrument.DownloadData
@@ -889,6 +1171,22 @@ public sealed partial class MainViewModel
             var message = Status; // komunikat "Symulacja zakończona..." od źródła danych
             await StopAsync(message);
             _loadedSimStart = null;
+        });
+
+    /// <summary>Odtwarzanie doszło do czasu końca – feed sam się wstrzymał; pokazujemy stan z tej chwili.</summary>
+    private void OnSimStopReached(object? sender, DateTimeOffset end) =>
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            if (!ReferenceEquals(sender, _feed))
+            {
+                return;
+            }
+
+            IsSimPlaying = false;
+            RefreshSnapshots();
+            ShowSimTime(end);
+            SaveSimSettings();
+            Status = SimEndReachedMessage(end);
         });
 
     /// <summary>Odczytuje moment z pól daty i godziny.</summary>

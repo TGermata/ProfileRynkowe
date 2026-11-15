@@ -82,6 +82,7 @@ public sealed class ProfileChartControl : FrameworkElement
             var chart = (ProfileChartControl)d;
             chart._manualLetterWidth = false;
             chart._panX = 0;
+            chart.ClearPin();
         }));
 
     public int ProfilesToFit
@@ -203,6 +204,8 @@ public sealed class ProfileChartControl : FrameworkElement
         return period + session;
     }
     private double _panX;             // przesunięcie w poziomie (0 = najnowszy profil przy prawej krawędzi)
+    private double? _pinFraction;     // przypięcie profilu: jego lewa krawędź w tym ułamku szerokości wykresu (null = brak)
+    private string? _pinKey;          // klucz przypiętego profilu (null przy _pinFraction = przypnij najnowszy przy rysowaniu)
     private decimal? _manualCenter;   // cena na środku ekranu ustawiona ręcznie (null = śledzenie ceny)
     private decimal? _autoCenter;     // cena na środku ekranu w trybie śledzenia
     private decimal _lastCenter;      // środek użyty w ostatnim rysowaniu
@@ -275,6 +278,23 @@ public sealed class ProfileChartControl : FrameworkElement
             {
                 _panX = ChartZoom.PanForAnchor(_panX, anchor.CursorX, hit.X, hit.Width, anchor.Fraction);
                 layout = ComputeLayout(profiles, chartRight);
+            }
+        }
+
+        // Przypięty profil (np. po cofnięciu czasu symulacji) – jego lewa krawędź w ustalonym miejscu ekranu.
+        if (_pinFraction is { } fraction && layout.Count > 0)
+        {
+            _pinKey ??= ProfileKey(layout[^1].View.Snapshot);
+            var pinned = layout.FirstOrDefault(c => ProfileKey(c.View.Snapshot) == _pinKey);
+            if (pinned is not null)
+            {
+                // Najwyżej 0: gdy nowe profile dojdą do prawej krawędzi, wykres przesuwa się jak zwykle.
+                var pan = Math.Min(0, _panX + (chartRight * fraction - pinned.X));
+                if (Math.Abs(pan - _panX) > 0.01)
+                {
+                    _panX = pan;
+                    layout = ComputeLayout(profiles, chartRight);
+                }
             }
         }
 
@@ -1039,7 +1059,7 @@ public sealed class ProfileChartControl : FrameworkElement
             {
                 // Podwójne kliknięcie w innym miejscu – powrót do śledzenia bieżącej ceny
                 // i do automatycznego dopasowania ustawionej liczby profili na ekranie.
-                FitToScreen();
+                FitAndPinLatest();
             }
 
             return;
@@ -1076,6 +1096,7 @@ public sealed class ProfileChartControl : FrameworkElement
         {
             // Przesuwanie całego wykresu.
             _panX = _dragPanX + (position.X - start.X);
+            ClearPin();
             _manualCenter = _dragCenter + (decimal)((position.Y - start.Y) / _rowPx) * _lastRowHeight;
         }
 
@@ -1191,7 +1212,7 @@ public sealed class ProfileChartControl : FrameworkElement
                 e.Handled = true;
                 break;
             case Key.D0 or Key.NumPad0:
-                FitToScreen();
+                FitAndPinLatest();
                 e.Handled = true;
                 break;
         }
@@ -1225,11 +1246,47 @@ public sealed class ProfileChartControl : FrameworkElement
         _panX = 0;
         _manualCenter = null;
         _autoCenter = null;
+        ClearPin();
         _letterCache.Clear();
         InvalidateVisual();
     }
 
-    private Point ChartCenter => new((ActualWidth - AxisWidth) / 2, MiddleY);
+    /// <summary>
+    /// Przypina najnowszy widoczny profil tak, żeby jego lewa krawędź była w <paramref name="fraction"/> szerokości
+    /// wykresu (np. 0.3 – po cofnięciu czasu symulacji: starsze profile po lewej, miejsce na dalsze rysowanie po prawej).
+    /// Przypięcie trwa do przesunięcia wykresu, zmiany powiększenia albo „Dopasuj”; gdy nowe profile dojdą
+    /// do prawej krawędzi, wykres przewija się jak zwykle. Pion – śledzenie ceny.
+    /// </summary>
+    public void PinLatest(double fraction = LatestPinFraction)
+    {
+        _panX = 0;
+        _manualCenter = null;
+        _autoCenter = null;
+        _pinFraction = fraction;
+        _pinKey = null;
+        InvalidateVisual();
+    }
+
+    /// <summary>Miejsce lewej krawędzi bieżącego profilu po „Dopasuj” – ułamek szerokości wykresu od lewej.</summary>
+    public const double LatestPinFraction = 0.3;
+
+    /// <summary>
+    /// „Dopasuj” (przycisk, klawisz 0, podwójne kliknięcie) – tak samo na żywo i w symulacji: ostatnie N profili
+    /// w skali ekranu, bieżący profil od 0,3 szerokości wykresu, po prawej miejsce na dalsze rysowanie.
+    /// </summary>
+    public void FitAndPinLatest()
+    {
+        FitToScreen();
+        PinLatest();
+    }
+
+    private void ClearPin()
+    {
+        _pinFraction = null;
+        _pinKey = null;
+    }
+
+    private Point ChartCenter =>new((ActualWidth - AxisWidth) / 2, MiddleY);
 
     /// <summary>
     /// Zmiana powiększenia o <paramref name="factor"/>. Punkty kotwic (profil i cena pod nimi) zostają w tym samym
@@ -1254,6 +1311,7 @@ public sealed class ProfileChartControl : FrameworkElement
 
             _letterPx = Math.Clamp(_letterPx * factor, ChartZoom.MinLetterPx, ChartZoom.MaxLetterPx);
             _manualLetterWidth = true;
+            ClearPin();
         }
 
         if (vertical)

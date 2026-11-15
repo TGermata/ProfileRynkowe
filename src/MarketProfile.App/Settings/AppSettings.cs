@@ -60,6 +60,25 @@ public sealed record AppSettings
     /// <summary>Ostatnio ustawiona prędkość symulacji (60 = 1 s to 1 minuta danych).</summary>
     public double SimSpeed { get; init; } = 60;
 
+    /// <summary>
+    /// Czas końca symulacji – "yyyy-MM-dd HH:mm" w strefie instrumentu. Pusty = odtwarzanie bez ograniczeń
+    /// (do końca danych w bazie). Po dojściu do tego momentu symulacja się wstrzymuje.
+    /// </summary>
+    public string SimEnd { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Dokładny moment (format ISO 8601 „o”), w którym symulację wstrzymano przy przejściu do trybu „Na żywo” –
+    /// po powrocie do symulacji wykres wraca do tego miejsca (w pauzie). Pusty = brak zapamiętanego punktu.
+    /// </summary>
+    public string SimResumeAt { get; init; } = string.Empty;
+
+    /// <summary>Instrument, którego dotyczy <see cref="SimResumeAt"/>.</summary>
+    public string SimResumeSymbol { get; init; } = string.Empty;
+
+    /// <summary>Moment z <see cref="SimResumeAt"/>, jeśli jest zapisany poprawnie.</summary>
+    public DateTimeOffset? ParseSimResumeAt() =>
+        DateTimeOffset.TryParseExact(SimResumeAt, "o", CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null;
+
     // --- Interactive Brokers ---
 
     /// <summary>Źródło danych w trybie „Na żywo”: generator losowych cen albo Interactive Brokers.</summary>
