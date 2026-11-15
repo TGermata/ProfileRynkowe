@@ -59,6 +59,8 @@ public partial class SettingsWindow : Window
     /// <summary>Test połączenia z TWS (w tle – okno pozostaje responsywne).</summary>
     private async void OnIbTestClick(object sender, RoutedEventArgs e) => await _viewModel.TestIbConnectionAsync();
 
+    private async void OnIbTickProbeClick(object sender, RoutedEventArgs e) => await _viewModel.ProbeTickHistoryAsync();
+
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
         Result = _viewModel.TryCreateSettings();

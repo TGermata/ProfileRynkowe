@@ -45,7 +45,10 @@ public sealed class SettingsViewModel : ObservableObject
 
         // Baza danych.
         RecordToDatabase = settings.RecordToDatabase;
+        ShowTickDownloadBar = settings.ShowTickDownloadBar;
         TestDataDays = ToText(settings.TestDataDays);
+        BackgroundHistoryDays = ToText(settings.BackgroundHistoryDays);
+        BackgroundTickDays = ToText(settings.BackgroundTickDays);
         RefreshDatabaseInfo();
 
         // Sesje i TPO.
@@ -449,6 +452,72 @@ public sealed class SettingsViewModel : ObservableObject
     /// <summary>Czy można uruchomić test połączenia (nie trwa już inny test).</summary>
     public bool CanTestIb => !_isTestingIb;
 
+    /// <summary>
+    /// „Sprawdź historię ticków”: pyta TWS o transakcje z coraz dalszej przeszłości (1 … 365 dni) dla instrumentu
+    /// wybranego na wykresie i pokazuje, jak daleko wstecz są ticki oraz ile trwałoby ich pobranie.
+    /// Używa Client ID + 102 (+1 – pobieranie w tle, +100 – test połączenia, +101 – „Sprawdź w IB”).
+    /// </summary>
+    public async Task ProbeTickHistoryAsync()
+    {
+        if (!TryCreateIbSettings(out var ibSettings, out var error))
+        {
+            IbTestResult = error;
+            return;
+        }
+
+        var instrument = _original.Instrument;
+        _isTestingIb = true;
+        OnPropertyChanged(nameof(CanTestIb));
+        IbTestResult = $"Łączenie z {ibSettings.Host}:{ibSettings.Port} – sprawdzanie historii ticków {instrument.Symbol} (ok. 1–3 min)...";
+
+        try
+        {
+            IbApiLoader.Use(IbApiPath);
+            var progress = new Progress<string>(message => IbTestResult = $"{instrument.Symbol}: {message}");
+            var result = await IbFeeds.ProbeTickHistoryAsync(ibSettings with { ClientId = ibSettings.ClientId + 102 }, instrument, progress);
+            IbTestResult = DescribeTickProbe(result, instrument, _original.BackgroundHistoryDays);
+        }
+        catch (Exception ex)
+        {
+            IbTestResult = $"Błąd: {ex.Message}";
+        }
+        finally
+        {
+            _isTestingIb = false;
+            OnPropertyChanged(nameof(CanTestIb));
+        }
+    }
+
+    /// <summary>Opis wyniku sprawdzenia historii ticków dla użytkownika.</summary>
+    private static string DescribeTickProbe(IbTickProbeResult r, Instrument instrument, int backgroundDays)
+    {
+        if (r.MaxDaysBack is not { } maxDays)
+        {
+            return $"{r.ContractName}: IB nie zwrócił żadnych ticków historycznych." +
+                   (r.LastError is { } e ? $" {e}" : " (Możliwy brak uprawnień do danych tej giełdy.)");
+        }
+
+        var text = $"{r.ContractName}: ticki dostępne co najmniej {maxDays} dni wstecz" +
+                   (r.OldestTick is { } oldest ? $" (najstarszy otrzymany: {oldest.ToLocalTime():yyyy-MM-dd HH:mm})" : string.Empty) +
+                   (r.FirstDaysWithout is { } without ? $"; {without} dni wstecz – już brak." : " (sprawdzono do 365 dni).");
+
+        if (r.Density is { } d)
+        {
+            // Godziny handlu w dobie = suma długości sesji instrumentu; dni kalendarzowe → handlowe (5 z 7).
+            var hours = instrument.Sessions.Sum(s => s.Duration.TotalHours);
+            var tradingDays = Math.Max(1, (int)Math.Round(backgroundDays * 5 / 7.0));
+            text += $"\nGęstość (próbka sprzed ok. 1 dnia): ok. {d.TicksPerDay(hours):N0} ticków na dzień handlowy " +
+                    $"= ok. {d.RequestsPerDay(hours):N0} zapytań po 1000 ticków. Przy limicie IB (60 zapytań / 10 min) " +
+                    $"pobranie 1 dnia trwa ok. {FormatDuration(d.DownloadTime(hours, 1))}, " +
+                    $"{backgroundDays} dni (ok. {tradingDays} handlowych) – ok. {FormatDuration(d.DownloadTime(hours, tradingDays))}.";
+        }
+
+        return text;
+    }
+
+    private static string FormatDuration(TimeSpan t) =>
+        t.TotalHours >= 1 ? $"{t.TotalHours:0.#} h" : $"{Math.Max(1, t.TotalMinutes):0} min";
+
     /// <summary>Wyszukuje bibliotekę automatycznie i wpisuje znalezioną ścieżkę.</summary>
     public void AutoDetectIbApi()
     {
@@ -541,7 +610,16 @@ public sealed class SettingsViewModel : ObservableObject
 
     // --- Baza danych ---
     public bool RecordToDatabase { get; set; }
+
+    /// <summary>Czy pokazywać pasek stanu pobierania ticków w oknie głównym.</summary>
+    public bool ShowTickDownloadBar { get; set; }
     public string TestDataDays { get; set; }
+
+    /// <summary>Ile dni historii pobierać w tle dla instrumentów z zaznaczonym „Pobieraj dane”.</summary>
+    public string BackgroundHistoryDays { get; set; }
+
+    /// <summary>Ile ostatnich dni kompletnych ticków pobierać w tle (0 = tylko świece).</summary>
+    public string BackgroundTickDays { get; set; }
 
     /// <summary>Informacja o danych instrumentu zapisanych w bazie.</summary>
     public string DatabaseInfo
@@ -651,6 +729,15 @@ public sealed class SettingsViewModel : ObservableObject
     public string PeriodVolumeWidth { get; set; } = "";
     public string PeriodVolumeColor { get; set; } = "";
     public string PeriodVolumeOpacity { get; set; } = "";
+    public PeriodVolumeScaleMode PeriodVolumeScaleMode { get; set; }
+    public string PeriodVolumeReferencePeriods { get; set; } = "";
+
+    /// <summary>Skale profilu wolumenowego bieżącego słupka do wyboru.</summary>
+    public IReadOnlyList<KeyValuePair<PeriodVolumeScaleMode, string>> PeriodVolumeScaleModes { get; } =
+    [
+        new(PeriodVolumeScaleMode.Reference, "Względem poprzednich słupków"),
+        new(PeriodVolumeScaleMode.OwnMaximum, "Własne maksimum słupka"),
+    ];
 
     /// <summary>Wczytuje ustawienia profilu wolumenowego bieżącego słupka do pól formularza.</summary>
     private void LoadPeriodVolume(PeriodVolumeStyle style)
@@ -661,6 +748,8 @@ public sealed class SettingsViewModel : ObservableObject
         PeriodVolumeWidth = ToText(style.Width);
         PeriodVolumeColor = style.BarColor;
         PeriodVolumeOpacity = ToText(style.Opacity);
+        PeriodVolumeScaleMode = style.ScaleMode;
+        PeriodVolumeReferencePeriods = ToText(style.ReferencePeriods);
     }
 
     // --- Liczby wolumenu przy słupkach ---
@@ -771,6 +860,11 @@ public sealed class SettingsViewModel : ObservableObject
             return Fail("Wolumen bieżącego słupka – krycie: podaj procent od 5 do 100.");
         }
 
+        if (!TryParseInt(PeriodVolumeReferencePeriods, 1, 200, out var pvReferencePeriods))
+        {
+            return Fail("Wolumen bieżącego słupka – liczba słupków do odniesienia: podaj liczbę od 1 do 200.");
+        }
+
         if (!TryParseInt(VolumeLabelFontSize, 5, 40, out var labelFontSize))
         {
             return Fail("Liczby wolumenu – wielkość czcionki: podaj liczbę od 5 do 40.");
@@ -799,6 +893,16 @@ public sealed class SettingsViewModel : ObservableObject
         if (!TryParseInt(TestDataDays, 1, 60, out var testDays))
         {
             return Fail("Dane testowe: podaj liczbę dni od 1 do 60.");
+        }
+
+        if (!TryParseInt(BackgroundHistoryDays, 1, 365, out var backgroundDays))
+        {
+            return Fail("Dane w tle: podaj liczbę dni historii od 1 do 365.");
+        }
+
+        if (!TryParseInt(BackgroundTickDays, 0, backgroundDays, out var tickDays))
+        {
+            return Fail($"Dane w tle: podaj liczbę dni ticków od 0 do {backgroundDays} (nie więcej niż dni historii świec).");
         }
 
         if (!ColorUtil.TryParse(VolumeBarColor, out _) || !ColorUtil.TryParse(VolumeVpocColor, out _))
@@ -921,6 +1025,7 @@ public sealed class SettingsViewModel : ObservableObject
             HistoryDays = historyDays,
             SimulatorSpeed = speed,
             RecordToDatabase = RecordToDatabase,
+            ShowTickDownloadBar = ShowTickDownloadBar,
             LiveSource = UseInteractiveBrokers ? LiveSourceKind.InteractiveBrokers : LiveSourceKind.Generator,
             IbApiPath = IbApiPath?.Trim() ?? string.Empty,
             IbHost = ibSettings.Host,
@@ -928,6 +1033,8 @@ public sealed class SettingsViewModel : ObservableObject
             IbClientId = ibSettings.ClientId,
             IbDataType = ibSettings.DataType,
             TestDataDays = testDays,
+            BackgroundHistoryDays = backgroundDays,
+            BackgroundTickDays = tickDays,
             VolumeProfile = VolumeMode,
             VolumeLabels = new VolumeLabelStyle
             {
@@ -947,6 +1054,8 @@ public sealed class SettingsViewModel : ObservableObject
                 Width = pvWidth,
                 BarColor = PeriodVolumeColor.Trim().ToUpperInvariant(),
                 Opacity = pvOpacity,
+                ScaleMode = PeriodVolumeScaleMode,
+                ReferencePeriods = pvReferencePeriods,
             },
             VolumeStyle = new VolumeProfileStyle
             {

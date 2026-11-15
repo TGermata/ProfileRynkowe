@@ -74,6 +74,12 @@ public sealed record Instrument
     /// <summary>Miesiąc kontraktu futures RRRRMM (puste = najbliższy niewygasły).</summary>
     public string ContractMonth { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Czy po połączeniu z brokerem pobierać w tle historię tego instrumentu do lokalnej bazy
+    /// (do późniejszych symulacji) – także wtedy, gdy nie jest on pokazany na wykresie.
+    /// </summary>
+    public bool DownloadData { get; init; }
+
     /// <summary>Przybliżona cena – używana tylko przez symulator (generator), żeby ceny wyglądały realistycznie.</summary>
     public decimal ReferencePrice { get; init; } = 100m;
 
@@ -134,12 +140,14 @@ public sealed record Instrument
     public static Instrument ES { get; } = new()
     {
         Symbol = "ES", Description = "E-mini S&P 500", Exchange = "CME", TickSize = 0.25m, TicksPerRow = 4, ReferencePrice = 6000m,
+        DownloadData = true,
     };
 
     /// <summary>Kontrakt E-mini Nasdaq 100.</summary>
     public static Instrument NQ { get; } = new()
     {
         Symbol = "NQ", Description = "E-mini Nasdaq 100", Exchange = "CME", TickSize = 0.25m, TicksPerRow = 8, ReferencePrice = 21000m,
+        DownloadData = true,
     };
 
     /// <summary>

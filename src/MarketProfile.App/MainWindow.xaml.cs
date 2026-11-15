@@ -49,6 +49,24 @@ public partial class MainWindow : Window
         };
     }
 
+    // --- Pole godziny symulacji: w trakcie edycji zegar go nie nadpisuje; Enter / wyjście z pola = przejście do tej godziny. ---
+
+    private void OnSimTimeGotFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e) =>
+        _viewModel.BeginEditSimTime();
+
+    private async void OnSimTimeLostFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e) =>
+        await _viewModel.EndEditSimTimeAsync();
+
+    private void OnSimTimeKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter)
+        {
+            e.Handled = true;
+            Chart.Focus(); // utrata fokusu pola zatwierdza godzinę
+            System.Windows.Input.Keyboard.ClearFocus();
+        }
+    }
+
     /// <summary>Otwiera okno ustawień; po zatwierdzeniu przekazuje nowe ustawienia do modelu widoku.</summary>
     private async void OnSettingsClick(object sender, RoutedEventArgs e)
     {

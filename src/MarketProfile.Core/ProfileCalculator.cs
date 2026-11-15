@@ -7,6 +7,22 @@ namespace MarketProfile.Core;
 public static class ProfileCalculator
 {
     /// <summary>
+    /// Mediana (wartość środkowa) – odporna na pojedyncze skrajne wartości. Pusta lista → 0;
+    /// przy parzystej liczbie wartości – średnia dwóch środkowych.
+    /// </summary>
+    public static long Median(IEnumerable<long> values)
+    {
+        var sorted = values.OrderBy(v => v).ToList();
+        if (sorted.Count == 0)
+        {
+            return 0;
+        }
+
+        var mid = sorted.Count / 2;
+        return sorted.Count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    /// <summary>
     /// Wyznacza POC: wiersz z największą liczbą TPO.
     /// Przy remisie wybieramy wiersz najbliższy środka zakresu profilu (standardowa reguła Market Profile).
     /// Gdy dwa wiersze są równo oddalone od środka (jeden poniżej, drugi powyżej), decyduje <paramref name="tieBreak"/>.

@@ -166,6 +166,11 @@
                             <TextBlock Text="tylko dla generatora losowych cen" Foreground="Gray" FontSize="11" />
                         </StackPanel>
 
+                        <TextBlock Grid.Row="11" Text="Dane do symulacji" />
+                        <CheckBox Grid.Row="11" Grid.Column="1" Margin="4" VerticalAlignment="Center"
+                                  Content="Pobieraj dane w tle (historia do symulacji)" IsChecked="{Binding DownloadData}"
+                                  ToolTip="Po połączeniu z brokerem historia tego instrumentu jest pobierana w tle do lokalnej bazy – także gdy nie jest pokazany na wykresie" />
+
                         <TextBlock Grid.Row="12" Grid.ColumnSpan="2" Foreground="Gray" FontSize="11" TextWrapping="Wrap"
                                    Text="Każdy instrument ma własne dane w bazie, linie i rozbicia profili. Indeksy nie mają wolumenu – profil wolumenowy będzie pusty." />
                     </Grid>
@@ -345,6 +350,8 @@
                     <!-- Test połączenia: łączy, szuka kontraktu, czeka na notowanie i rozłącza. -->
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <Button Content="Testuj połączenie" Padding="10,2" Click="OnIbTestClick" IsEnabled="{Binding CanTestIb}" />
+                        <Button Content="Sprawdź historię ticków" Padding="10,2" Margin="8,0,0,0" Click="OnIbTickProbeClick" IsEnabled="{Binding CanTestIb}"
+                                ToolTip="Sprawdza w TWS, ile dni wstecz są dostępne ticki (transakcje) instrumentu z wykresu i ile trwałoby ich pobranie" />
                     </StackPanel>
                     <TextBlock Text="{Binding IbTestResult}" TextWrapping="Wrap" MaxWidth="440" HorizontalAlignment="Left" Margin="4,6,4,0" />
                     <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" MaxWidth="440" HorizontalAlignment="Left" Margin="4,6,4,0"
@@ -381,6 +388,20 @@
 
                             <CheckBox Content="Zapisuj dane od brokera do bazy (do późniejszych symulacji)"
                                       IsChecked="{Binding RecordToDatabase}" Margin="4,8,4,4" />
+
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0" IsEnabled="{Binding RecordToDatabase}">
+                                <TextBlock Text="Dni historii pobieranej w tle (instrumenty z „Pobieraj dane”):" />
+                                <TextBox Text="{Binding BackgroundHistoryDays}" Width="45" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0" IsEnabled="{Binding RecordToDatabase}">
+                                <TextBlock Text="Dni kompletnych ticków (każda transakcja, 0 = tylko świece):" />
+                                <TextBox Text="{Binding BackgroundTickDays}" Width="45"
+                                         ToolTip="Symulacja z ticków odtwarza rynek dokładnie tak, jak wyglądał (kolejność i wolumen każdej transakcji). Okresy bez ticków są odtwarzane całymi świecami 1-min (z ostrzeżeniem)." />
+                            </StackPanel>
+                            <CheckBox Content="Pokazuj pasek stanu pobierania ticków (postęp i komplet dni) w oknie głównym"
+                                      IsChecked="{Binding ShowTickDownloadBar}" Margin="4,6,4,2" />
+                            <TextBlock Foreground="Gray" TextWrapping="Wrap" FontSize="11"
+                                       Text="Po połączeniu z brokerem brakujące dni świec 1-min, a potem ticków są pobierane w tle (osobne połączenie, Client ID + 1) – od najnowszych dni, z kontynuacją po ponownym uruchomieniu. Ticki pobierają się powoli (limit IB 60 zapytań / 10 min, ok. 40 min na dzień ES); przycisk „Sprawdź historię ticków” pokazuje szacunek." />
 
                             <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                 <Button Content="Wygeneruj dane testowe" Padding="8,2" Margin="4"
@@ -470,6 +491,7 @@
                                 <RowDefinition />
                                 <RowDefinition />
                                 <RowDefinition />
+                                <RowDefinition />
                             </Grid.RowDefinitions>
 
                             <CheckBox Grid.ColumnSpan="4" Margin="4" IsChecked="{Binding PeriodVolumeEnabled}"
@@ -487,6 +509,15 @@
 
                             <TextBlock Grid.Row="3" Text="Kolor słupków" />
                             <controls:ColorPicker Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Color="{Binding PeriodVolumeColor}" />
+
+                            <!-- Skala: względem poprzednich słupków – na początku okresu słupki są krótkie i rosną z wolumenem. -->
+                            <TextBlock Grid.Row="4" Text="Skala słupków" />
+                            <ComboBox Grid.Row="4" Grid.Column="1" Width="200" HorizontalAlignment="Left" Margin="4"
+                                      ItemsSource="{Binding PeriodVolumeScaleModes}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                      SelectedValue="{Binding PeriodVolumeScaleMode}"
+                                      ToolTip="Względem poprzednich słupków: pełna długość = typowy (mediana) największy wolumen wiersza z ostatnich zakończonych słupków tej samej sesji. Na początku okresu słupki są krótkie i rosną z wolumenem." />
+                            <TextBlock Grid.Row="4" Grid.Column="2" Text="Liczba słupków do odniesienia" />
+                            <TextBox Grid.Row="4" Grid.Column="3" Text="{Binding PeriodVolumeReferencePeriods}" HorizontalAlignment="Left" />
                         </Grid>
                     </GroupBox>
 

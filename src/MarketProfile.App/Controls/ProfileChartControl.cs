@@ -474,10 +474,15 @@ public sealed class ProfileChartControl : FrameworkElement
         dc.DrawText(text, new Point(x + padding, y + padding / 2));
     }
 
-    /// <summary>Profil wolumenowy bieżącego okresu TPO: słupki od <paramref name="left"/> w prawo.</summary>
-    private void DrawPeriodVolume(DrawingContext dc, ProfileSnapshot profile, double left)
+    /// <summary>
+    /// Profil wolumenowy bieżącego okresu TPO: słupki od <paramref name="left"/> w prawo.
+    /// Skala = większa z wartości: maksimum bieżącego słupka albo typowy wolumen poprzednich słupków
+    /// (<paramref name="reference"/>) – dzięki temu na początku okresu słupki są krótkie i rosną z wolumenem,
+    /// zamiast od razu mieć pełną długość przy kilku kontraktach.
+    /// </summary>
+    private void DrawPeriodVolume(DrawingContext dc, ProfileSnapshot profile, double left, long reference)
     {
-        var max = profile.MaxCurrentPeriodVolume;
+        var max = Math.Max(profile.MaxCurrentPeriodVolume, reference);
         if (max <= 0)
         {
             return;
@@ -692,7 +697,7 @@ public sealed class ProfileChartControl : FrameworkElement
         // to właśnie bieżący słupek), przed profilem wolumenowym sesji. Skala: własne maksimum bieżącego okresu.
         if (view.ShowPeriodVolume)
         {
-            DrawPeriodVolume(dc, profile, lettersRight + CloseSpace + PvGapFromTpo);
+            DrawPeriodVolume(dc, profile, lettersRight + CloseSpace + PvGapFromTpo, view.PeriodVolumeReference);
         }
 
         // Strzałki początku i końca rysowania profilu – obie skierowane w stronę profilu.

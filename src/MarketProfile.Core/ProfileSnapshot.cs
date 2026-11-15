@@ -127,6 +127,12 @@ public sealed record ProfileSnapshot
     /// <summary>Wolumen ostatniego okresu TPO według wierszy (cena wiersza → wolumen) – profil bieżącego słupka.</summary>
     public IReadOnlyDictionary<decimal, long> CurrentPeriodVolume { get; init; } = new Dictionary<decimal, long>();
 
+    /// <summary>
+    /// Największy wolumen wiersza w każdym zakończonym okresie (bez bieżącego), w kolejności okresów –
+    /// do wyliczenia typowej skali profilu wolumenowego bieżącego słupka.
+    /// </summary>
+    public IReadOnlyList<long> CompletedPeriodMaxVolumes { get; init; } = [];
+
     /// <summary>Największy wolumen wiersza w bieżącym okresie (0 = brak wolumenu).</summary>
     public long MaxCurrentPeriodVolume => CurrentPeriodVolume.Count > 0 ? CurrentPeriodVolume.Values.Max() : 0;
 

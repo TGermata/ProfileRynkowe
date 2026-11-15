@@ -217,6 +217,18 @@ public sealed class SessionProfile
                 }
             }
 
+            // 4b. Największy wolumen wiersza w każdym ZAKOŃCZONYM okresie tej części (bez bieżącego) –
+            //     odniesienie dla skali profilu wolumenowego bieżącego słupka.
+            var completedMax = new SortedDictionary<int, long>();
+            foreach (var ((_, period), volume) in _volume)
+            {
+                if (period >= fromPeriod && period <= toPeriod && period != currentPeriod &&
+                    volume > completedMax.GetValueOrDefault(period))
+                {
+                    completedMax[period] = volume;
+                }
+            }
+
             var lastClose = _periods.LastOrDefault(p => p.Key >= fromPeriod && p.Key <= toPeriod).Value?.Close ?? 0;
 
             // Cena otwarcia profilu (lub części rozbitego profilu) = otwarcie jego pierwszego okresu.
@@ -257,6 +269,7 @@ public sealed class SessionProfile
                 TotalVolume = totalVolume,
                 CurrentPeriodIndex = currentPeriod,
                 CurrentPeriodVolume = currentVolume,
+                CompletedPeriodMaxVolumes = [.. completedMax.Values],
                 Version = _version,
             };
         }

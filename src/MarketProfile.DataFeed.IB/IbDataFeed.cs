@@ -2,6 +2,7 @@
 using System.Globalization;
 using IBApi;
 using MarketProfile.Core;
+using MarketProfile.DataFeed.Storage;
 using Bar = MarketProfile.Core.Bar;
 
 namespace MarketProfile.DataFeed.IB;
@@ -25,6 +26,7 @@ public sealed class IbDataFeed : IMarketDataFeed
     // Identyfikatory zapytań.
     private const int ContractRequestId = 1;
     private const int HistoryRequestId = 2;
+    private const int TickProbeRequestId = 3;
     private const int FirstLiveRequestId = 100;   // kolejne subskrypcje strumienia: 101, 102, ...
 
     // Numery pól notowań (TickType) używane przy danych opóźnionych i zwykłym strumieniu notowań.
@@ -60,6 +62,12 @@ public sealed class IbDataFeed : IMarketDataFeed
     private readonly ConcurrentQueue<Bar> _historyBars = new();
     private string? _historyError;
 
+    // Sprawdzanie historii ticków (reqHistoricalTicks).
+    private TaskCompletionSource<bool> _ticksDone = NewTcs<bool>();
+    private readonly ConcurrentQueue<Tick> _historicalTicks = new();   // transakcje z bieżącego zapytania reqHistoricalTicks
+    private string? _ticksError;
+    private bool _ticksPacing;   // IB odrzucił zapytanie z powodu limitu zapytań (pacing violation)
+
     // Składanie transakcji ze strumienia notowań (dane opóźnione).
     private decimal? _lastPrice;
     private DateTimeOffset? _lastTradeTime;
@@ -88,6 +96,12 @@ public sealed class IbDataFeed : IMarketDataFeed
     public string? ContractExpiry => _contract?.LastTradeDateOrContractMonth;
 
     public event EventHandler<Tick>? TickReceived;
+
+    /// <summary>
+    /// Ostrzeżenie o niezgodności ticka instrumentu w ustawieniach z tickiem kontraktu w IB (null = zgodne).
+    /// Ustawiane w <see cref="ConnectAsync"/>.
+    /// </summary>
+    public string? TickSizeWarning { get; private set; }
     public event EventHandler<string>? StatusChanged;
 
     /// <summary>Zdarzenie przy każdym otrzymanym notowaniu (także bid/ask) – używane przez test połączenia.</summary>
@@ -162,10 +176,13 @@ public sealed class IbDataFeed : IMarketDataFeed
         Status($"IB: połączono, kontrakt {ContractName}{expiry}, dane {_settings.DataTypeName}");
 
         // Kontrola wielkości ticka – inna niż w definicji instrumentu oznacza źle zaokrąglane ceny i wiersze TPO.
+        TickSizeWarning = null;
         if (details.MinTick > 0 && ToDecimal(details.MinTick) != instrument.TickSize)
         {
-            Status($"IB: UWAGA – tick {instrument.Symbol} w IB to {ToDecimal(details.MinTick).ToString(CultureInfo.InvariantCulture)}, " +
-                   $"a w ustawieniach {instrument.TickSize.ToString(CultureInfo.InvariantCulture)} – popraw w Ustawieniach → Instrumenty.");
+            TickSizeWarning = $"tick {instrument.Symbol} w IB to {ToDecimal(details.MinTick).ToString(CultureInfo.InvariantCulture)}, " +
+                              $"a w ustawieniach {instrument.TickSize.ToString(CultureInfo.InvariantCulture)} – wiersze TPO są źle wyliczane. " +
+                              "Popraw w Ustawieniach → Instrumenty (dane w bazie zapisywane są bez zmian, tak jak od brokera).";
+            Status($"IB: UWAGA – {TickSizeWarning}");
         }
     }
 
@@ -519,6 +536,108 @@ public sealed class IbDataFeed : IMarketDataFeed
                (lastError is null ? " (Rynek może być zamknięty.)" : $" {lastError}");
     }
 
+    /// <summary>Odległości (dni wstecz) sprawdzane przez <see cref="ProbeTickHistoryAsync"/>.</summary>
+    private static readonly int[] TickProbeDays = [1, 2, 5, 10, 20, 30, 60, 90, 120, 150, 180, 200, 270, 365];
+
+    /// <summary>
+    /// Sprawdza, jak daleko wstecz IB udostępnia ticki (transakcje) instrumentu: dla kolejnych odległości
+    /// (1, 2, 5 … 365 dni) prosi o maks. 1000 transakcji kończących się w tym momencie. Jeśli moment wypada
+    /// poza sesją (noc, weekend), próbuje jeszcze 1 i 2 dni wcześniej. Kończy po dwóch kolejnych odległościach
+    /// bez danych. Próbka sprzed ~1 dnia służy do oszacowania gęstości ticków.
+    /// Między zapytaniami robi przerwy (limity IB: 60 zapytań historycznych na 10 minut).
+    /// </summary>
+    /// <param name="progress">Opcjonalny postęp, np. „sprawdzam 60 dni wstecz…”.</param>
+    public static async Task<IbTickProbeResult> ProbeTickHistoryAsync(IbConnectionSettings settings, Instrument instrument,
+        IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+    {
+        await using var feed = new IbDataFeed(settings);
+        await feed.ConnectAsync(instrument, cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        int? maxDays = null, firstWithout = null;
+        DateTimeOffset? oldest = null;
+        IbTickDensity? density = null;
+        string? lastError = null;
+        var misses = 0;
+
+        foreach (var days in TickProbeDays)
+        {
+            progress?.Report($"Sprawdzam ticki {days} dni wstecz...");
+            List<long>? ticks = null; // czasy transakcji (sekundy od 1970)
+
+            // Moment poza sesją (noc, weekend, święto) – próbujemy jeszcze 1 i 2 dni wcześniej.
+            for (var extra = 0; extra <= 2 && ticks is not { Count: > 0 }; extra++)
+            {
+                ticks = (await feed.RequestTicksAsync(start: null, end: now.AddDays(-(days + extra)), cancellationToken).ConfigureAwait(false))
+                    .Select(t => t.Time.ToUnixTimeSeconds()).ToList();
+                lastError = feed._ticksError ?? lastError;
+                await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+            }
+
+            if (ticks is { Count: > 0 })
+            {
+                misses = 0;
+                maxDays = days;
+                firstWithout = null; // liczy się pierwsza odległość bez danych PO ostatniej z danymi
+                var first = DateTimeOffset.FromUnixTimeSeconds(ticks.Min());
+                oldest = oldest is null || first < oldest ? first : oldest;
+                density ??= new IbTickDensity(ticks.Count, TimeSpan.FromSeconds(ticks.Max() - ticks.Min()));
+            }
+            else
+            {
+                firstWithout ??= days;
+                if (++misses >= 2)
+                {
+                    break; // dwie kolejne odległości bez danych – dalej też nie będzie
+                }
+            }
+        }
+
+        return new IbTickProbeResult(feed.ContractName ?? instrument.Symbol, maxDays, oldest,
+            firstWithout, lastError, density);
+    }
+
+    /// <summary>
+    /// Jedna strona historycznych transakcji (do pobierania ticków w tle): maks. ok. 1000 transakcji od
+    /// <paramref name="start"/> w przód. IB uzupełnia ostatnią sekundę do końca, więc następną stronę
+    /// można zaczynać od sekundy po ostatniej transakcji. Strona nie przekracza końca sesji.
+    /// </summary>
+    public async Task<TickPage> GetTicksPageAsync(DateTimeOffset start, CancellationToken cancellationToken = default)
+    {
+        var ticks = await RequestTicksAsync(start, end: null, cancellationToken).ConfigureAwait(false);
+        return new TickPage(ticks, _ticksError, _ticksPacing);
+    }
+
+    /// <summary>
+    /// Jedno zapytanie reqHistoricalTicks (TRADES) o maks. 1000 transakcji: od <paramref name="start"/> w przód
+    /// albo kończących się w <paramref name="end"/> (podaje się dokładnie jedno z nich). Pusta lista = brak danych lub błąd.
+    /// </summary>
+    private async Task<List<Tick>> RequestTicksAsync(DateTimeOffset? start, DateTimeOffset? end, CancellationToken cancellationToken)
+    {
+        var contract = _requestContract ?? throw new InvalidOperationException("Najpierw wywołaj ConnectAsync.");
+        _historicalTicks.Clear();
+        _ticksError = null;
+        _ticksPacing = false;
+        _ticksDone = NewTcs<bool>();
+
+        static string Text(DateTimeOffset? t) =>
+            t is { } v ? v.UtcDateTime.ToString("yyyyMMdd-HH:mm:ss", CultureInfo.InvariantCulture) : string.Empty; // format z myślnikiem = UTC
+
+        _client.reqHistoricalTicks(TickProbeRequestId, contract, Text(start), Text(end), IbTickDensity.TicksPerRequest,
+            "TRADES", 0, true, null);
+
+        try
+        {
+            await WaitAsync(_ticksDone.Task, TimeSpan.FromSeconds(60), "TWS nie zwrócił ticków", cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _ticksError ??= "przekroczono czas oczekiwania na ticki";
+        }
+
+        return [.. _historicalTicks.OrderBy(t => t.Time)];
+    }
+
     // =====================================================================
     // Obsługa wiadomości z TWS (wywoływane z wątku odczytu)
     // =====================================================================
@@ -543,6 +662,13 @@ public sealed class IbDataFeed : IMarketDataFeed
                 _contractsDone.TrySetException(new InvalidOperationException(code == 200
                     ? $"Nie znaleziono kontraktu ({message}). Sprawdź symbol i miesiąc kontraktu w ustawieniach."
                     : text));
+                return;
+
+            case TickProbeRequestId:
+                _ticksPacing = message.Contains("pacing", StringComparison.OrdinalIgnoreCase);
+                _ticksError = _ticksPacing ? $"limit zapytań IB ({code}): {message}"
+                    : NoSubscriptionCodes.Contains(code) || code == 162 ? $"brak uprawnień lub danych ({code}): {message}" : text;
+                _ticksDone.TrySetResult(false);
                 return;
 
             case HistoryRequestId:
@@ -694,12 +820,11 @@ public sealed class IbDataFeed : IMarketDataFeed
     private static decimal ToDecimal(double value) =>
         decimal.Parse(value.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture);
 
-    /// <summary>Cena z TWS (double) zaokrąglona do ticka instrumentu.</summary>
-    private decimal Price(double value)
-    {
-        var tick = _instrument?.TickSize ?? 0.25m;
-        return Math.Round((decimal)value / tick) * tick;
-    }
+    /// <summary>
+    /// Cena z TWS (double) dokładnie tak, jak podał ją broker – bez zaokrąglania do ticka z ustawień
+    /// (zaokrąglanie do wierszy TPO odbywa się dopiero przy budowaniu profilu; w bazie zostają ceny brokera).
+    /// </summary>
+    private static decimal Price(double value) => ToDecimal(value);
 
     /// <summary>
     /// Czas świecy: przy formatDate=2 są to sekundy od 1970; na wszelki wypadek obsługujemy też format
@@ -778,6 +903,20 @@ public sealed class IbDataFeed : IMarketDataFeed
         public override void historicalData(int reqId, IBApi.Bar bar) => owner.OnHistoricalBar(bar);
 
         public override void historicalDataEnd(int reqId, string start, string end) => owner._historyDone.TrySetResult(true);
+
+        public override void historicalTicksLast(int reqId, HistoricalTickLast[] ticks, bool done)
+        {
+            foreach (var tick in ticks)
+            {
+                owner._historicalTicks.Enqueue(new Tick(DateTimeOffset.FromUnixTimeSeconds(tick.Time),
+                    Price(tick.Price), Math.Max(1, (long)tick.Size)));
+            }
+
+            if (done)
+            {
+                owner._ticksDone.TrySetResult(true);
+            }
+        }
 
         public override void tickByTickAllLast(int reqId, int tickType, long time, double price, decimal size,
             TickAttribLast tickAttribLast, string exchange, string specialConditions) => owner.OnTickByTick(time, price, size);

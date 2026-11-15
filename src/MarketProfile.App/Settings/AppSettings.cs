@@ -100,6 +100,43 @@ public sealed record AppSettings
     /// <summary>Czy zapisywać dane od brokera (ticki i świece) w lokalnej bazie do późniejszych symulacji.</summary>
     public bool RecordToDatabase { get; init; } = true;
 
+    /// <summary>
+    /// Ile dni historii (świece 1-min) trzymać w bazie dla instrumentów z zaznaczonym „Pobieraj dane”.
+    /// Brakujące dni są pobierane w tle po połączeniu z brokerem.
+    /// </summary>
+    public int BackgroundHistoryDays { get; init; } = 20;
+
+    /// <summary>
+    /// Ile ostatnich dni kompletnych ticków (każda transakcja) pobierać w tle dla instrumentów z „Pobieraj dane”
+    /// – symulacja odtwarza wtedy rynek dokładnie tak, jak wyglądał. 0 = tylko świece 1-min.
+    /// Pobieranie ticków jest powolne (limity zapytań IB: ok. 40 min na dzień handlowy ES).
+    /// </summary>
+    public int BackgroundTickDays { get; init; } = 5;
+
+    /// <summary>Czy pokazywać pod paskiem narzędzi pasek stanu pobierania ticków (postęp i komplet dni).</summary>
+    public bool ShowTickDownloadBar { get; init; } = true;
+
+    /// <summary>
+    /// Czy wykonano jednorazowe zaznaczenie „Pobieraj dane” dla ES i NQ w ustawieniach zapisanych przez
+    /// wcześniejsze wersje (wtedy tej opcji nie było).
+    /// </summary>
+    public bool DownloadDefaultsApplied { get; init; }
+
+    /// <summary>Instrumenty, których historia jest pobierana w tle.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<Instrument> DownloadInstruments => Instruments.Where(i => i.DownloadData).ToList();
+
+    /// <summary>
+    /// Czy zmiana ustawień wymaga ponownego uruchomienia pobierania w tle
+    /// (inne instrumenty, liczba dni albo parametry połączenia z brokerem).
+    /// </summary>
+    public bool RequiresDownloadRestart(AppSettings other) =>
+        BackgroundHistoryDays != other.BackgroundHistoryDays || BackgroundTickDays != other.BackgroundTickDays ||
+        RecordToDatabase != other.RecordToDatabase ||
+        LiveSource != other.LiveSource || IbApiPath != other.IbApiPath || IbHost != other.IbHost ||
+        IbPort != other.IbPort || IbClientId != other.IbClientId || IbDataType != other.IbDataType ||
+        !DownloadInstruments.SequenceEqual(other.DownloadInstruments);
+
     /// <summary>Ile dni danych testowych generować do bazy.</summary>
     public int TestDataDays { get; init; } = 5;
 
@@ -155,7 +192,8 @@ public sealed record AppSettings
     /// </summary>
     public bool RequiresRebuild(AppSettings other) =>
         InstrumentSymbol != other.InstrumentSymbol ||
-        !Equals(Instrument, other.Instrument) || // zmieniono definicję wybranego instrumentu (sesje, tick...)
+        // Zmieniono definicję wybranego instrumentu (sesje, tick...); samo „Pobieraj dane” nie przebudowuje profili.
+        !Equals(Instrument with { DownloadData = false }, other.Instrument with { DownloadData = false }) ||
         TicksPerRow != other.TicksPerRow || TpoMinutes != other.TpoMinutes ||
         InitialBalancePeriods != other.InitialBalancePeriods || PocTieBreak != other.PocTieBreak ||
         ValueAreaPercent != other.ValueAreaPercent || HistoryDays != other.HistoryDays ||
@@ -209,7 +247,7 @@ public sealed record AppSettings
     {
         if (Instruments.Count > 0)
         {
-            return this;
+            return WithDownloadDefaults();
         }
 
         TimeOnly Parse(string text, TimeOnly fallback) =>
@@ -229,7 +267,23 @@ public sealed record AppSettings
                 : i)
             .ToList();
 
-        return this with { Instruments = instruments };
+        return this with { Instruments = instruments, DownloadDefaultsApplied = true };
+    }
+
+    /// <summary>
+    /// Jednorazowo zaznacza „Pobieraj dane” dla ES i NQ w liście instrumentów zapisanej przez wcześniejszą wersję.
+    /// </summary>
+    private AppSettings WithDownloadDefaults()
+    {
+        if (DownloadDefaultsApplied)
+        {
+            return this;
+        }
+
+        var instruments = Instruments
+            .Select(i => i.Symbol is "ES" or "NQ" ? i with { DownloadData = true } : i)
+            .ToList();
+        return this with { Instruments = instruments, DownloadDefaultsApplied = true };
     }
 
     /// <summary>
@@ -340,6 +394,26 @@ public sealed record PeriodVolumeStyle
 
     /// <summary>Krycie słupków (%).</summary>
     public int Opacity { get; init; } = 60;
+
+    /// <summary>Skala długości słupków (względem poprzednich słupków albo własnego maksimum).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<PeriodVolumeScaleMode>))]
+    public PeriodVolumeScaleMode ScaleMode { get; init; } = PeriodVolumeScaleMode.Reference;
+
+    /// <summary>Z ilu ostatnich zakończonych słupków tej samej sesji liczyć skalę odniesienia (mediana).</summary>
+    public int ReferencePeriods { get; init; } = 10;
+}
+
+/// <summary>Skala profilu wolumenowego bieżącego słupka TPO.</summary>
+public enum PeriodVolumeScaleMode
+{
+    /// <summary>
+    /// Względem poprzednich słupków: pełna długość = typowy (mediana) największy wolumen wiersza z ostatnich
+    /// zakończonych słupków tej samej sesji – na początku okresu słupki są krótkie i rosną z wolumenem.
+    /// </summary>
+    Reference,
+
+    /// <summary>Własne maksimum: najdłuższy słupek zawsze ma pełną długość (nawet przy kilku kontraktach).</summary>
+    OwnMaximum,
 }
 
 /// <summary>Gdzie rysować liczbę wolumenu względem słupka.</summary>

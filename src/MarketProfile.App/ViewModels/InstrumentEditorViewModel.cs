@@ -61,6 +61,9 @@ public sealed class InstrumentEditorViewModel : ObservableObject
     public string ContractMonth { get; set; } = string.Empty;
     public string ReferencePrice { get; set; } = string.Empty;
 
+    /// <summary>Czy pobierać w tle historię tego instrumentu do bazy.</summary>
+    public bool DownloadData { get; set; }
+
     /// <summary>Wypełnia pola wartościami instrumentu.</summary>
     public void Load(Instrument i)
     {
@@ -82,6 +85,7 @@ public sealed class InstrumentEditorViewModel : ObservableObject
         NightEnd = Time(i.NightEnd);
         ContractMonth = i.ContractMonth;
         ReferencePrice = i.ReferencePrice.ToString(CultureInfo.InvariantCulture);
+        DownloadData = i.DownloadData;
         OnPropertyChanged(string.Empty); // odśwież wszystkie pola w oknie
     }
 
@@ -191,6 +195,7 @@ public sealed class InstrumentEditorViewModel : ObservableObject
             NightEnd = nightEnd,
             ContractMonth = month,
             ReferencePrice = refPrice,
+            DownloadData = DownloadData,
         };
         return null;
     }
