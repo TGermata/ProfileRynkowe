@@ -138,11 +138,18 @@ public sealed class ChartStyle
     public FontWeight TimerFontWeight { get; init; } = FontWeights.Bold;
     public Brush TimerBrush { get; init; } = Brushes.LightGreen;
 
+    // --- Wskaźnik tempa budowania TPO ---
+    public bool TempoGaugeEnabled { get; init; } = true;
+    public TempoGaugePosition TempoGaugePosition { get; init; } = TempoGaugePosition.UnderTimer;
+
     /// <summary>Pióro kreski połowy zakończonego okresu w trybie Split (null = kreska wyłączona).</summary>
     public Pen? SplitMidlinePen { get; init; }
 
     /// <summary>Pióro linii HalfBack – połowy wysokości profilu (null = linia wyłączona).</summary>
     public Pen? HalfBackPen { get; init; }
+
+    /// <summary>Tło profilu wybranego w tabeli „Parametry profili”.</summary>
+    public Brush SelectedProfileBrush { get; init; } = Brushes.Transparent;
 
     /// <summary>Wzór kreskowania dla stylu linii (wspólny dla linii cenowych i HalfBack).</summary>
     public static DashStyle ToDashStyle(LineStyle style) => style switch
@@ -252,8 +259,12 @@ public sealed class ChartStyle
                 _ => FontWeights.Normal,
             },
             TimerBrush = ColorUtil.ToBrush(timer.Color),
+            TempoGaugeEnabled = settings.TempoGauge,
+            TempoGaugePosition = settings.TempoGaugePosition,
             SplitMidlinePen = midlinePen,
             HalfBackPen = halfBackPen,
+            SelectedProfileBrush = ColorUtil.ToBrush(settings.SelectedProfileHighlight.Color,
+                Math.Clamp(settings.SelectedProfileHighlight.Opacity, 5, 100)),
             VolumeGap = volume.Gap,
             VolumeWidth = volume.Width,
             VolumeMirrored = volume.Mirrored,

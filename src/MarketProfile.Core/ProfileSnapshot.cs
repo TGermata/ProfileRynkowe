@@ -27,6 +27,12 @@ public sealed record TpoPeriod(int Index, DateTime Start, DateTime End, decimal 
 {
     /// <summary>Litera okresu.</summary>
     public char Letter => TpoLetters.ForPeriod(Index);
+
+    /// <summary>Pierwsza cena w okresie (0 = nieznana).</summary>
+    public decimal Open { get; init; }
+
+    /// <summary>Ostatnia cena w okresie (0 = nieznana).</summary>
+    public decimal Close { get; init; }
 }
 
 /// <summary>

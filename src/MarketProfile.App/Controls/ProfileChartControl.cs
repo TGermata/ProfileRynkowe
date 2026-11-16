@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using MarketProfile.App.Settings;
+using MarketProfile.App.ViewModels;
 using MarketProfile.Core;
 
 namespace MarketProfile.App.Controls;
@@ -52,6 +53,57 @@ public sealed class ProfileChartControl : FrameworkElement
         set => SetValue(LinesProperty, value);
     }
 
+    /// <summary>Tryb symulacji – menu podręczne profilu ma pozycje „Symulacja od początku profilu / od słupka”.</summary>
+    public static readonly DependencyProperty SimulationMenuProperty = DependencyProperty.Register(
+        nameof(SimulationMenu), typeof(bool), typeof(ProfileChartControl), new PropertyMetadata(false));
+
+    public bool SimulationMenu
+    {
+        get => (bool)GetValue(SimulationMenuProperty);
+        set => SetValue(SimulationMenuProperty, value);
+    }
+
+    /// <summary>Prośba o start symulacji od podanego momentu (czas lokalny giełdy – początek profilu albo słupka).</summary>
+    public event Action<DateTime>? SimulateFromRequested;
+
+    /// <summary>
+    /// Tempo budowania TPO (× normy, ze znakiem; NaN = brak) – wskaźnik ze wskazówką i kolor drugiej linii zegara.
+    /// </summary>
+    public static readonly DependencyProperty TempoValueProperty = DependencyProperty.Register(
+        nameof(TempoValue), typeof(double), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public double TempoValue
+    {
+        get => (double)GetValue(TempoValueProperty);
+        set => SetValue(TempoValueProperty, value);
+    }
+
+    /// <summary>
+    /// Czy wskaźnik tempa jest aktywny. Nieaktywny (np. początek sesji – za wcześnie na pomiar) jest rysowany na szaro,
+    /// z opisem stanu pod spodem.
+    /// </summary>
+    public static readonly DependencyProperty TempoActiveProperty = DependencyProperty.Register(
+        nameof(TempoActive), typeof(bool), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public bool TempoActive
+    {
+        get => (bool)GetValue(TempoActiveProperty);
+        set => SetValue(TempoActiveProperty, value);
+    }
+
+    /// <summary>Opis stanu tempa pod wskaźnikiem (np. „Zwalnia ↑”, „Zatrzymanie przy 7674.75”).</summary>
+    public static readonly DependencyProperty TempoStateTextProperty = DependencyProperty.Register(
+        nameof(TempoStateText), typeof(string), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(string.Empty, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public string TempoStateText
+    {
+        get => (string)GetValue(TempoStateTextProperty);
+        set => SetValue(TempoStateTextProperty, value);
+    }
+
     /// <summary>
     /// Tekst zegara bieżącego okresu TPO (np. "TPO F  10:00–10:30  ⏱ 12:34").
     /// Tekst przygotowuje model widoku; kontrolka tylko go rysuje w miejscu i stylu z ustawień.
@@ -81,6 +133,8 @@ public sealed class ProfileChartControl : FrameworkElement
         {
             var chart = (ProfileChartControl)d;
             chart._manualLetterWidth = false;
+            chart._manualRowHeight = false;
+            chart._manualCenter = null;
             chart._panX = 0;
             chart.ClearPin();
         }));
@@ -171,7 +225,10 @@ public sealed class ProfileChartControl : FrameworkElement
     private static readonly Typeface SymbolTypeface = new("Segoe UI Emoji, Segoe UI"); // obsługuje ikonę kłódki
 
     // --- Stan widoku ---
-    private double _rowPx = 14;       // wysokość wiersza w pikselach
+    private const double DefaultRowPx = 14;
+    private double _rowPx = DefaultRowPx; // wysokość wiersza w pikselach
+    private bool _manualRowHeight;    // użytkownik sam ustawił wysokość wierszy (powiększenie) – bez dopasowania w pionie
+    private decimal? _fitCenter;      // cena na środku przy dopasowaniu w pionie (środek zakresu dopasowanych profili)
     private double _letterPx = 10;    // szerokość litery w pikselach
     private bool _manualLetterWidth;  // użytkownik sam ustawił szerokość liter (Ctrl + kółko) – bez dopasowania
     private double _minColumnWidth = MinColumnWidth; // minimalna szerokość kolumny (mniejsza przy wielu profilach)
@@ -206,6 +263,8 @@ public sealed class ProfileChartControl : FrameworkElement
     private double _panX;             // przesunięcie w poziomie (0 = najnowszy profil przy prawej krawędzi)
     private double? _pinFraction;     // przypięcie profilu: jego lewa krawędź w tym ułamku szerokości wykresu (null = brak)
     private string? _pinKey;          // klucz przypiętego profilu (null przy _pinFraction = przypnij najnowszy przy rysowaniu)
+    private bool _pinAnywhere;        // przypięcie wybranego profilu (z tabeli parametrów) – także daleko w historii
+    private (string Session, DateTime Start)? _highlight; // profil podświetlony (wybrany w tabeli parametrów)
     private decimal? _manualCenter;   // cena na środku ekranu ustawiona ręcznie (null = śledzenie ceny)
     private decimal? _autoCenter;     // cena na środku ekranu w trybie śledzenia
     private decimal _lastCenter;      // środek użyty w ostatnim rysowaniu
@@ -256,14 +315,15 @@ public sealed class ProfileChartControl : FrameworkElement
         var latest = all![^1].Snapshot;
         _lastRowHeight = latest.RowHeight;
         _lastTickSize = latest.TickSize;
-        _lastCenter = GetCenterPrice(latest);
 
         var profiles = all.Where(p => p.IsVisible).ToList();
         var chartRight = ActualWidth - AxisWidth;
 
-        // Dopasowanie szerokości liter, żeby ostatnie N profili zmieściło się na ekranie
-        // (gdy użytkownik nie ustawił powiększenia ręcznie).
+        // Dopasowanie szerokości liter i wysokości wierszy, żeby ostatnie N profili zmieściło się na ekranie
+        // (gdy użytkownik nie ustawił powiększenia ręcznie). Środek ceny – po dopasowaniu (zależy od niego).
         FitProfilesToScreen(profiles, chartRight - 10);
+        FitRowsToScreen(profiles);
+        _lastCenter = GetCenterPrice(latest);
         UpdateZoomDerived();
 
         // 1. Układ: pozycje wszystkich kolumn – od najnowszej (przy prawej krawędzi) do najstarszych (w lewo).
@@ -289,7 +349,12 @@ public sealed class ProfileChartControl : FrameworkElement
             if (pinned is not null)
             {
                 // Najwyżej 0: gdy nowe profile dojdą do prawej krawędzi, wykres przesuwa się jak zwykle.
-                var pan = Math.Min(0, _panX + (chartRight * fraction - pinned.X));
+                var pan = _panX + (chartRight * fraction - pinned.X);
+                if (!_pinAnywhere)
+                {
+                    pan = Math.Min(0, pan);
+                }
+
                 if (Math.Abs(pan - _panX) > 0.01)
                 {
                     _panX = pan;
@@ -312,6 +377,13 @@ public sealed class ProfileChartControl : FrameworkElement
             }
 
             var profile = column.View.Snapshot;
+
+            // Profil wybrany w tabeli parametrów – podświetlone tło (pod literami; wszystkie części rozbitego profilu).
+            if (_highlight is { } h && profile.Session.Name == h.Session && profile.SessionStart == h.Start)
+            {
+                dc.DrawRectangle(Appearance.SelectedProfileBrush, null, new Rect(column.X, 0, column.Width, ActualHeight));
+            }
+
             _columns.Add(new ColumnLayout(profile, column.View.IsExpanded, column.X, column.Width, column.X + OpenSpace + IbBarWidth + IbGap));
             DrawProfile(dc, column.View, column.X, column.Width, LetterColumns(column.View) * _letterPx,
                 isLatest: ReferenceEquals(profile, latest));
@@ -321,7 +393,7 @@ public sealed class ProfileChartControl : FrameworkElement
         dc.Pop();
 
         DrawPriceAxis(dc, chartRight, latest);
-        DrawPeriodTimer(dc, chartRight);
+        DrawTempoGauge(dc, chartRight, DrawPeriodTimer(dc, chartRight));
     }
 
     /// <summary>Pozycja kolumny profilu w układzie (także poza ekranem).</summary>
@@ -434,6 +506,42 @@ public sealed class ProfileChartControl : FrameworkElement
     }
 
     /// <summary>
+    /// Dopasowanie w pionie: wysokość wierszy tak, żeby cały zakres cen (High–Low) ostatnich
+    /// <see cref="ProfilesToFit"/> profili mieścił się na ekranie, a środek ekranu = środek tego zakresu.
+    /// Nie większa niż domyślna (14 px) – wąski zakres nie daje olbrzymich liter. Nie działa, gdy użytkownik
+    /// sam powiększył wykres w pionie albo przesunął go w górę/dół – do czasu „Dopasuj” lub zmiany liczby profili.
+    /// </summary>
+    private void FitRowsToScreen(IReadOnlyList<ProfileView> profiles)
+    {
+        _fitCenter = null;
+        var count = ProfilesToFit;
+        if (_manualRowHeight || _manualCenter is not null || count <= 0)
+        {
+            return;
+        }
+
+        var fitted = profiles.Skip(Math.Max(0, profiles.Count - count)).Select(p => p.Snapshot).Where(s => !s.IsEmpty).ToList();
+        var available = (ActualHeight - HeaderHeight) * 0.92; // trochę miejsca nad i pod profilami
+        if (fitted.Count == 0 || available <= 0)
+        {
+            return;
+        }
+
+        var high = fitted.Max(s => s.High);
+        var low = fitted.Min(s => s.Low);
+        var rowHeight = fitted[^1].RowHeight;
+        var rows = (double)((high - low) / rowHeight) + 2;
+        var rowPx = Math.Clamp(Math.Floor(available / rows * 100) / 100, ChartZoom.MinRowPx, DefaultRowPx);
+        if (Math.Abs(rowPx - _rowPx) > 0.005)
+        {
+            _rowPx = rowPx;
+            _letterCache.Clear();
+        }
+
+        _fitCenter = ToRow((high + low) / 2, rowHeight);
+    }
+
+    /// <summary>
     /// Wyszukiwanie połówkowe: największa wartość z przedziału [low, high], dla której warunek jest spełniony
     /// (zakładamy, że dla <paramref name="low"/> jest spełniony, a im większa wartość, tym trudniej).
     /// </summary>
@@ -464,12 +572,13 @@ public sealed class ProfileChartControl : FrameworkElement
     /// Zegar bieżącego okresu TPO – rysowany na wierzchu, pod paskiem nagłówków profili,
     /// w lewym górnym rogu, na środku u góry albo w prawym górnym rogu wykresu (wg ustawień).
     /// </summary>
-    private void DrawPeriodTimer(DrawingContext dc, double chartRight)
+    /// <returns>Prostokąt zegara (null = zegar niewidoczny) – pod nim rysowany jest wskaźnik tempa.</returns>
+    private Rect? DrawPeriodTimer(DrawingContext dc, double chartRight)
     {
         var style = Appearance;
         if (!style.TimerEnabled || string.IsNullOrEmpty(PeriodTimerText))
         {
-            return;
+            return null;
         }
 
         var text = new FormattedText(PeriodTimerText, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
@@ -490,8 +599,151 @@ public sealed class ProfileChartControl : FrameworkElement
         var y = HeaderHeight + margin;
 
         // Półprzezroczyste tło – zegar jest czytelny także nad literami profili.
-        dc.DrawRoundedRectangle(TimerBackgroundBrush, null, new Rect(x, y, boxWidth, boxHeight), 4, 4);
+        var box = new Rect(x, y, boxWidth, boxHeight);
+        dc.DrawRoundedRectangle(TimerBackgroundBrush, null, box, 4, 4);
         dc.DrawText(text, new Point(x + padding, y + padding / 2));
+        return box;
+    }
+
+    // --- Wskaźnik tempa budowania TPO (jak prędkościomierz): łuk w kolorach „temperatury” i wskazówka. ---
+
+    private const double GaugeRadius = 58;
+    private const double GaugeArcThickness = 9;
+    private const int GaugeSegments = 72;
+    private static readonly Pen[] GaugeArcPens = CreateGaugeArcPens();
+    private static readonly Pen GaugeTickPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0xC8, 0xCD, 0xD4)), 1.5));
+    private static readonly Pen GaugeNeedlePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0xF2, 0xF4, 0xF7)), 3)
+    {
+        StartLineCap = PenLineCap.Round,
+        EndLineCap = PenLineCap.Triangle,
+    });
+    private static readonly Brush GaugeHubBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xF2, 0xF4, 0xF7)));
+    private static readonly Brush GaugeLabelBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x90, 0x98, 0xA4)));
+
+    // Wskaźnik nieaktywny (początek sesji – za wcześnie na pomiar): wszystko w szarościach.
+    private static readonly Brush GaugeInactiveBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x5A, 0x60, 0x6A)));
+    private static readonly Pen GaugeInactiveArcPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x3E, 0x44, 0x4D)), GaugeArcThickness));
+    private static readonly Pen GaugeInactiveTickPen = Frozen(new Pen(GaugeInactiveBrush, 1.5));
+    private static readonly Pen GaugeInactiveNeedlePen = Frozen(new Pen(GaugeInactiveBrush, 3)
+    {
+        StartLineCap = PenLineCap.Round,
+        EndLineCap = PenLineCap.Triangle,
+    });
+
+    private static Pen[] CreateGaugeArcPens()
+    {
+        var pens = new Pen[GaugeSegments];
+        for (var i = 0; i < GaugeSegments; i++)
+        {
+            // Kolor środka odcinka skali.
+            var value = TempoColors.ValueAt((i + 0.5) / GaugeSegments);
+            var pen = new Pen(new SolidColorBrush(TempoColors.ColorFor(value)), GaugeArcThickness);
+            pen.Freeze();
+            pens[i] = pen;
+        }
+
+        return pens;
+    }
+
+    /// <summary>Punkt na łuku wskaźnika dla położenia na skali (0 = lewa strona, 1 = prawa).</summary>
+    private static Point GaugePoint(Point center, double radius, double position)
+    {
+        var angle = Math.PI * (1 - Math.Clamp(position, 0, 1));
+        return new Point(center.X + radius * Math.Cos(angle), center.Y - radius * Math.Sin(angle));
+    }
+
+    /// <summary>
+    /// Wskaźnik tempa: półokrągła skala 0–3 × normy (niebieski → zielony → czerwony), wskazówka na wielkości tempa,
+    /// pod nią wartość ze strzałką kierunku w kolorze tempa i opis stanu. Rysowany pod zegarem TPO (albo w jego miejscu).
+    /// </summary>
+    private void DrawTempoGauge(DrawingContext dc, double chartRight, Rect? timer)
+    {
+        var tempo = TempoValue;
+        if (double.IsNaN(tempo) || !Appearance.TempoGaugeEnabled)
+        {
+            return;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var regular = new Typeface(SymbolTypeface.FontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        var bold = new Typeface(SymbolTypeface.FontFamily, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+        var active = TempoActive;
+        var arrow = tempo > 0 ? " ↑" : tempo < 0 ? " ↓" : string.Empty;
+        var valueText = new FormattedText(
+            active ? Math.Abs(tempo).ToString("0.0", CultureInfo.CurrentCulture) + "×" + arrow : "—",
+            CultureInfo.CurrentCulture, FlowDirection.LeftToRight, bold, 16,
+            active ? TempoColors.BrushFor(tempo) : GaugeInactiveBrush, dpi);
+        var stateText = new FormattedText(TempoStateText ?? string.Empty, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+            regular, 11, GaugeLabelBrush, dpi);
+
+        const double margin = 10;
+        const double padding = 10;
+        var width = Math.Max(2 * (GaugeRadius + GaugeArcThickness + 14) + 2 * padding, stateText.Width + 2 * padding);
+        var height = padding + 12 + GaugeArcThickness / 2 + GaugeRadius + 6 + valueText.Height + stateText.Height + padding / 2;
+
+        // Położenie wg ustawień. „Pod zegarem” – wyrównany do zegara, a bez zegara – w jego miejscu.
+        // W rogach górnych omijamy zegar, jeśli stoi w tym samym miejscu.
+        var top = HeaderHeight + margin;
+        var bottom = ActualHeight - height - margin;
+        var left = margin;
+        var middle = (chartRight - width) / 2;
+        var right = chartRight - width - margin;
+        double TopBelowTimer(TimerPosition corner) =>
+            timer is { } r && Appearance.TimerPosition == corner ? r.Bottom + 6 : top;
+
+        var (x, y) = Appearance.TempoGaugePosition switch
+        {
+            TempoGaugePosition.TopLeft => (left, TopBelowTimer(TimerPosition.TopLeft)),
+            TempoGaugePosition.TopCenter => (middle, TopBelowTimer(TimerPosition.TopCenter)),
+            TempoGaugePosition.TopRight => (right, TopBelowTimer(TimerPosition.TopRight)),
+            TempoGaugePosition.BottomLeft => (left, bottom),
+            TempoGaugePosition.BottomRight => (right, bottom),
+            _ when timer is { } t => (Appearance.TimerPosition switch
+            {
+                TimerPosition.TopLeft => t.Left,
+                TimerPosition.TopCenter => t.Left + (t.Width - width) / 2,
+                _ => t.Right - width,
+            }, t.Bottom + 6),
+            _ => (Appearance.TimerPosition switch
+            {
+                TimerPosition.TopLeft => left,
+                TimerPosition.TopCenter => middle,
+                _ => right,
+            }, top),
+        };
+
+        dc.DrawRoundedRectangle(TimerBackgroundBrush, null, new Rect(x, y, width, height), 6, 6);
+
+        var center = new Point(x + width / 2, y + padding + 12 + GaugeArcThickness / 2 + GaugeRadius); // 12 – miejsce na podpisy nad łukiem
+
+        // Łuk skali – odcinki w kolorach gradientu (z lekką zakładką, żeby nie było szczelin).
+        for (var i = 0; i < GaugeSegments; i++)
+        {
+            var from = (double)i / GaugeSegments;
+            var to = Math.Min((double)(i + 1) / GaugeSegments + 0.002, 1);
+            dc.DrawLine(active ? GaugeArcPens[i] : GaugeInactiveArcPen, GaugePoint(center, GaugeRadius, from), GaugePoint(center, GaugeRadius, to));
+        }
+
+        // Podziałka 0, 1, 2, 5, 10, 20, 30+ (skala logarytmiczna).
+        foreach (var mark in TempoColors.ScaleMarks)
+        {
+            var position = TempoColors.Position(mark);
+            dc.DrawLine(active ? GaugeTickPen : GaugeInactiveTickPen, GaugePoint(center, GaugeRadius - GaugeArcThickness / 2 - 1, position),
+                GaugePoint(center, GaugeRadius - GaugeArcThickness / 2 - 6, position));
+            var text = mark.ToString("0", CultureInfo.CurrentCulture) + (mark >= TempoColors.ScaleMax ? "+" : string.Empty);
+            var label = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, regular, 9,
+                active ? GaugeLabelBrush : GaugeInactiveBrush, dpi);
+            var at = GaugePoint(center, GaugeRadius + GaugeArcThickness / 2 + 10, position); // podpisy na zewnątrz łuku – wskazówka ich nie zasłania
+            dc.DrawText(label, new Point(at.X - label.Width / 2, at.Y - label.Height / 2));
+        }
+
+        // Wskazówka na wielkości tempa (kierunek pokazuje strzałka przy wartości).
+        dc.DrawLine(active ? GaugeNeedlePen : GaugeInactiveNeedlePen, center, GaugePoint(center, GaugeRadius - 4, TempoColors.Position(tempo)));
+        dc.DrawEllipse(active ? GaugeHubBrush : GaugeInactiveBrush, null, center, 4.5, 4.5);
+
+        var textY = center.Y + 6;
+        dc.DrawText(valueText, new Point(center.X - valueText.Width / 2, textY));
+        dc.DrawText(stateText, new Point(center.X - stateText.Width / 2, textY + valueText.Height));
     }
 
     /// <summary>
@@ -954,6 +1206,11 @@ public sealed class ProfileChartControl : FrameworkElement
             return manual;
         }
 
+        if (_fitCenter is { } fit)
+        {
+            return fit;
+        }
+
         var visibleRows = (ActualHeight - HeaderHeight) / _rowPx;
         var tolerance = (decimal)(visibleRows * 0.3) * latest.RowHeight;
 
@@ -1166,6 +1423,22 @@ public sealed class ProfileChartControl : FrameworkElement
                 // Tryb Split/Expanded – osobna kolumna dla każdego okresu TPO.
                 menu.Items.Add(CreateMenuItem(column.IsExpanded ? "Zwiń profil" : "Rozwiń profil (Split)",
                     () => ToggleExpandRequested?.Invoke(column.Profile)));
+
+                // Symulacja: start od początku tego profilu albo od klikniętego słupka (litery TPO).
+                if (SimulationMenu)
+                {
+                    var profile = column.Profile;
+                    menu.Items.Add(new Separator());
+                    menu.Items.Add(CreateMenuItem(
+                        $"▶ Symulacja od początku profilu ({profile.Session.Name} {profile.TradingDate:dd.MM}, {profile.PartStart:HH:mm})",
+                        () => SimulateFromRequested?.Invoke(profile.PartStart)));
+
+                    if (HitTestLetter(position) is { } bar && profile.Periods.FirstOrDefault(p => p.Index == bar.Period) is { } period)
+                    {
+                        menu.Items.Add(CreateMenuItem($"▶ Symulacja od słupka {period.Letter} ({period.Start:HH:mm})",
+                            () => SimulateFromRequested?.Invoke(period.Start)));
+                    }
+                }
             }
 
             // Blokada wszystkich linii naraz.
@@ -1243,6 +1516,7 @@ public sealed class ProfileChartControl : FrameworkElement
     public void FitToScreen()
     {
         _manualLetterWidth = false;
+        _manualRowHeight = false;
         _panX = 0;
         _manualCenter = null;
         _autoCenter = null;
@@ -1259,6 +1533,7 @@ public sealed class ProfileChartControl : FrameworkElement
     /// </summary>
     public void PinLatest(double fraction = LatestPinFraction)
     {
+        _pinAnywhere = false;
         _panX = 0;
         _manualCenter = null;
         _autoCenter = null;
@@ -1284,6 +1559,38 @@ public sealed class ProfileChartControl : FrameworkElement
     {
         _pinFraction = null;
         _pinKey = null;
+        _pinAnywhere = false;
+    }
+
+    /// <summary>Usuwa podświetlenie profilu wybranego w tabeli parametrów (np. po zamknięciu tabeli).</summary>
+    public void ClearHighlight()
+    {
+        _highlight = null;
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Pokazuje i podświetla wybrany profil (np. z tabeli parametrów profili): jego początek na środku szerokości wykresu,
+    /// a jego POC na środku wysokości. Zwraca false, gdy profilu nie ma na wykresie (poza wczytaną historią
+    /// albo jego sesja jest ukryta).
+    /// </summary>
+    public bool ShowProfile(string sessionName, DateTime sessionStart)
+    {
+        var view = Profiles?.FirstOrDefault(p => p.IsVisible && p.Snapshot.Session.Name == sessionName &&
+                                                 p.Snapshot.SessionStart == sessionStart);
+        if (view is null)
+        {
+            return false;
+        }
+
+        _pinFraction = 0.5;
+        _pinKey = ProfileKey(view.Snapshot);
+        _pinAnywhere = true;
+        _highlight = (sessionName, sessionStart);
+        _manualCenter = view.Snapshot.Poc;
+        _autoCenter = null;
+        InvalidateVisual();
+        return true;
     }
 
     private Point ChartCenter =>new((ActualWidth - AxisWidth) / 2, MiddleY);
@@ -1325,6 +1632,7 @@ public sealed class ProfileChartControl : FrameworkElement
             }
 
             _rowPx = newRowPx;
+            _manualRowHeight = true;
             _autoCenter = null; // przy śledzeniu ceny – wyśrodkuj ponownie w nowej skali
         }
 

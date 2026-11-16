@@ -440,6 +440,25 @@
                                     </StackPanel>
                                 </GroupBox>
 
+                                <!-- Podświetlenie profilu wybranego w tabeli „Parametry profili”. -->
+                                <GroupBox Header="Podświetlenie profilu wybranego w tabeli parametrów">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Kolor tła" />
+                                            <controls:ColorPicker Grid.Column="1" Color="{Binding HighlightColor}" />
+                                            <TextBlock Grid.Column="2" Text="Krycie (%)" Margin="20,4,4,4" />
+                                            <TextBox Grid.Column="3" Text="{Binding HighlightOpacity}" Width="45" HorizontalAlignment="Left"
+                                                     ToolTip="100 = pełny kolor, mniej = bardziej przezroczyste tło (litery profilu pozostają czytelne)" />
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Po kliknięciu wiersza w oknie „Parametry profili” wykres przesuwa się do tego profilu, a jego tło jest podświetlone tym kolorem. Podświetlenie znika po zamknięciu okna parametrów." />
+                                    </StackPanel>
+                                </GroupBox>
+
                                 <!-- Tryb Split: kreska na połowie każdego zakończonego słupka (okresu TPO). -->
                                 <GroupBox Header="Tryb Split – kreska połowy słupka">
                                     <StackPanel>
@@ -642,8 +661,8 @@
                         </ScrollViewer>
                     </TabItem>
 
-                    <!-- Zegar bieżącego okresu TPO -->
-                    <TabItem Header="Zegar TPO">
+                    <!-- Zegar bieżącego okresu TPO i wskaźnik tempa budowania TPO -->
+                    <TabItem Header="Zegar i tempo TPO">
                         <ScrollViewer>
                             <StackPanel>
                                 <GroupBox Header="Zegar bieżącego okresu TPO">
@@ -676,6 +695,25 @@
                                         </Grid>
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="Zegar pokazuje literę aktualnie rysowanego okresu TPO, jego przedział czasu i czas do końca okresu, np. „TPO F  10:00–10:30  ⏱ 12:34”. Czas liczony jest z danych: na żywo – z ostatniej transakcji, w symulacji – z zegara symulacji (w pauzie stoi)." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <GroupBox Header="Tempo budowania TPO">
+                                    <StackPanel>
+                                        <CheckBox Content="Pokazuj wskaźnik tempa na wykresie (ze wskazówką)" IsChecked="{Binding TempoGauge}" />
+                                        <Grid IsEnabled="{Binding TempoGauge}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Położenie wskaźnika" />
+                                            <ComboBox Grid.Column="1" Width="160"
+                                                      ItemsSource="{Binding TempoGaugePositions}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                      SelectedValue="{Binding TempoGaugePosition}" />
+                                        </Grid>
+                                        <CheckBox Content="Pokazuj tempo w pasku na dole okna (wartość, stan, ostatnie zatrzymanie)" IsChecked="{Binding TempoInStatusBar}" />
+                                        <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                                   Text="Tempo = ile nowych poziomów ceny dokłada bieżąca litera w porównaniu ze średnią tej litery z ostatnich 20 sesji: +2,0 – w górę dwa razy szybciej niż zwykle, −1,0 – w dół w zwykłym tempie, 0 – rynek stoi. Kolor jak temperatura: niebieski – wolno, zielony – zwykłe tempo, czerwony – bardzo szybko. Skala wskaźnika 0–30+ jest logarytmiczna: małe wartości widać dokładnie, a duże też się mieszczą. Tempo jest liczone zawsze – wyłączenie wskaźnika i paska tylko je ukrywa." />
                                     </StackPanel>
                                 </GroupBox>
                             </StackPanel>

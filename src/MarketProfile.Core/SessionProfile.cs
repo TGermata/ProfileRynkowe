@@ -150,6 +150,30 @@ public sealed class SessionProfile
     }
 
     /// <summary>
+    /// Dane do analizy tempa budowania TPO (<see cref="TpoTempo"/>): cena otwarcia sesji i zakres każdej litery
+    /// do okresu <paramref name="toPeriod"/> włącznie. Lżejsze niż pełna migawka.
+    /// </summary>
+    public TempoSession GetTempoSession(int toPeriod = int.MaxValue)
+    {
+        lock (_sync)
+        {
+            var periods = _periods
+                .Where(p => p.Key <= toPeriod)
+                .Select(p => new TpoPeriod(p.Key, GetPeriodStart(p.Key), GetPeriodStart(p.Key + 1), p.Value.High, p.Value.Low)
+                {
+                    Open = p.Value.Open,
+                    Close = p.Value.Close,
+                })
+                .ToList();
+            var open = _periods.Count > 0 ? _periods.First().Value.Open : 0;
+            return new TempoSession(Session.Name, SessionStart, Settings.TpoPeriod, Settings.RowHeight, open, periods)
+            {
+                SessionEnd = SessionEnd,
+            };
+        }
+    }
+
+    /// <summary>
     /// Tworzy niezmienną migawkę profilu z wyliczonymi statystykami (POC, Value Area, Initial Balance).
     /// Można ograniczyć migawkę do zakresu okresów – wtedy powstaje "część" rozbitego profilu
     /// z własnym POC, Value Area i Initial Balance.
@@ -203,7 +227,11 @@ public sealed class SessionProfile
             // 4. Okresy TPO z zakresu.
             var periodList = _periods
                 .Where(p => p.Key >= fromPeriod && p.Key <= toPeriod)
-                .Select(p => new TpoPeriod(p.Key, GetPeriodStart(p.Key), GetPeriodStart(p.Key + 1), p.Value.High, p.Value.Low))
+                .Select(p => new TpoPeriod(p.Key, GetPeriodStart(p.Key), GetPeriodStart(p.Key + 1), p.Value.High, p.Value.Low)
+                {
+                    Open = p.Value.Open,
+                    Close = p.Value.Close,
+                })
                 .ToList();
 
             // 4a. Wolumen bieżącego (ostatniego) okresu tej części – profil wolumenowy aktualnie budowanego słupka TPO.

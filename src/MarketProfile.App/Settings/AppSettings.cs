@@ -132,6 +132,16 @@ public sealed record AppSettings
     /// </summary>
     public int BackgroundTickDays { get; init; } = 5;
 
+    /// <summary>Czy pokazywać na wykresie wskaźnik tempa budowania TPO (ze wskazówką).</summary>
+    public bool TempoGauge { get; init; } = true;
+
+    /// <summary>Położenie wskaźnika tempa na wykresie.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<TempoGaugePosition>))]
+    public TempoGaugePosition TempoGaugePosition { get; init; } = TempoGaugePosition.UnderTimer;
+
+    /// <summary>Czy pokazywać linię z tempem (wartość, stan, ostatnie zatrzymanie) w pasku na dole okna.</summary>
+    public bool TempoInStatusBar { get; init; } = true;
+
     /// <summary>Czy pokazywać pod paskiem narzędzi pasek stanu pobierania ticków (postęp i komplet dni).</summary>
     public bool ShowTickDownloadBar { get; init; } = true;
 
@@ -201,6 +211,9 @@ public sealed record AppSettings
 
     /// <summary>Linia HalfBack – połowa wysokości profilu (włączenie, styl linii, kolor, grubość, krycie).</summary>
     public HalfBackStyle HalfBack { get; init; } = new();
+
+    /// <summary>Podświetlenie tła profilu wybranego w tabeli „Parametry profili” (kolor, krycie).</summary>
+    public ProfileHighlightStyle SelectedProfileHighlight { get; init; } = new();
 
     /// <summary>Zegar bieżącego okresu TPO na wykresie (położenie, czcionka, kolor).</summary>
     public PeriodTimerStyle PeriodTimer { get; init; } = new();
@@ -519,6 +532,16 @@ public sealed record HalfBackStyle
     public int Opacity { get; init; } = 70;
 }
 
+/// <summary>Podświetlenie tła profilu wybranego w tabeli „Parametry profili”.</summary>
+public sealed record ProfileHighlightStyle
+{
+    /// <summary>Kolor tła (#RRGGBB).</summary>
+    public string Color { get; init; } = "#FFD54F";
+
+    /// <summary>Krycie tła w procentach (100 = pełny kolor, mniej = bardziej przezroczyste).</summary>
+    public int Opacity { get; init; } = 15;
+}
+
 /// <summary>Źródło danych w trybie „Na żywo”.</summary>
 public enum LiveSourceKind
 {
@@ -568,6 +591,28 @@ public enum TimerPosition
 
     /// <summary>Prawy górny róg wykresu (obok osi cen).</summary>
     TopRight,
+}
+
+/// <summary>Położenie wskaźnika tempa budowania TPO na wykresie.</summary>
+public enum TempoGaugePosition
+{
+    /// <summary>Pod zegarem TPO (wyrównany do niego); bez zegara – w miejscu zegara.</summary>
+    UnderTimer,
+
+    /// <summary>Lewy górny róg wykresu.</summary>
+    TopLeft,
+
+    /// <summary>Góra, na środku wykresu.</summary>
+    TopCenter,
+
+    /// <summary>Prawy górny róg wykresu.</summary>
+    TopRight,
+
+    /// <summary>Lewy dolny róg wykresu.</summary>
+    BottomLeft,
+
+    /// <summary>Prawy dolny róg wykresu.</summary>
+    BottomRight,
 }
 
 /// <summary>Grubość czcionki.</summary>

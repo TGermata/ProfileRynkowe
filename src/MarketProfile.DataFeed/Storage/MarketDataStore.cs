@@ -13,7 +13,7 @@ namespace MarketProfile.DataFeed.Storage;
 ///    zaokrągleń liczb zmiennoprzecinkowych),
 ///  - źródło: skąd pochodzą dane, np. "IB" (broker) lub "TEST" (dane testowe z generatora).
 /// </summary>
-public sealed class MarketDataStore
+public sealed partial class MarketDataStore
 {
     /// <summary>Źródło danych od brokera Interactive Brokers.</summary>
     public const string SourceBroker = "IB";
@@ -79,6 +79,8 @@ public sealed class MarketDataStore
             );
             CREATE INDEX IF NOT EXISTS ix_tick_coverage ON tick_coverage (symbol, from_time);
             """);
+
+        EnsureProfileStatsTable(connection);
 
         // Migracja: bazy zapisane przez wcześniejsze wersje mają ceny × 10⁴ – przeliczamy je na × 10⁸ (bez strat).
         using var version = connection.CreateCommand();

@@ -46,6 +46,9 @@ public sealed class SettingsViewModel : ObservableObject
         // Baza danych.
         RecordToDatabase = settings.RecordToDatabase;
         ShowTickDownloadBar = settings.ShowTickDownloadBar;
+        TempoGauge = settings.TempoGauge;
+        TempoGaugePosition = settings.TempoGaugePosition;
+        TempoInStatusBar = settings.TempoInStatusBar;
         TestDataDays = ToText(settings.TestDataDays);
         BackgroundHistoryDays = ToText(settings.BackgroundHistoryDays);
         BackgroundTickDays = ToText(settings.BackgroundTickDays);
@@ -85,6 +88,7 @@ public sealed class SettingsViewModel : ObservableObject
 
         // Linia HalfBack (połowa wysokości profilu).
         LoadHalfBack(settings.HalfBack);
+        LoadHighlight(settings.SelectedProfileHighlight);
 
         // Zegar bieżącego okresu TPO.
         LoadTimer(settings.PeriodTimer);
@@ -173,6 +177,16 @@ public sealed class SettingsViewModel : ObservableObject
         new(LineStyle.Dashed, "Kreskowana"),
         new(LineStyle.Dotted, "Kropkowana"),
     ];
+
+    // --- Podświetlenie profilu wybranego w tabeli parametrów ---
+    public string HighlightColor { get; set; } = string.Empty;
+    public string HighlightOpacity { get; set; } = string.Empty;
+
+    private void LoadHighlight(ProfileHighlightStyle highlight)
+    {
+        HighlightColor = highlight.Color;
+        HighlightOpacity = ToText(highlight.Opacity);
+    }
 
     private void LoadHalfBack(HalfBackStyle halfBack)
     {
@@ -613,6 +627,22 @@ public sealed class SettingsViewModel : ObservableObject
 
     /// <summary>Czy pokazywać pasek stanu pobierania ticków w oknie głównym.</summary>
     public bool ShowTickDownloadBar { get; set; }
+
+    // --- Tempo budowania TPO ---
+    public bool TempoGauge { get; set; }
+    public TempoGaugePosition TempoGaugePosition { get; set; }
+    public bool TempoInStatusBar { get; set; }
+
+    /// <summary>Położenia wskaźnika tempa do wyboru.</summary>
+    public IReadOnlyList<KeyValuePair<TempoGaugePosition, string>> TempoGaugePositions { get; } =
+    [
+        new(TempoGaugePosition.UnderTimer, "Pod zegarem TPO"),
+        new(TempoGaugePosition.TopLeft, "Lewy górny róg"),
+        new(TempoGaugePosition.TopCenter, "Góra – środek"),
+        new(TempoGaugePosition.TopRight, "Prawy górny róg"),
+        new(TempoGaugePosition.BottomLeft, "Lewy dolny róg"),
+        new(TempoGaugePosition.BottomRight, "Prawy dolny róg"),
+    ];
     public string TestDataDays { get; set; }
 
     /// <summary>Ile dni historii pobierać w tle dla instrumentów z zaznaczonym „Pobieraj dane”.</summary>
@@ -935,6 +965,16 @@ public sealed class SettingsViewModel : ObservableObject
             return Fail("HalfBack: grubość podaj w pikselach od 1 do 10.");
         }
 
+        if (!ColorUtil.TryParse(HighlightColor, out _))
+        {
+            return Fail("Podświetlenie wybranego profilu: kolor podaj w formacie #RRGGBB.");
+        }
+
+        if (!TryParseInt(HighlightOpacity, 5, 100, out var highlightOpacity))
+        {
+            return Fail("Podświetlenie wybranego profilu: krycie podaj w procentach od 5 do 100.");
+        }
+
         if (!TryParseInt(HalfBackOpacity, 5, 100, out var halfBackOpacity))
         {
             return Fail("HalfBack: krycie podaj w procentach od 5 do 100.");
@@ -967,12 +1007,12 @@ public sealed class SettingsViewModel : ObservableObject
 
         if (!TryParseInt(TimerFontSize, 6, 72, out var timerFontSize))
         {
-            return Fail("Zegar TPO: wielkość czcionki podaj od 6 do 72.");
+            return Fail("Zegar i tempo TPO: wielkość czcionki podaj od 6 do 72.");
         }
 
         if (!ColorUtil.TryParse(TimerColor, out _))
         {
-            return Fail("Zegar TPO: kolor podaj w formacie #RRGGBB.");
+            return Fail("Zegar i tempo TPO: kolor podaj w formacie #RRGGBB.");
         }
 
         // Kolory sesji.
@@ -1026,6 +1066,9 @@ public sealed class SettingsViewModel : ObservableObject
             SimulatorSpeed = speed,
             RecordToDatabase = RecordToDatabase,
             ShowTickDownloadBar = ShowTickDownloadBar,
+            TempoGauge = TempoGauge,
+            TempoGaugePosition = TempoGaugePosition,
+            TempoInStatusBar = TempoInStatusBar,
             LiveSource = UseInteractiveBrokers ? LiveSourceKind.InteractiveBrokers : LiveSourceKind.Generator,
             IbApiPath = IbApiPath?.Trim() ?? string.Empty,
             IbHost = ibSettings.Host,
@@ -1076,6 +1119,11 @@ public sealed class SettingsViewModel : ObservableObject
                 Color = MidlineColor.Trim().ToUpperInvariant(),
                 Thickness = midlineThickness,
                 Opacity = midlineOpacity,
+            },
+            SelectedProfileHighlight = new ProfileHighlightStyle
+            {
+                Color = HighlightColor.Trim().ToUpperInvariant(),
+                Opacity = highlightOpacity,
             },
             HalfBack = new HalfBackStyle
             {
@@ -1129,6 +1177,7 @@ public sealed class SettingsViewModel : ObservableObject
         MidlineThickness = ToText(midline.Thickness);
         MidlineOpacity = ToText(midline.Opacity);
         LoadHalfBack(new HalfBackStyle());
+        LoadHighlight(new ProfileHighlightStyle());
         LoadTimer(new PeriodTimerStyle());
         LoadArrows(new ProfileArrowsStyle());
         DayColors.Load(SessionColorScheme.DefaultDay);

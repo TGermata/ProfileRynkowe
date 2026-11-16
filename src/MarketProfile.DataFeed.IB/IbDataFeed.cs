@@ -354,6 +354,13 @@ public sealed class IbDataFeed : IMarketDataFeed
             _client.cancelHistoricalData(HistoryRequestId);
             _historyError ??= "przekroczono czas oczekiwania";
         }
+        catch (OperationCanceledException)
+        {
+            // Pobieranie przerwane (np. użytkownik zmniejszył liczbę profili) – odwołujemy zapytanie w TWS,
+            // żeby kolejne zapytanie o historię nie zderzyło się z niedokończonym.
+            _client.cancelHistoricalData(HistoryRequestId);
+            throw;
+        }
 
         return _historyError is null ? [.. _historyBars] : null;
     }

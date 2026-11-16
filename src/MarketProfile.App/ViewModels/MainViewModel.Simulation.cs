@@ -618,6 +618,42 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>
+    /// Menu podręczne wykresu: „Symulacja od początku profilu / od słupka” – ustawia datę i godzinę startu na ten moment
+    /// (czas lokalny giełdy) i wczytuje symulację od niego w pauzie; ▶ rusza rysowanie, ⏹ wraca do tego momentu.
+    /// </summary>
+    public async Task SimulateFromAsync(DateTime localTime)
+    {
+        if (!IsSimulationMode || _simNavigating)
+        {
+            return;
+        }
+
+        var zone = _settings.ExchangeTimeZone;
+        var target = new DateTimeOffset(DateTime.SpecifyKind(localTime, DateTimeKind.Unspecified), zone.GetUtcOffset(localTime));
+        if (SimDataRangeOf(_settings.InstrumentSymbol) is not { } range || target < range.From || target >= range.To)
+        {
+            Status = $"Brak danych w bazie dla {localTime:dd.MM HH:mm} – symulacja może zacząć się tylko w zakresie danych";
+            return;
+        }
+
+        _simNavigating = true;
+        try
+        {
+            if (await LoadSimulationAsync(target, paused: true))
+            {
+                IsSimPlaying = false;
+                FitRequested?.Invoke();
+                PinLatestRequested?.Invoke();
+                Status = $"Symulacja od {localTime:dd.MM HH:mm} – ▶ uruchamia rysowanie";
+            }
+        }
+        finally
+        {
+            _simNavigating = false;
+        }
+    }
+
+    /// <summary>
     /// Wczytuje symulację od podanego momentu do końca danych w bazie.
     /// </summary>
     /// <param name="start">Moment, od którego zaczyna się odtwarzanie.</param>

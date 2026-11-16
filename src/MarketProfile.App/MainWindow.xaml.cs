@@ -24,6 +24,7 @@ public partial class MainWindow : Window
         Chart.LineMoved += _viewModel.MoveLine;
         Chart.SplitRequested += _viewModel.SplitProfile;
         Chart.MergeRequested += _viewModel.MergeProfile;
+        Chart.SimulateFromRequested += time => _ = _viewModel.SimulateFromAsync(time);
         Chart.ToggleExpandRequested += _viewModel.ToggleExpanded;
         Chart.ToggleLockRequested += _viewModel.ToggleLineLock;
         Chart.LockAllRequested += _viewModel.SetAllLinesLocked;
@@ -76,6 +77,22 @@ public partial class MainWindow : Window
             e.Handled = true;
             box.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty)?.UpdateSource();
         }
+    }
+
+    private ProfileStatsWindow? _profileStatsWindow;
+
+    /// <summary>Otwiera (albo przywołuje) okno „Parametry profili” – okno niemodalne, wykres działa dalej.</summary>
+    private void OnProfileStatsClick(object sender, RoutedEventArgs e)
+    {
+        if (_profileStatsWindow is { IsLoaded: true })
+        {
+            _profileStatsWindow.Activate();
+            return;
+        }
+
+        _profileStatsWindow = new ProfileStatsWindow(_viewModel, Chart.ShowProfile, Chart.ClearHighlight) { Owner = this };
+        _profileStatsWindow.Closed += (_, _) => _profileStatsWindow = null;
+        _profileStatsWindow.Show();
     }
 
     /// <summary>Otwiera okno ustawień; po zatwierdzeniu przekazuje nowe ustawienia do modelu widoku.</summary>

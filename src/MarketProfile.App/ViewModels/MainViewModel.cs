@@ -44,6 +44,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private DateTimeOffset? _oldestLoaded;     // czas najstarszej wczytanej świecy
     private bool _loadingOlder;                // trwa doczytywanie starszej historii
     private bool _noOlderData;                 // źródło nie ma już starszych danych
+    private CancellationTokenSource? _historyCts; // doczytywanie historii po zwiększeniu liczby profili (do przerwania)
     private long _lastTickUtcTicks;          // czas ostatniego ticka (UTC) – "teraz" w danych na żywo
     private string _periodTimerText = string.Empty;
     private MarketDataRecorder? _recorder;
@@ -80,6 +81,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _refreshTimer.Tick += (_, _) =>
         {
             RefreshSnapshots();
+            UpdateTempo();
+            UpdateProfileStats();
             UpdatePeriodTimer();
         };
 
@@ -194,8 +197,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     private async Task EnsureHistoryForProfilesAsync()
     {
-        if (!IsRunning || _settings.RequiredHistoryDays() <= _loadedHistoryDays)
+        if (!IsRunning)
         {
+            return;
+        }
+
+        if (_settings.RequiredHistoryDays() <= _loadedHistoryDays)
+        {
+            // Wystarczy to, co już jest – przerywamy ewentualne doczytywanie dłuższej historii (np. powrót z 20 do 5 profili).
+            CancelHistoryExtension();
             return;
         }
 
@@ -207,9 +217,117 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        Status = $"Wczytywanie dłuższej historii ({_settings.RequiredHistoryDays()} dni) dla {ProfilesOnScreen} profili...";
-        await StopAsync(Status);
-        await StartAsync();
+        await ExtendHistoryAsync();
+    }
+
+    private void CancelHistoryExtension()
+    {
+        _historyCts?.Cancel();
+        _historyCts = null;
+    }
+
+    /// <summary>
+    /// Dłuższa historia na większą liczbę profili – bez restartu połączenia i bez czyszczenia wykresu:
+    ///  1) starsze świece z lokalnej bazy (od razu, wykres dostaje starsze profile w ułamku sekundy),
+    ///  2) tylko brakujący początek – z IB w tle (wykres działa dalej; ponowna zmiana liczby profili przerywa pobieranie).
+    /// </summary>
+    private async Task ExtendHistoryAsync()
+    {
+        if (_feed is not { } feed || _builder is not { } builder || _oldestLoaded is not { } oldest)
+        {
+            return;
+        }
+
+        CancelHistoryExtension();
+        var cts = _historyCts = new CancellationTokenSource();
+        var required = _settings.RequiredHistoryDays();
+        var from = DateTimeOffset.UtcNow - TimeSpan.FromDays(required);
+        if (from >= oldest)
+        {
+            _loadedHistoryDays = required;
+            return;
+        }
+
+        // Jedno doczytywanie naraz (także to przy przesuwaniu wykresu w lewo) – IB obsługuje jedno zapytanie o historię.
+        while (_loadingOlder)
+        {
+            await Task.Delay(100);
+            if (cts.IsCancellationRequested)
+            {
+                return;
+            }
+        }
+
+        _loadingOlder = true;
+        var zone = _settings.ExchangeTimeZone;
+        try
+        {
+            // 1. Lokalna baza.
+            Status = $"Doczytywanie historii z bazy ({TimeZoneInfo.ConvertTime(from, zone):dd.MM} – {TimeZoneInfo.ConvertTime(oldest, zone):dd.MM})...";
+            var store = GetStore();
+            var symbol = _settings.InstrumentSymbol;
+            var dbBars = await Task.Run(() => BarAggregator.LoadMinuteBars(store, symbol, from, oldest, MarketDataStore.SourceBroker));
+            if (!ReferenceEquals(feed, _feed) || !ReferenceEquals(builder, _builder) || cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (dbBars.Count > 0)
+            {
+                await Task.Run(() =>
+                {
+                    foreach (var bar in dbBars)
+                    {
+                        builder.ProcessBar(bar);
+                    }
+                });
+                _oldestLoaded = dbBars[0].Time;
+                RefreshSnapshots();
+            }
+
+            // 2. Brakujący początek (bazy nie starczyło) – z IB, w tle. Krótsze braki niż doba to zwykle weekend / noc.
+            var missingTo = _oldestLoaded!.Value;
+            if (missingTo - from > TimeSpan.FromDays(1) && IsBrokerFeed(feed))
+            {
+                Status = $"Doczytywanie historii z IB w tle ({TimeZoneInfo.ConvertTime(from, zone):dd.MM} – {TimeZoneInfo.ConvertTime(missingTo, zone):dd.MM}) – wykres działa...";
+                var ibBars = await Task.Run(() => feed.GetHistoryRangeAsync(from, missingTo, cts.Token));
+                if (!ReferenceEquals(feed, _feed) || !ReferenceEquals(builder, _builder) || cts.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                var recorder = _recorder;
+                await Task.Run(() =>
+                {
+                    recorder?.RecordBars(ibBars);
+                    foreach (var bar in ibBars)
+                    {
+                        builder.ProcessBar(bar);
+                    }
+                });
+
+                if (ibBars.Count > 0)
+                {
+                    _oldestLoaded = ibBars.Min(b => b.Time);
+                    RefreshSnapshots();
+                }
+            }
+
+            _loadedHistoryDays = required;
+            Status = $"Historia od {TimeZoneInfo.ConvertTime(_oldestLoaded!.Value, zone):dd.MM.yyyy} ({ProfilesOnScreen} profili)";
+        }
+        catch (OperationCanceledException)
+        {
+            Status = "Doczytywanie dłuższej historii przerwane";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Nie udało się doczytać historii: {ex.Message}";
+        }
+        finally
+        {
+            _loadingOlder = false;
+        }
     }
 
     /// <summary>Ile dni wstecz doczytujemy za jednym razem przy przesuwaniu wykresu w lewo.</summary>
@@ -348,6 +466,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 PeriodVolumeReference: ReferenceEquals(s, latest) ? PeriodVolumeReference(latest) : 0))
             .ToList();
 
+        UpdateTempo();
+        UpdateProfileStats();
         UpdateSummary(latest);
     }
 
@@ -761,21 +881,68 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             var historyDays = _settings.RequiredHistoryDays();
             _loadedHistoryDays = historyDays;
             _noOlderData = false;
+            CancelHistoryExtension();
+
+            // Na czas wczytywania historii nie wolno doczytywać starszej (IB obsługuje jedno zapytanie o historię naraz).
+            _oldestLoaded = null;
+            _loadingOlder = true;
+
+            // Broker: najpierw historia z lokalnej bazy (profile widać od razu), z IB tylko brakujący najnowszy kawałek.
+            IReadOnlyList<Bar> dbBars = [];
+            if (IsBrokerFeed(feed))
+            {
+                var store = GetStore();
+                var symbol = _settings.InstrumentSymbol;
+                var now = DateTimeOffset.UtcNow;
+                dbBars = await Task.Run(() =>
+                {
+                    var loaded = BarAggregator.LoadMinuteBars(store, symbol, now - TimeSpan.FromDays(historyDays), now, MarketDataStore.SourceBroker);
+                    foreach (var bar in loaded)
+                    {
+                        builder.ProcessBar(bar);
+                    }
+
+                    return loaded;
+                });
+
+                if (dbBars.Count > 0)
+                {
+                    Status = "Historia z bazy – dociąganie najnowszych danych z IB...";
+                    RefreshSnapshots();
+                    if (_fitPending)
+                    {
+                        _fitPending = false;
+                        FitRequested?.Invoke();
+                    }
+                }
+            }
+
+            var lastDbBar = dbBars.Count > 0 ? dbBars[^1].Time : (DateTimeOffset?)null;
             _oldestLoaded = await Task.Run(async () =>
             {
-                var bars = await feed.GetHistoryAsync(TimeSpan.FromDays(historyDays));
-                recorder?.RecordBars(bars);
-                foreach (var bar in bars)
+                // Z IB: od ostatniej świecy z bazy (min. 1 doba – IB liczy w dobach), a bez bazy – cała historia.
+                var lookback = lastDbBar is { } last
+                    ? TimeSpan.FromDays(Math.Min(historyDays, Math.Max(1, (DateTimeOffset.UtcNow - last).TotalDays)))
+                    : TimeSpan.FromDays(historyDays);
+                var ibBars = await feed.GetHistoryAsync(lookback);
+                recorder?.RecordBars(ibBars);
+
+                // Minuty, które są już w bazie (i w profilach), pomijamy – inaczej wolumen liczyłby się dwa razy.
+                var newBars = lastDbBar is { } lastTime ? ibBars.Where(b => b.Time > lastTime).ToList() : [.. ibBars];
+                foreach (var bar in newBars)
                 {
                     builder.ProcessBar(bar);
                 }
 
+                var all = dbBars.Concat(newBars).ToList();
+
                 // Koniec historii – ticki starsze od niego są pomijane (te minuty są już w historii).
-                _historyEndUtcTicks = bars.Count > 0 ? bars.Max(b => b.Time).AddMinutes(1).UtcTicks : 0;
+                _historyEndUtcTicks = all.Count > 0 ? all.Max(b => b.Time).AddMinutes(1).UtcTicks : 0;
 
                 // Najstarsza wczytana świeca – od niej w tył doczytujemy historię przy przesuwaniu w lewo.
-                return bars.Count > 0 ? bars.Min(b => b.Time) : (DateTimeOffset?)null;
+                return all.Count > 0 ? all.Min(b => b.Time) : (DateTimeOffset?)null;
             });
+            _loadingOlder = false;
 
             // Strumień ticków: każdy tick trafia prosto do silnika profili (z wątku źródła danych).
             _feed.TickReceived += OnTickReceived;
@@ -796,6 +963,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception ex)
         {
+            _loadingOlder = false;
             await StopAsync($"Błąd: {ex.Message}");
             return false;
         }
@@ -807,6 +975,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private async Task StopAsync(string status)
     {
         _refreshTimer.Stop();
+        CancelHistoryExtension();
 
         if (_feed is not null)
         {
@@ -1235,6 +1404,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Uzupełnia pasek z podsumowaniem najnowszego profilu.</summary>
     private void UpdateSummary(ProfileSnapshot? p)
     {
+        _summaryProfile = p;
+        RefreshSummaryText();
+    }
+
+    private ProfileSnapshot? _summaryProfile;
+
+    /// <summary>Tekst paska z podsumowaniem: poziomy najnowszego profilu i tempo budowania TPO.</summary>
+    private void RefreshSummaryText()
+    {
+        var p = _summaryProfile;
         if (p is null)
         {
             Summary = string.Empty;

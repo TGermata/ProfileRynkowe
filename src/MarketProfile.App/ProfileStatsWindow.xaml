@@ -1,0 +1,80 @@
+<Window x:Class="MarketProfile.App.ProfileStatsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Parametry profili" Width="1280" Height="560" MinWidth="700" MinHeight="300"
+        WindowStartupLocation="CenterOwner">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#707070" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,6,0,0" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <!-- Filtry i akcje -->
+        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <TextBlock x:Name="SymbolText" FontWeight="SemiBold" Margin="0,0,16,0" />
+            <TextBlock Text="Sesja:" Margin="0,0,4,0" />
+            <ComboBox x:Name="SessionFilter" Width="110" SelectedIndex="0" SelectionChanged="OnFilterChanged">
+                <ComboBoxItem Content="Wszystkie" />
+                <ComboBoxItem Content="Dzienna" />
+                <ComboBoxItem Content="Nocna" />
+            </ComboBox>
+            <TextBlock Text="Od:" Margin="12,0,4,0" />
+            <DatePicker x:Name="FromDate" Width="120" SelectedDateChanged="OnFilterChanged" />
+            <TextBlock Text="Do:" Margin="8,0,4,0" />
+            <DatePicker x:Name="ToDate" Width="120" SelectedDateChanged="OnFilterChanged" />
+            <Button Content="⟳ Odśwież" Padding="8,2" Margin="12,0,0,0" Click="OnRefreshClick" />
+            <CheckBox x:Name="AutoRefresh" Content="Odświeżaj na bieżąco" IsChecked="True" Margin="10,0,0,0" VerticalAlignment="Center" />
+            <Button Content="Eksport CSV…" Padding="8,2" Margin="16,0,0,0" Click="OnExportClick"
+                    ToolTip="Zapis widocznych wierszy do pliku CSV (separator ;, kropka dziesiętna) – np. dla algorytmu w Pythonie" />
+        </WrapPanel>
+
+        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Hint}" x:Name="FooterText" />
+
+        <!-- Informacja, gdy wybranego profilu nie ma na wykresie (zamiast okna komunikatu przy każdym kliknięciu). -->
+        <TextBlock DockPanel.Dock="Top" x:Name="NoticeText" Visibility="Collapsed" TextWrapping="Wrap" Margin="0,0,0,6"
+                   Padding="6,3" Background="#FFF4D6" Foreground="#6B4E00" />
+
+        <DataGrid x:Name="Grid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" AlternatingRowBackground="#F4F6F8"
+                  FrozenColumnCount="3" SelectionMode="Single" MouseDoubleClick="OnRowDoubleClick"
+                  SelectionChanged="OnSelectionChanged"
+                  EnableRowVirtualization="True">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Data" Binding="{Binding Date}" />
+                <DataGridTextColumn Header="Sesja" Binding="{Binding Session}" />
+                <DataGridTextColumn Header="Stan" Binding="{Binding State}" />
+                <DataGridTextColumn Header="Kształt" Binding="{Binding Shape}" />
+                <DataGridTextColumn Header="Otwarcie" Binding="{Binding OpenLocation}" />
+                <DataGridTextColumn Header="Typ otwarcia" Binding="{Binding OpenType}" />
+                <DataGridTextColumn Header="Migracja VA" Binding="{Binding ValueMigration}" />
+                <DataGridTextColumn Header="Nakł. VA" Binding="{Binding ValueAreaOverlap}" />
+                <DataGridTextColumn Header="Open" Binding="{Binding Open}" />
+                <DataGridTextColumn Header="High" Binding="{Binding High}" />
+                <DataGridTextColumn Header="Low" Binding="{Binding Low}" />
+                <DataGridTextColumn Header="Close" Binding="{Binding Close}" />
+                <DataGridTextColumn Header="Zakres" Binding="{Binding Range}" />
+                <DataGridTextColumn Header="POC" Binding="{Binding Poc}" />
+                <DataGridTextColumn Header="VPOC" Binding="{Binding VolumePoc}" />
+                <DataGridTextColumn Header="VAH" Binding="{Binding ValueAreaHigh}" />
+                <DataGridTextColumn Header="VAL" Binding="{Binding ValueAreaLow}" />
+                <DataGridTextColumn Header="POC w zakr." Binding="{Binding PocPosition}" />
+                <DataGridTextColumn Header="TPO nad/pod POC" Binding="{Binding TpoBalance}" />
+                <DataGridTextColumn Header="IBH" Binding="{Binding IbHigh}" />
+                <DataGridTextColumn Header="IBL" Binding="{Binding IbLow}" />
+                <DataGridTextColumn Header="Wybicie z IB" Binding="{Binding IbExtension}" />
+                <DataGridTextColumn Header="Ogony" Binding="{Binding Tails}" />
+                <DataGridTextColumn Header="Single printy" Binding="{Binding SinglePrints}" />
+                <DataGridTextColumn Header="Nietknięte POC" Binding="{Binding NakedPocs}" />
+                <DataGridTextColumn Header="Nietknięte VPOC" Binding="{Binding NakedVolumePocs}" />
+                <DataGridTextColumn Header="Wolumen" Binding="{Binding Volume}" />
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>
