@@ -27,6 +27,7 @@ public sealed class IbDataFeed : IMarketDataFeed
     private const int ContractRequestId = 1;
     private const int HistoryRequestId = 2;
     private const int TickProbeRequestId = 3;
+    private const int OhlcRequestId = 4;          // świece D/W/M (kontrakt ciągły)
     private const int FirstLiveRequestId = 100;   // kolejne subskrypcje strumienia: 101, 102, ...
 
     // Numery pól notowań (TickType) używane przy danych opóźnionych i zwykłym strumieniu notowań.
@@ -67,6 +68,12 @@ public sealed class IbDataFeed : IMarketDataFeed
     private readonly ConcurrentQueue<Tick> _historicalTicks = new();   // transakcje z bieżącego zapytania reqHistoricalTicks
     private string? _ticksError;
     private bool _ticksPacing;   // IB odrzucił zapytanie z powodu limitu zapytań (pacing violation)
+
+    // Świece dzienne / tygodniowe / miesięczne (reqHistoricalData z barSize 1 day / 1 week / 1 month).
+    private TaskCompletionSource<bool> _ohlcDone = NewTcs<bool>();
+    private readonly ConcurrentQueue<Bar> _ohlcBars = new();
+    private string? _ohlcError;
+    private bool _ohlcPacing;
 
     // Składanie transakcji ze strumienia notowań (dane opóźnione).
     private decimal? _lastPrice;
@@ -363,6 +370,76 @@ public sealed class IbDataFeed : IMarketDataFeed
         }
 
         return _historyError is null ? [.. _historyBars] : null;
+    }
+
+    // =====================================================================
+    // Świece dzienne, tygodniowe i miesięczne
+    // =====================================================================
+
+    /// <summary>
+    /// Świece D/W/M za okres <paramref name="duration"/> wstecz od teraz (format IB, np. "5 Y", "10 D").
+    /// Pełna doba (useRTH = 0). Dla kontraktów terminowych – kontrakt ciągły (CONTFUT): wieloletnia historia
+    /// sklejona z kolejnych serii; ceny starszych świec IB koryguje o różnice przy rolowaniu (nie leżą na ticku i różnią się
+    /// od cen ówczesnego kontraktu). Najstarsze świece IB podaje niepełne (O=H=L=C, wolumen 0). Data świecy = data handlowa.
+    /// </summary>
+    public async Task<OhlcPage> GetOhlcBarsAsync(BarInterval interval, string duration, CancellationToken cancellationToken = default)
+    {
+        var instrument = _instrument ?? throw new InvalidOperationException("Najpierw wywołaj ConnectAsync.");
+        var contract = instrument.Type == InstrumentType.Future
+            ? ContinuousFuture(instrument)
+            : _requestContract ?? throw new InvalidOperationException("Najpierw wywołaj ConnectAsync.");
+        var barSize = interval switch
+        {
+            BarInterval.Day => "1 day",
+            BarInterval.Week => "1 week",
+            _ => "1 month",
+        };
+
+        _ohlcBars.Clear();
+        _ohlcError = null;
+        _ohlcPacing = false;
+        _ohlcDone = NewTcs<bool>();
+        Status($"IB: pobieranie świec {interval.DisplayName().ToLowerInvariant()}ch ({duration})...");
+
+        // Dla kontraktu ciągłego IB wymaga pustego końca zapytania (= teraz). formatDate = 1 → data "yyyyMMdd".
+        _client.reqHistoricalData(OhlcRequestId, contract, string.Empty, duration, barSize, "TRADES", 0, 1, false, null);
+
+        try
+        {
+            await WaitAsync(_ohlcDone.Task, TimeSpan.FromSeconds(90), "TWS nie zwrócił świec", cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            _client.cancelHistoricalData(OhlcRequestId);
+            _ohlcError ??= "przekroczono czas oczekiwania";
+        }
+        catch (OperationCanceledException)
+        {
+            _client.cancelHistoricalData(OhlcRequestId);
+            throw;
+        }
+
+        var bars = _ohlcError is null ? _ohlcBars.OrderBy(b => b.Time).ToList() : [];
+        return new OhlcPage(bars, _ohlcError, _ohlcPacing);
+    }
+
+    /// <summary>Kontrakt ciągły (CONTFUT) instrumentu terminowego – tylko do danych historycznych.</summary>
+    private static Contract ContinuousFuture(Instrument instrument)
+    {
+        var contract = new Contract
+        {
+            Symbol = instrument.BrokerSymbol,
+            SecType = "CONTFUT",
+            Exchange = instrument.Exchange,
+            Currency = instrument.Currency,
+        };
+
+        if (!string.IsNullOrWhiteSpace(instrument.TradingClass))
+        {
+            contract.TradingClass = instrument.TradingClass;
+        }
+
+        return contract;
     }
 
     // =====================================================================
@@ -678,6 +755,13 @@ public sealed class IbDataFeed : IMarketDataFeed
                 _ticksDone.TrySetResult(false);
                 return;
 
+            case OhlcRequestId:
+                _ohlcPacing = message.Contains("pacing", StringComparison.OrdinalIgnoreCase);
+                _ohlcError = _ohlcPacing ? $"limit zapytań IB ({code}): {message}"
+                    : NoSubscriptionCodes.Contains(code) || code == 162 ? $"brak uprawnień lub danych ({code}): {message}" : text;
+                _ohlcDone.TrySetResult(false);
+                return;
+
             case HistoryRequestId:
                 _historyError = NoSubscriptionCodes.Contains(code) || code == 162 ? $"brak uprawnień: {message}" : text;
                 _historyDone.TrySetResult(false);
@@ -701,9 +785,18 @@ public sealed class IbDataFeed : IMarketDataFeed
         Status(text);
     }
 
-    private void OnHistoricalBar(IBApi.Bar bar)
+    private void OnHistoricalBar(int reqId, IBApi.Bar bar)
     {
-        if (TryParseBarTime(bar.Time, out var time))
+        if (!IbBarTime.TryParse(bar.Time, out var time))
+        {
+            return;
+        }
+
+        if (reqId == OhlcRequestId)
+        {
+            _ohlcBars.Enqueue(new Bar(time, Price(bar.Open), Price(bar.High), Price(bar.Low), Price(bar.Close), Math.Max(0, (long)bar.Volume)));
+        }
+        else
         {
             _historyBars.Enqueue(new Bar(time, Price(bar.Open), Price(bar.High), Price(bar.Low), Price(bar.Close), Math.Max(0, (long)bar.Volume))); // indeksy: wolumen -1 → 0
         }
@@ -833,43 +926,6 @@ public sealed class IbDataFeed : IMarketDataFeed
     /// </summary>
     private static decimal Price(double value) => ToDecimal(value);
 
-    /// <summary>
-    /// Czas świecy: przy formatDate=2 są to sekundy od 1970; na wszelki wypadek obsługujemy też format
-    /// „yyyyMMdd HH:mm:ss Strefa/Czasowa”.
-    /// </summary>
-    private static bool TryParseBarTime(string text, out DateTimeOffset time)
-    {
-        if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds))
-        {
-            time = DateTimeOffset.FromUnixTimeSeconds(seconds);
-            return true;
-        }
-
-        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length >= 2 &&
-            DateTime.TryParseExact($"{parts[0]} {parts[1]}", "yyyyMMdd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var local))
-        {
-            var zone = parts.Length >= 3 ? TryFindZone(parts[2]) : null;
-            time = zone is null ? new DateTimeOffset(local, TimeSpan.Zero) : new DateTimeOffset(local, zone.GetUtcOffset(local));
-            return true;
-        }
-
-        time = default;
-        return false;
-    }
-
-    private static TimeZoneInfo? TryFindZone(string id)
-    {
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(id);
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
-
     private static TaskCompletionSource<T> NewTcs<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static async Task WaitAsync(Task task, TimeSpan timeout, string message, CancellationToken cancellationToken)
@@ -907,9 +963,10 @@ public sealed class IbDataFeed : IMarketDataFeed
 
         public override void contractDetailsEnd(int reqId) => owner._contractsDone.TrySetResult(true);
 
-        public override void historicalData(int reqId, IBApi.Bar bar) => owner.OnHistoricalBar(bar);
+        public override void historicalData(int reqId, IBApi.Bar bar) => owner.OnHistoricalBar(reqId, bar);
 
-        public override void historicalDataEnd(int reqId, string start, string end) => owner._historyDone.TrySetResult(true);
+        public override void historicalDataEnd(int reqId, string start, string end) =>
+            (reqId == OhlcRequestId ? owner._ohlcDone : owner._historyDone).TrySetResult(true);
 
         public override void historicalTicksLast(int reqId, HistoricalTickLast[] ticks, bool done)
         {

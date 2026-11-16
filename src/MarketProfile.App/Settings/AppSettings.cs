@@ -164,7 +164,8 @@ public sealed record AppSettings
         RecordToDatabase != other.RecordToDatabase ||
         LiveSource != other.LiveSource || IbApiPath != other.IbApiPath || IbHost != other.IbHost ||
         IbPort != other.IbPort || IbClientId != other.IbClientId || IbDataType != other.IbDataType ||
-        !DownloadInstruments.SequenceEqual(other.DownloadInstruments);
+        !DownloadInstruments.SequenceEqual(other.DownloadInstruments) ||
+        !Equals(BroadMarketInstrument, other.BroadMarketInstrument);
 
     /// <summary>Ile dni danych testowych generować do bazy.</summary>
     public int TestDataDays { get; init; } = 5;
@@ -217,6 +218,22 @@ public sealed record AppSettings
 
     /// <summary>Zegar bieżącego okresu TPO na wykresie (położenie, czcionka, kolor).</summary>
     public PeriodTimerStyle PeriodTimer { get; init; } = new();
+
+    /// <summary>Wykres D/W/M: rodzaj prezentacji, kolory, wolumen i średnie kroczące.</summary>
+    public CandleChartStyle CandleChart { get; init; } = new();
+
+    /// <summary>Średnie dzienne (wartości „na dziś”) jako linie na wykresie TPO.</summary>
+    public TpoAveragesStyle TpoAverages { get; init; } = new();
+
+    /// <summary>
+    /// Symbol „rynku szerokiego” (domyślnie SPX) – na wykresie D/W/M można przełączyć się z instrumentu na ten
+    /// instrument; jego świece D/W/M są pobierane w tle i zapisywane w bazie (do analiz).
+    /// </summary>
+    public string BroadMarketSymbol { get; init; } = Instrument.DefaultBroadMarketSymbol;
+
+    /// <summary>Instrument rynku szerokiego (z listy, a gdy go tam nie ma – z listy wbudowanej); null = nieznany symbol.</summary>
+    [JsonIgnore]
+    public Instrument? BroadMarketInstrument => Instrument.Find(Instruments, BroadMarketSymbol);
 
     /// <summary>
     /// Czy zmiana ustawień wymaga przebudowania profili od nowa (np. inna wysokość wiersza albo godziny sesji).
@@ -591,6 +608,149 @@ public enum TimerPosition
 
     /// <summary>Prawy górny róg wykresu (obok osi cen).</summary>
     TopRight,
+}
+
+/// <summary>Rodzaj prezentacji świec na wykresie D/W/M.</summary>
+public enum CandleChartType
+{
+    /// <summary>Świece japońskie (korpus od otwarcia do zamknięcia, knoty do maksimum i minimum).</summary>
+    Candles,
+
+    /// <summary>Słupki OHLC (pionowa kreska maksimum–minimum, otwarcie w lewo, zamknięcie w prawo).</summary>
+    OhlcBars,
+}
+
+/// <summary>Wygląd wykresu D/W/M.</summary>
+public sealed record CandleChartStyle
+{
+    /// <summary>Świece japońskie albo słupki OHLC.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<CandleChartType>))]
+    public CandleChartType Type { get; init; } = CandleChartType.Candles;
+
+    /// <summary>Kolor świecy wzrostowej (zamknięcie ≥ otwarcie), #RRGGBB.</summary>
+    public string UpColor { get; init; } = "#30C070";
+
+    /// <summary>Kolor świecy spadkowej, #RRGGBB.</summary>
+    public string DownColor { get; init; } = "#E05050";
+
+    /// <summary>Czy pokazywać wolumen w dolnej części wykresu.</summary>
+    public bool ShowVolume { get; init; } = true;
+
+    /// <summary>Krycie słupków wolumenu w procentach.</summary>
+    public int VolumeOpacity { get; init; } = 45;
+
+    /// <summary>
+    /// Co ile minut odświeżać świece D/W/M z IB (instrument i rynek szeroki) przy połączeniu z brokerem.
+    /// Ostatnia świeca instrumentu i tak zmienia się na żywo z bieżącymi profilami TPO.
+    /// </summary>
+    public int IbRefreshMinutes { get; init; } = 5;
+
+    /// <summary>Średnie kroczące rysowane na wykresie (w kolejności z listy).</summary>
+    public List<MovingAverageStyle> MovingAverages { get; init; } =
+    [
+        new() { Period = 20, Color = "#F0C030", Thickness = 1 },
+        new() { Period = 50, Color = "#4FA3F7", Thickness = 2 },
+        new() { Period = 200, Color = "#E040FB", Thickness = 2, Enabled = false },
+    ];
+}
+
+/// <summary>Prosta średnia krocząca (SMA) cen zamknięcia na wykresie D/W/M.</summary>
+public sealed record MovingAverageStyle
+{
+    /// <summary>Czy rysować tę średnią.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Liczba świec średniej (np. 20 = średnia z 20 ostatnich zamknięć).</summary>
+    public int Period { get; init; } = 20;
+
+    /// <summary>Kolor linii, #RRGGBB.</summary>
+    public string Color { get; init; } = "#F0C030";
+
+    /// <summary>Grubość linii w pikselach.</summary>
+    public int Thickness { get; init; } = 1;
+
+    /// <summary>Czy rysować poziom tej średniej (z wykresu dziennego, wartość „na dziś”) na wykresie profili TPO.</summary>
+    public bool ShowOnTpo { get; init; } = true;
+
+    /// <summary>Opis linii na wykresie TPO; pusty = automatyczny (np. „SMA20 D”).</summary>
+    public string TpoLabel { get; init; } = string.Empty;
+
+    /// <summary>Styl linii na wykresie TPO.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<LineStyle>))]
+    public LineStyle TpoLineStyle { get; init; } = LineStyle.Dashed;
+
+    /// <summary>Grubość linii na wykresie TPO (px).</summary>
+    public int TpoThickness { get; init; } = 1;
+
+    /// <summary>Na wykresie TPO: linia albo wąski pasek (strefa wokół średniej).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<TpoAverageShape>))]
+    public TpoAverageShape TpoShape { get; init; } = TpoAverageShape.Line;
+
+    /// <summary>Szerokość (wysokość) paska na wykresie TPO w pikselach.</summary>
+    public int TpoBandHeight { get; init; } = 6;
+
+    /// <summary>Krycie paska na wykresie TPO w procentach.</summary>
+    public int TpoBandOpacity { get; init; } = 30;
+
+    /// <summary>Czy linia / pasek na wykresie TPO ma migać, gdy cena zbliży się do średniej.</summary>
+    public bool TpoBlink { get; init; } = true;
+
+    /// <summary>Kolor na wykresie TPO (#RRGGBB); pusty = kolor średniej z wykresu dziennego.</summary>
+    public string TpoColor { get; init; } = string.Empty;
+
+    /// <summary>Kolor na wykresie TPO (własny albo z wykresu dziennego).</summary>
+    public string EffectiveTpoColor => string.IsNullOrWhiteSpace(TpoColor) ? Color : TpoColor;
+
+    /// <summary>Opis linii na wykresie TPO (własny albo automatyczny).</summary>
+    public string EffectiveTpoLabel => string.IsNullOrWhiteSpace(TpoLabel) ? DefaultTpoLabel(Period) : TpoLabel.Trim();
+
+    /// <summary>Automatyczny opis średniej dziennej, np. „SMA20 D”.</summary>
+    public static string DefaultTpoLabel(int period) => $"SMA{period} D";
+}
+
+/// <summary>Sposób rysowania średniej na wykresie TPO.</summary>
+public enum TpoAverageShape
+{
+    /// <summary>Linia (styl i grubość z ustawień).</summary>
+    Line,
+
+    /// <summary>Wąski półprzezroczysty pasek wyśrodkowany na średniej (szerokość w px i krycie z ustawień).</summary>
+    Band,
+}
+
+/// <summary>
+/// Poziomy średnich kroczących z wykresu dziennego (wartości „na dziś”) rysowane jako linie poziome na wykresie TPO –
+/// widać, że cena zbliża się do znaczącej średniej. Które średnie, styl i opis – przy średnich wykresu D/W/M.
+/// </summary>
+public sealed record TpoAveragesStyle
+{
+    /// <summary>Czy rysować średnie na wykresie TPO.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Po której stronie wykresu opis linii.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<LabelPosition>))]
+    public LabelPosition LabelPosition { get; init; } = LabelPosition.Left;
+
+    /// <summary>Czy dopisywać do opisu wartość średniej (np. „SMA20 D 6712.40”).</summary>
+    public bool ShowValueInLabel { get; init; } = true;
+
+    /// <summary>Czy pokazywać cenę średniej na osi cen (w kolorze średniej).</summary>
+    public bool ShowAxisLabel { get; init; } = true;
+
+    /// <summary>Krycie linii i opisu (%).</summary>
+    public int Opacity { get; init; } = 85;
+
+    /// <summary>Wielkość czcionki opisu (pt).</summary>
+    public int FontSize { get; init; } = 11;
+
+    /// <summary>Czy linie / paski średnich migają, gdy cena zbliży się do nich (włącznik główny; każda średnia – własny).</summary>
+    public bool BlinkEnabled { get; init; } = true;
+
+    /// <summary>Od jakiej odległości ceny od średniej (w tickach) linia zaczyna migać.</summary>
+    public int BlinkDistanceTicks { get; init; } = 8;
+
+    /// <summary>Tempo migania – czas jednej fazy (widoczna / wygaszona) w milisekundach.</summary>
+    public int BlinkIntervalMs { get; init; } = 500;
 }
 
 /// <summary>Położenie wskaźnika tempa budowania TPO na wykresie.</summary>

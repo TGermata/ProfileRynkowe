@@ -106,16 +106,40 @@ public sealed partial class MainViewModel
             return;
         }
 
-        var now = DataNow();
         var profiles = _builder.Profiles;
-        SessionProfile? current = null;
-        var toPeriod = int.MaxValue;
-        DateTime? nowLocal = null;
+        if (CurrentProfileAt(profiles, DataNow()) is not { } found)
+        {
+            SetTempo(TempoAnalysis.Empty);
+            return;
+        }
 
+        var (current, toPeriod, nowLocal) = found;
+
+        // Norma z poprzednich sesji tego samego typu – liczona raz (zmienia się dopiero z nową sesją lub historią).
+        var history = profiles.Where(p => p.Session.Name == current.Session.Name && p.SessionStart < current.SessionStart).ToList();
+        var key = (current.Session.Name, current.SessionStart, history.Count);
+        if (key != _tempoReferenceKey)
+        {
+            _tempoReferenceKey = key;
+            _tempoReference = TempoReference.FromHistory(
+                history.Select(p => p.GetTempoSession()), TempoOptions.Default.HistorySessions, TempoOptions.Default.WarmupPeriods);
+        }
+
+        SetTempo(TpoTempo.Analyze(current.GetTempoSession(toPeriod), _tempoReference, nowLocal));
+    }
+
+    /// <summary>
+    /// Najnowszy profil z danymi w chwili <paramref name="now"/> (czas danych): profile zaczynające się po „teraz” są
+    /// pomijane, a dla sesji w trakcie liczą się tylko okresy do bieżącego włącznie. Null = brak takiego profilu.
+    /// </summary>
+    private static (SessionProfile Profile, int ToPeriod, DateTime? NowLocal)? CurrentProfileAt(
+        IReadOnlyList<SessionProfile> profiles, DateTimeOffset? now)
+    {
         for (var i = profiles.Count - 1; i >= 0; i--)
         {
             var profile = profiles[i];
             var limit = int.MaxValue;
+            DateTime? nowLocal = null;
             if (now is { } n)
             {
                 var local = TimeZoneInfo.ConvertTime(n, profile.Settings.TimeZone).DateTime;
@@ -133,29 +157,11 @@ public sealed partial class MainViewModel
 
             if (profile.GetTempoSession(limit).Periods.Count > 0)
             {
-                current = profile;
-                toPeriod = limit;
-                break;
+                return (profile, limit, nowLocal);
             }
         }
 
-        if (current is null)
-        {
-            SetTempo(TempoAnalysis.Empty);
-            return;
-        }
-
-        // Norma z poprzednich sesji tego samego typu – liczona raz (zmienia się dopiero z nową sesją lub historią).
-        var history = profiles.Where(p => p.Session.Name == current.Session.Name && p.SessionStart < current.SessionStart).ToList();
-        var key = (current.Session.Name, current.SessionStart, history.Count);
-        if (key != _tempoReferenceKey)
-        {
-            _tempoReferenceKey = key;
-            _tempoReference = TempoReference.FromHistory(
-                history.Select(p => p.GetTempoSession()), TempoOptions.Default.HistorySessions, TempoOptions.Default.WarmupPeriods);
-        }
-
-        SetTempo(TpoTempo.Analyze(current.GetTempoSession(toPeriod), _tempoReference, nowLocal));
+        return null;
     }
 
     private void SetTempo(TempoAnalysis analysis)

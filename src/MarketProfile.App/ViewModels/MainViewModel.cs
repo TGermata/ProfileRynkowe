@@ -82,11 +82,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             RefreshSnapshots();
             UpdateTempo();
+            UpdateVolumeComparison();
             UpdateProfileStats();
             UpdatePeriodTimer();
+            OnCandleTimer();
         };
 
         RefreshTickDownloadText();
+        _ = LoadDailyBarsAsync(); // średnie dzienne na wykresie TPO
     }
 
     /// <summary>Bieżące ustawienia aplikacji.</summary>
@@ -469,6 +472,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         UpdateTempo();
         UpdateProfileStats();
         UpdateSummary(latest);
+        UpdateTpoAverages();
     }
 
     /// <summary>
@@ -629,7 +633,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         var instruments = _settings.DownloadInstruments;
-        if (instruments.Count == 0)
+        if (instruments.Count == 0 && _settings.BroadMarketInstrument is null)
         {
             return;
         }
@@ -647,7 +651,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         var downloader = new BackgroundHistoryDownloader(instruments, _settings.ToIbSettings(), GetStore(),
-            _settings.BackgroundHistoryDays, _settings.BackgroundTickDays);
+            _settings.BackgroundHistoryDays, _settings.BackgroundTickDays, _settings.BroadMarketInstrument);
         var cts = new CancellationTokenSource();
         downloader.Progress += (_, message) =>
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
@@ -683,6 +687,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                     _backgroundError = pass.Error;
                     _nextTickCheck = pass.MoreTicks ? null : DateTime.Now + BackgroundHistoryDownloader.RepeatAfter;
                     RefreshTickDownloadText();
+                    OnCandleBackgroundPass();
                 }
             });
 
@@ -1056,12 +1061,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(SelectedVolumeMode));
         ComposeViews(); // np. zmieniono w ustawieniach, dla których profili rysować wolumen
         OnPropertyChanged(nameof(TimeZoneLabel));
+        OnCandleSettingsChanged();
         NotifyDataSource();
         OnPropertyChanged(nameof(StartStopText));
         OnPropertyChanged(nameof(ShowStartStop));
 
         if (instrumentChanged)
         {
+            OnCandleInstrumentChanged();
             // Nowy instrument ma zupełnie inne ceny – wykres trzeba dopasować, żeby go nie szukać.
             _fitPending = true;
             FitRequested?.Invoke();

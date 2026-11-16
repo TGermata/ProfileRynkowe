@@ -6,8 +6,8 @@ using MarketProfile.DataFeed.Storage;
 namespace MarketProfile.App;
 
 /// <summary>
-/// Okno ustawień w trzech grupach: Instrumenty; Profile (TPO, kolory, linie i znaczniki, profil wolumenowy, zegar);
-/// Dane i broker (źródło i połączenie, pobieranie i baza, generator i dane testowe).
+/// Okno ustawień w czterech grupach: Instrumenty; Profile (TPO, kolory, linie i znaczniki, profil wolumenowy, zegar);
+/// Wykres D/W/M (rodzaj prezentacji, kolory, średnie kroczące); Dane i broker (źródło i połączenie, pobieranie i baza, generator i dane testowe).
 /// </summary>
 public partial class SettingsWindow : Window
 {
@@ -28,6 +28,19 @@ public partial class SettingsWindow : Window
 
     /// <summary>Generuje dane testowe do bazy (w tle – okno pozostaje responsywne).</summary>
     private async void OnGenerateTestDataClick(object sender, RoutedEventArgs e) => await _viewModel.GenerateTestDataAsync();
+
+    // Zakładka „Wykres D/W/M”.
+    private void OnAddMovingAverageClick(object sender, RoutedEventArgs e) => _viewModel.AddMovingAverage();
+
+    private void OnRemoveMovingAverageClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: MovingAverageEditorViewModel average })
+        {
+            _viewModel.RemoveMovingAverage(average);
+        }
+    }
+
+    private void OnResetCandleChartClick(object sender, RoutedEventArgs e) => _viewModel.ResetCandleChart();
 
     // Zakładka „Instrumenty”.
     private void OnAddInstrumentClick(object sender, RoutedEventArgs e) => _viewModel.AddInstrument();

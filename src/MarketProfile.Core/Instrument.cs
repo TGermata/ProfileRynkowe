@@ -230,6 +230,17 @@ public sealed record Instrument
 
     /// <summary>Wszystkie wbudowane instrumenty (dla zgodności z wcześniejszym kodem).</summary>
     public static IReadOnlyList<Instrument> All => BuiltIn;
+
+    /// <summary>Symbol domyślnego instrumentu „rynku szerokiego” (indeks S&amp;P 500).</summary>
+    public const string DefaultBroadMarketSymbol = "SPX";
+
+    /// <summary>
+    /// Instrument o podanym symbolu: z listy użytkownika, a gdy go tam nie ma – z listy wbudowanej
+    /// (np. SPX działa jako rynek szeroki także po usunięciu go z listy instrumentów). Null = nieznany symbol.
+    /// </summary>
+    public static Instrument? Find(IEnumerable<Instrument> instruments, string symbol) =>
+        instruments.FirstOrDefault(i => string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase))
+        ?? BuiltIn.FirstOrDefault(i => string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase));
 }
 
 /// <summary>Formatowanie cen z liczbą miejsc po przecinku dopasowaną do wielkości ticka.</summary>

@@ -112,6 +112,34 @@ public partial class MainWindow : Window
 
     private void OnZoomFitClick(object sender, RoutedEventArgs e) => Chart.FitAndPinLatest();
 
+    private void OnCandleFitClick(object sender, RoutedEventArgs e) => CandleChart.FitLatest();
+
+    private int _lastScrolledVolumeIndex = -1;
+
+    /// <summary>
+    /// Zaznaczony okres (np. kliknięty na wykresie wolumenu) – przewinięcie tabeli do jego wiersza. Tylko przy zmianie
+    /// okresu: tabela co sekundę dostaje nowe wiersze z tym samym zaznaczeniem i nie może wtedy przeskakiwać.
+    /// </summary>
+    private void OnVolumeGridSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        var index = VolumeGrid.SelectedIndex;
+        if (index >= 0 && index != _lastScrolledVolumeIndex && VolumeGrid.SelectedItem is { } item)
+        {
+            VolumeGrid.ScrollIntoView(item);
+        }
+
+        if (index >= 0 || e.RemovedItems.Count > 0 && e.AddedItems.Count == 0 && _viewModel.VolumeSelectedIndex < 0)
+        {
+            _lastScrolledVolumeIndex = index;
+        }
+    }
+
+    private void OnCandleZoomInClick(object sender, RoutedEventArgs e) => CandleChart.ZoomIn();
+
+    private void OnCandleZoomOutClick(object sender, RoutedEventArgs e) => CandleChart.ZoomOut();
+
+    private void OnCandleAutoScaleClick(object sender, RoutedEventArgs e) => CandleChart.AutoScale();
+
     /// <summary>Otwiera okno edycji linii; po zatwierdzeniu dodaje nową linię lub zapisuje zmiany.</summary>
     private void EditLine(PriceLine line, bool isNew)
     {

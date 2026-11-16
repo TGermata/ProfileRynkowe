@@ -167,6 +167,51 @@ public sealed class ProfileChartControl : FrameworkElement
         set => SetValue(AppearanceProperty, value);
     }
 
+    /// <summary>
+    /// Poziomy średnich kroczących z wykresu dziennego (wartości „na dziś” dla bieżącego profilu) – linie poziome
+    /// przez cały wykres z opisem (np. „SMA20 D”). Tylko do odczytu – nie da się ich przeciągać ani edytować.
+    /// </summary>
+    public static readonly DependencyProperty AveragesProperty = DependencyProperty.Register(
+        nameof(Averages), typeof(TpoAverageOverlay), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(TpoAverageOverlay.Empty, FrameworkPropertyMetadataOptions.AffectsRender,
+            (d, e) => ((ProfileChartControl)d).UpdateBlinkTimer((TpoAverageOverlay?)e.NewValue)));
+
+    // Miganie linii średnich, do których zbliżyła się cena: zegar działa tylko, gdy któraś linia miga.
+    private System.Windows.Threading.DispatcherTimer? _blinkTimer;
+    private bool _blinkVisible = true;
+
+    private void UpdateBlinkTimer(TpoAverageOverlay? overlay)
+    {
+        if (overlay is not { AnyBlink: true })
+        {
+            _blinkTimer?.Stop();
+            _blinkVisible = true;
+            return;
+        }
+
+        if (_blinkTimer is null)
+        {
+            _blinkTimer = new System.Windows.Threading.DispatcherTimer();
+            _blinkTimer.Tick += (_, _) =>
+            {
+                _blinkVisible = !_blinkVisible;
+                InvalidateVisual();
+            };
+        }
+
+        _blinkTimer.Interval = TimeSpan.FromMilliseconds(overlay.BlinkIntervalMs);
+        if (!_blinkTimer.IsEnabled)
+        {
+            _blinkTimer.Start();
+        }
+    }
+
+    public TpoAverageOverlay Averages
+    {
+        get => (TpoAverageOverlay)GetValue(AveragesProperty);
+        set => SetValue(AveragesProperty, value);
+    }
+
     // --- Zdarzenia zgłaszane do okna / modelu widoku ---
 
     /// <summary>Użytkownik chce dodać linię na podanej cenie.</summary>
@@ -389,6 +434,7 @@ public sealed class ProfileChartControl : FrameworkElement
                 isLatest: ReferenceEquals(profile, latest));
         }
 
+        DrawAverageLines(dc, chartRight);
         DrawPriceLines(dc, chartRight);
         dc.Pop();
 
@@ -1108,6 +1154,73 @@ public sealed class ProfileChartControl : FrameworkElement
         }
     }
 
+    /// <summary>
+    /// Linie średnich kroczących (z wykresu dziennego) przez całą szerokość wykresu, pod liniami użytkownika.
+    /// Opisy nad liniami przy lewej albo prawej krawędzi; opisy linii leżących blisko siebie są rozsuwane w pionie.
+    /// </summary>
+    private void DrawAverageLines(DrawingContext dc, double chartRight)
+    {
+        var overlay = Averages ?? TpoAverageOverlay.Empty;
+        if (overlay.Lines.Count == 0)
+        {
+            return;
+        }
+
+        var labels = new List<(FormattedText Text, double LineY)>();
+        foreach (var line in overlay.Lines)
+        {
+            // Miganie: w fazie wygaszonej linia / pasek znika (opis i cena na osi zostają),
+            // w fazie widocznej jest wyróżniony – grubsza linia, pełniejszy pasek.
+            var hidden = line.Blink && !_blinkVisible;
+
+            if (line.BandBrush is { } bandBrush)
+            {
+                // Pasek: strefa wokół średniej, wyśrodkowana na jej cenie (wyrównana do pikseli).
+                var center = PriceToY(line.Price);
+                var top = Math.Round(center - line.BandHeight / 2);
+                if (top + line.BandHeight < HeaderHeight || top > ActualHeight)
+                {
+                    continue;
+                }
+
+                if (!hidden)
+                {
+                    dc.DrawRectangle(line.Blink ? line.AxisBrush : bandBrush, null,
+                        new Rect(0, top, Math.Max(0, chartRight), line.BandHeight));
+                }
+
+                labels.Add((CreateText(line.Label, overlay.FontSize, line.Brush, UiTypeface), top - 1));
+                continue;
+            }
+
+            var y = Math.Round(PriceToY(line.Price)) + (line.Pen.Thickness % 2 == 1 ? 0.5 : 0);
+            if (y < HeaderHeight || y > ActualHeight)
+            {
+                continue;
+            }
+
+            if (!hidden)
+            {
+                var pen = line.Blink ? Frozen(new Pen(line.AxisBrush, line.Pen.Thickness + 1) { DashStyle = line.Pen.DashStyle }) : line.Pen;
+                dc.DrawLine(pen, new Point(0, y), new Point(chartRight, y));
+            }
+
+            labels.Add((CreateText(line.Label, overlay.FontSize, line.Brush, UiTypeface), y - line.Pen.Thickness / 2 - 1));
+        }
+
+        // Od góry: opis tuż nad linią, ale nie wyżej niż koniec poprzedniego opisu (bez nakładania).
+        var previousBottom = double.NegativeInfinity;
+        foreach (var (text, lineY) in labels.OrderBy(l => l.LineY))
+        {
+            var top = Math.Max(lineY - text.Height, previousBottom);
+            var x = overlay.LabelPosition == LabelPosition.Left ? 8 : chartRight - text.Width - 8;
+            // Półprzezroczyste tło – opis czytelny także nad literami profili.
+            dc.DrawRoundedRectangle(TimerBackgroundBrush, null, new Rect(x - 3, top, text.Width + 6, text.Height), 3, 3);
+            dc.DrawText(text, new Point(x, top));
+            previousBottom = top + text.Height;
+        }
+    }
+
     /// <summary>Rysuje poziome linie cenowe przez całą szerokość wykresu.</summary>
     private void DrawPriceLines(DrawingContext dc, double chartRight)
     {
@@ -1164,6 +1277,19 @@ public sealed class ProfileChartControl : FrameworkElement
             dc.DrawLine(SeparatorPen, new Point(chartRight, y), new Point(chartRight + 4, y));
             var label = CreateText(FormatPrice(price), 11, DimTextBrush, UiTypeface);
             dc.DrawText(label, new Point(chartRight + 8, y - label.Height / 2));
+        }
+
+        // Etykiety średnich (z wykresu dziennego) na osi – w kolorze średniej.
+        if (Averages is { ShowAxisLabel: true } averages)
+        {
+            foreach (var line in averages.Lines)
+            {
+                var y = PriceToY(line.Price);
+                if (y >= HeaderHeight && y <= ActualHeight)
+                {
+                    DrawAxisLabel(dc, chartRight, y, line.Price, line.AxisBrush);
+                }
+            }
         }
 
         // Etykiety linii cenowych na osi (w kolorze linii).

@@ -44,6 +44,14 @@ public static class IbFeeds
     public static Task<TickPage> GetTicksPageAsync(IMarketDataFeed feed, DateTimeOffset start, CancellationToken token) =>
         ((IbDataFeed)feed).GetTicksPageAsync(start, token);
 
+    /// <summary>
+    /// Świece D/W/M za okres wstecz od teraz (format IB, np. "5 Y") – źródło musi być połączonym źródłem IB
+    /// z <see cref="Create"/> (wywoływać po <see cref="IbApiLoader.Use"/>).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Task<OhlcPage> GetOhlcBarsAsync(IMarketDataFeed feed, BarInterval interval, string duration, CancellationToken token) =>
+        ((IbDataFeed)feed).GetOhlcBarsAsync(interval, duration, token);
+
     /// <summary>Test połączenia z TWS (wywoływać po <see cref="IbApiLoader.Use"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static Task<string> TestConnectionAsync(IbConnectionSettings settings, Instrument instrument) =>

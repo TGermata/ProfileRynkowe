@@ -726,6 +726,200 @@
             <!-- ===== DANE I BROKER – źródło, połączenie, pobieranie, baza ======= -->
             <!-- ================================================================ -->
             <!-- (Symulację – start, Play/Pause, prędkość – obsługuje się z paska w oknie głównym.) -->
+            <!-- ============================================================ -->
+            <!-- WYKRES D/W/M: rodzaj prezentacji, kolory, wolumen, średnie       -->
+            <!-- ============================================================ -->
+            <TabItem Header="  Wykres D/W/M  " Padding="10,5">
+                <ScrollViewer Margin="4">
+                    <StackPanel>
+                        <GroupBox Header="Prezentacja">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Rodzaj wykresu" Width="140" />
+                                    <RadioButton Content="Świece japońskie" GroupName="SettingsCandleType" IsChecked="{Binding CandleTypeCandles}"
+                                                 VerticalAlignment="Center" Margin="4,4,16,4" />
+                                    <RadioButton Content="Słupki OHLC" GroupName="SettingsCandleType" IsChecked="{Binding CandleTypeOhlc}"
+                                                 VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="140" /><ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Kolor wzrostu" />
+                                    <controls:ColorPicker Grid.Row="0" Grid.Column="1" Color="{Binding CandleUpColor}" />
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="Kolor spadku" Margin="24,4,4,4" />
+                                    <controls:ColorPicker Grid.Row="0" Grid.Column="3" Color="{Binding CandleDownColor}" />
+
+                                    <CheckBox Grid.Row="1" Grid.Column="0" Content="Wolumen" IsChecked="{Binding CandleShowVolume}"
+                                              ToolTip="Słupki wolumenu w dolnej części wykresu (w kolorach wzrostu i spadku)" />
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal" IsEnabled="{Binding CandleShowVolume}">
+                                        <TextBlock Text="Krycie (%)" />
+                                        <TextBox Text="{Binding CandleVolumeOpacity}" Width="45" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Odświeżanie z IB co (min)" Width="140" />
+                                    <TextBox Text="{Binding CandleIbRefreshMinutes}" Width="45"
+                                             ToolTip="Przy połączeniu z IB (tryb „Na żywo”) świece D/W/M instrumentu i rynku szerokiego są co tyle minut pobierane z IB i zapisywane w bazie. Ostatnia świeca instrumentu zmienia się na żywo z każdą transakcją." />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Świece / słupki OHLC przełączysz też na pasku zakładki „Wykres D/W/M”. Świeca jest wzrostowa, gdy zamknięcie ≥ otwarcie. Przy połączeniu z IB wykres jest na żywo: ostatnia świeca instrumentu zmienia się z każdą transakcją, a świece z IB (także rynku szerokiego) są odświeżane co podaną liczbę minut." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Rynek szeroki">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Instrument" Width="140" />
+                                    <ComboBox Width="120" IsEditable="True" ItemsSource="{Binding BroadMarketOptions}"
+                                              Text="{Binding BroadMarketSymbol, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Na wykresie D/W/M przełącznik [instrument | rynek szeroki] pokazuje świece tego instrumentu (domyślnie SPX – indeks S&amp;P 500). Jego świece D/W/M są pobierane w tle i zapisywane w bazie do analiz, także bez zaznaczonego „Pobieraj dane”. Dla instrumentów europejskich można wybrać np. DAX." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Średnie kroczące (SMA)">
+                            <StackPanel>
+                                <!-- Nagłówek kolumn. -->
+                                <Grid Margin="0,0,0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70" /><ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="150" /><ColumnDefinition Width="100" /><ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Rysuj" Foreground="Gray" />
+                                    <TextBlock Grid.Column="1" Text="Okres (świece)" Foreground="Gray" />
+                                    <TextBlock Grid.Column="2" Text="Kolor" Foreground="Gray" />
+                                    <TextBlock Grid.Column="3" Text="Grubość (px)" Foreground="Gray" />
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding MovingAverages}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="70" /><ColumnDefinition Width="90" />
+                                                    <ColumnDefinition Width="150" /><ColumnDefinition Width="100" /><ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" Margin="8,4" VerticalAlignment="Center" />
+                                                <TextBox Grid.Column="1" Text="{Binding Period}" Width="60" Margin="4" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" />
+                                                <controls:ColorPicker Grid.Column="2" Color="{Binding Color}" Margin="4" HorizontalAlignment="Left" />
+                                                <TextBox Grid.Column="3" Text="{Binding Thickness}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" />
+                                                <Button Grid.Column="4" Content="✕ Usuń" Click="OnRemoveMovingAverageClick" Padding="8,2"
+                                                        HorizontalAlignment="Left" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Content="+ Dodaj średnią" Click="OnAddMovingAverageClick" />
+                                    <Button Content="Przywróć domyślny wygląd wykresu" Click="OnResetCandleChartClick"
+                                            ToolTip="Domyślne kolory, wolumen i średnie SMA 20 / 50 / 200. Zapis dopiero po kliknięciu „Zapisz”." />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="SMA = średnia z cen zamknięcia ostatnich N świec bieżącego interwału (np. SMA 20 na wykresie dziennym = 20 dni, na tygodniowym = 20 tygodni). Wartości średnich pod kursorem są w opisie świecy u góry wykresu." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Średnie dzienne na wykresie TPO">
+                            <StackPanel>
+                                <CheckBox Content="Rysuj poziomy średnich dziennych na wykresie profili TPO" IsChecked="{Binding TpoAveragesEnabled}" />
+                                <StackPanel IsEnabled="{Binding TpoAveragesEnabled}">
+                                    <!-- Nagłówek kolumn. -->
+                                    <Grid Margin="0,6,0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="70" /><ColumnDefinition Width="55" />
+                                            <ColumnDefinition Width="120" /><ColumnDefinition Width="150" /><ColumnDefinition Width="90" />
+                                            <ColumnDefinition Width="115" /><ColumnDefinition Width="70" />
+                                            <ColumnDefinition Width="75" /><ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Średnia" Foreground="Gray" />
+                                        <TextBlock Grid.Column="1" Text="Na TPO" Foreground="Gray" />
+                                        <TextBlock Grid.Column="2" Text="Opis (pusty = auto)" Foreground="Gray" />
+                                        <TextBlock Grid.Column="3" Text="Kolor" Foreground="Gray" />
+                                        <TextBlock Grid.Column="4" Text="Rodzaj" Foreground="Gray" />
+                                        <TextBlock Grid.Column="5" Text="Styl linii" Foreground="Gray" />
+                                        <TextBlock Grid.Column="6" Text="Grubość" Foreground="Gray" />
+                                        <TextBlock Grid.Column="7" Text="Pasek (px)" Foreground="Gray" />
+                                        <TextBlock Grid.Column="8" Text="Krycie paska (%)" Foreground="Gray" />
+                                        <TextBlock Grid.Column="9" Text="Miga" Foreground="Gray" />
+                                    </Grid>
+                                    <ItemsControl ItemsSource="{Binding MovingAverages}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="70" /><ColumnDefinition Width="55" />
+                                                        <ColumnDefinition Width="120" /><ColumnDefinition Width="150" /><ColumnDefinition Width="90" />
+                                                        <ColumnDefinition Width="115" /><ColumnDefinition Width="70" />
+                                                        <ColumnDefinition Width="75" /><ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding Title}" Margin="4" VerticalAlignment="Center" />
+                                                    <CheckBox Grid.Column="1" IsChecked="{Binding ShowOnTpo}" Margin="8,4" VerticalAlignment="Center" />
+                                                    <TextBox Grid.Column="2" Text="{Binding TpoLabel}" Width="110" Margin="4" HorizontalAlignment="Left"
+                                                             VerticalContentAlignment="Center"
+                                                             ToolTip="{Binding DefaultTpoLabel}" />
+                                                    <controls:ColorPicker Grid.Column="3" Color="{Binding TpoColor}" Margin="4" HorizontalAlignment="Left"
+                                                                          ToolTip="Kolor na wykresie TPO – domyślnie taki jak średniej na wykresie dziennym" />
+                                                    <ComboBox Grid.Column="4" Width="80" Margin="4" HorizontalAlignment="Left"
+                                                              ItemsSource="{Binding DataContext.TpoShapes, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding TpoShape}" />
+                                                    <ComboBox Grid.Column="5" Width="105" Margin="4" HorizontalAlignment="Left" IsEnabled="{Binding IsTpoLine}"
+                                                              ItemsSource="{Binding DataContext.LineStyles, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding TpoLineStyle}" />
+                                                    <TextBox Grid.Column="6" Text="{Binding TpoThickness}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                             VerticalContentAlignment="Center" IsEnabled="{Binding IsTpoLine}" />
+                                                    <TextBox Grid.Column="7" Text="{Binding TpoBandHeight}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                             VerticalContentAlignment="Center" IsEnabled="{Binding IsTpoBand}"
+                                                             ToolTip="Szerokość paska w pikselach (2–60), wyśrodkowanego na wartości średniej" />
+                                                    <TextBox Grid.Column="8" Text="{Binding TpoBandOpacity}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                             VerticalContentAlignment="Center" IsEnabled="{Binding IsTpoBand}"
+                                                             ToolTip="Krycie paska w procentach (5–100) – litery profili widać przez pasek" />
+                                                    <CheckBox Grid.Column="9" IsChecked="{Binding TpoBlink}" Margin="8,4" VerticalAlignment="Center"
+                                                              ToolTip="Miga, gdy cena zbliży się do tej średniej" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <TextBlock Text="Opis linii" Width="140" />
+                                        <RadioButton Content="Po lewej" GroupName="TpoAvgLabel" IsChecked="{Binding TpoAveragesLabelLeft}"
+                                                     VerticalAlignment="Center" Margin="4,4,16,4" />
+                                        <RadioButton Content="Po prawej" GroupName="TpoAvgLabel" IsChecked="{Binding TpoAveragesLabelRight}"
+                                                     VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Krycie (%)" Width="140" />
+                                        <TextBox Text="{Binding TpoAveragesOpacity}" Width="45" />
+                                        <TextBlock Text="Czcionka opisu (pt)" Margin="24,4,4,4" />
+                                        <TextBox Text="{Binding TpoAveragesFontSize}" Width="45" />
+                                    </StackPanel>
+                                    <CheckBox Content="Wartość średniej w opisie (np. „SMA20 D 6712.40”)" IsChecked="{Binding TpoAveragesShowValue}" />
+                                    <CheckBox Content="Cena średniej na osi cen (w kolorze średniej)" IsChecked="{Binding TpoAveragesAxisLabel}" />
+                                    <CheckBox Content="Migaj, gdy cena zbliży się do średniej (średnie z zaznaczonym „Miga”)" IsChecked="{Binding TpoAveragesBlink}"
+                                              Margin="4,8,4,4" />
+                                    <StackPanel Orientation="Horizontal" IsEnabled="{Binding TpoAveragesBlink}">
+                                        <TextBlock Text="Odległość (ticki)" Width="140" />
+                                        <TextBox Text="{Binding TpoAveragesBlinkTicks}" Width="45"
+                                                 ToolTip="Linia miga, gdy cena jest od średniej najwyżej o tyle ticków (np. ES: 8 ticków = 2 punkty)" />
+                                        <TextBlock Text="Tempo migania (ms)" Margin="24,4,4,4" />
+                                        <TextBox Text="{Binding TpoAveragesBlinkMs}" Width="55"
+                                                 ToolTip="Czas jednej fazy migania (150–2000 ms)" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Poziom każdej średniej z listy powyżej (wykres dzienny) na dziś: N−1 ostatnich zamknięć dziennych + bieżąca cena jako dzisiejsze zamknięcie. Linia przez cały wykres TPO w kolorze średniej – widać, kiedy cena zbliża się do znaczącej średniej. Pusty opis = automatyczny, np. „SMA20 D”. Rodzaj „Pasek” – półprzezroczysta strefa wokół średniej, np. 6 px przy kryciu 30%. Kolor domyślnie jak na wykresie dziennym. W symulacji – na dzień i cenę symulacji." />
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <TabItem Header="  Dane i broker  " Padding="10,5">
                 <TabControl Style="{StaticResource SubTabs}">
 

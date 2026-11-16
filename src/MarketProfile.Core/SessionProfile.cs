@@ -22,6 +22,9 @@ public sealed class SessionProfile
     // (wiersz, okres) -> wolumen.
     private readonly Dictionary<(decimal Row, int Period), long> _volume = new();
 
+    // Minuta od początku sesji -> wolumen (do porównań wolumenu „do tej samej minuty” z poprzednią sesją).
+    private readonly SortedDictionary<int, long> _minuteVolume = new();
+
     // Numer okresu -> zakres cen i ostatnia cena w tym okresie.
     private readonly SortedDictionary<int, PeriodData> _periods = new();
 
@@ -88,7 +91,9 @@ public sealed class SessionProfile
     /// Pierwsza cena ruchu (dla świecy – jej otwarcie; dla ticka – cena ticka).
     /// Zapamiętywana jako cena otwarcia okresu, gdy jest to pierwszy ruch w tym okresie.
     /// </param>
-    public void AddPriceRange(int periodIndex, decimal low, decimal high, decimal lastPrice, long volume, decimal? openPrice = null)
+    /// <param name="minute">Minuta od początku sesji, w której był ruch (null = nieznana – wolumen tylko w okresie).</param>
+    public void AddPriceRange(int periodIndex, decimal low, decimal high, decimal lastPrice, long volume, decimal? openPrice = null,
+        int? minute = null)
     {
         lock (_sync)
         {
@@ -134,6 +139,11 @@ public sealed class SessionProfile
 
             AddVolume(Settings.ToRowPrice(lastPrice), periodIndex, volume - perRow * rowCount);
 
+            if (minute is { } m && volume > 0)
+            {
+                _minuteVolume[m] = _minuteVolume.GetValueOrDefault(m) + volume;
+            }
+
             _version++;
         }
 
@@ -146,6 +156,42 @@ public sealed class SessionProfile
         if (volume > 0)
         {
             _volume[(row, periodIndex)] = _volume.GetValueOrDefault((row, periodIndex)) + volume;
+        }
+    }
+
+    /// <summary>Wolumen co minutę sesji (minuta od początku sesji → wolumen); kopia – bezpieczna poza blokadą.</summary>
+    public IReadOnlyDictionary<int, long> GetMinuteVolumes()
+    {
+        lock (_sync)
+        {
+            return new SortedDictionary<int, long>(_minuteVolume);
+        }
+    }
+
+    /// <summary>Wolumen każdego okresu TPO (numer okresu → wolumen).</summary>
+    public IReadOnlyDictionary<int, long> GetPeriodVolumes()
+    {
+        lock (_sync)
+        {
+            var result = new SortedDictionary<int, long>();
+            foreach (var ((_, period), volume) in _volume)
+            {
+                result[period] = result.GetValueOrDefault(period) + volume;
+            }
+
+            return result;
+        }
+    }
+
+    /// <summary>Czy profil ma jakiekolwiek dane (okresy TPO).</summary>
+    public bool HasData
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _periods.Count > 0;
+            }
         }
     }
 

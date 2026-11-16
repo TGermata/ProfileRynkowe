@@ -98,6 +98,185 @@ public sealed class SettingsViewModel : ObservableObject
         ShowPoc = settings.ShowPoc;
         InitialBalancePeriods = ToText(settings.InitialBalancePeriods);
         LoadArrows(settings.Arrows);
+
+        // Wykres D/W/M.
+        LoadCandleChart(settings.CandleChart);
+        LoadTpoAverages(settings.TpoAverages);
+        BroadMarketSymbol = settings.BroadMarketSymbol;
+        BroadMarketOptions = settings.Instruments.Select(i => i.Symbol)
+            .Append(settings.BroadMarketSymbol).Append(Instrument.DefaultBroadMarketSymbol)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Symbol „rynku szerokiego” (np. SPX) – przełącznik na wykresie D/W/M, świece D/W/M w bazie.</summary>
+    public string BroadMarketSymbol { get; set; } = string.Empty;
+
+    /// <summary>Symbole do wyboru jako rynek szeroki (instrumenty z listy + SPX).</summary>
+    public IReadOnlyList<string> BroadMarketOptions { get; } = [];
+
+    // --- Wykres D/W/M: rodzaj prezentacji, kolory, wolumen, średnie kroczące ---
+    public bool CandleTypeCandles { get; set; }
+    public bool CandleTypeOhlc { get; set; }
+    public string CandleUpColor { get; set; } = string.Empty;
+    public string CandleDownColor { get; set; } = string.Empty;
+    public bool CandleShowVolume { get; set; }
+    public string CandleVolumeOpacity { get; set; } = string.Empty;
+    public string CandleIbRefreshMinutes { get; set; } = string.Empty;
+
+    /// <summary>Średnie kroczące (SMA) wykresu D/W/M – edytowalna lista.</summary>
+    public ObservableCollection<MovingAverageEditorViewModel> MovingAverages { get; } = [];
+
+    private void LoadCandleChart(CandleChartStyle style)
+    {
+        CandleTypeCandles = style.Type == CandleChartType.Candles;
+        CandleTypeOhlc = style.Type == CandleChartType.OhlcBars;
+        CandleUpColor = style.UpColor;
+        CandleDownColor = style.DownColor;
+        CandleShowVolume = style.ShowVolume;
+        CandleVolumeOpacity = ToText(style.VolumeOpacity);
+        CandleIbRefreshMinutes = ToText(style.IbRefreshMinutes);
+        MovingAverages.Clear();
+        foreach (var average in style.MovingAverages)
+        {
+            MovingAverages.Add(new MovingAverageEditorViewModel(average));
+        }
+    }
+
+    // --- Średnie dzienne (wartości „na dziś”) jako linie na wykresie TPO ---
+    public bool TpoAveragesEnabled { get; set; }
+    public bool TpoAveragesLabelLeft { get; set; }
+    public bool TpoAveragesLabelRight { get; set; }
+    public bool TpoAveragesShowValue { get; set; }
+    public bool TpoAveragesAxisLabel { get; set; }
+    public string TpoAveragesOpacity { get; set; } = string.Empty;
+    public string TpoAveragesFontSize { get; set; } = string.Empty;
+    public bool TpoAveragesBlink { get; set; }
+    public string TpoAveragesBlinkTicks { get; set; } = string.Empty;
+    public string TpoAveragesBlinkMs { get; set; } = string.Empty;
+
+    private void LoadTpoAverages(TpoAveragesStyle style)
+    {
+        TpoAveragesEnabled = style.Enabled;
+        TpoAveragesLabelLeft = style.LabelPosition == LabelPosition.Left;
+        TpoAveragesLabelRight = style.LabelPosition == LabelPosition.Right;
+        TpoAveragesShowValue = style.ShowValueInLabel;
+        TpoAveragesAxisLabel = style.ShowAxisLabel;
+        TpoAveragesOpacity = ToText(style.Opacity);
+        TpoAveragesFontSize = ToText(style.FontSize);
+        TpoAveragesBlink = style.BlinkEnabled;
+        TpoAveragesBlinkTicks = ToText(style.BlinkDistanceTicks);
+        TpoAveragesBlinkMs = ToText(style.BlinkIntervalMs);
+    }
+
+    /// <summary>Ustawienia średnich na wykresie TPO z formularza; null + komunikat błędu, gdy coś jest niepoprawne.</summary>
+    private TpoAveragesStyle? TryCreateTpoAverages(out string? error)
+    {
+        error = null;
+        if (!TryParseInt(TpoAveragesOpacity, 10, 100, out var opacity))
+        {
+            error = "Średnie na wykresie TPO: krycie podaj w procentach od 10 do 100.";
+            return null;
+        }
+
+        if (!TryParseInt(TpoAveragesFontSize, 7, 24, out var fontSize))
+        {
+            error = "Średnie na wykresie TPO: wielkość czcionki podaj od 7 do 24.";
+            return null;
+        }
+
+        if (!TryParseInt(TpoAveragesBlinkTicks, 1, 400, out var blinkTicks))
+        {
+            error = "Średnie na wykresie TPO: odległość migania podaj w tickach od 1 do 400.";
+            return null;
+        }
+
+        if (!TryParseInt(TpoAveragesBlinkMs, 150, 2000, out var blinkMs))
+        {
+            error = "Średnie na wykresie TPO: tempo migania podaj w milisekundach od 150 do 2000.";
+            return null;
+        }
+
+        return new TpoAveragesStyle
+        {
+            Enabled = TpoAveragesEnabled,
+            LabelPosition = TpoAveragesLabelRight ? LabelPosition.Right : LabelPosition.Left,
+            ShowValueInLabel = TpoAveragesShowValue,
+            ShowAxisLabel = TpoAveragesAxisLabel,
+            Opacity = opacity,
+            FontSize = fontSize,
+            BlinkEnabled = TpoAveragesBlink,
+            BlinkDistanceTicks = blinkTicks,
+            BlinkIntervalMs = blinkMs,
+        };
+    }
+
+    /// <summary>Dodaje nową średnią (kolejny okres i kolor z palety).</summary>
+    public void AddMovingAverage()
+    {
+        string[] palette = ["#F0C030", "#4FA3F7", "#E040FB", "#FF8C2E", "#2EC4E6", "#FFFFFF"];
+        var period = MovingAverages.Count == 0 ? 20 : MovingAverages.Max(m => int.TryParse(m.Period, out var p) ? p : 0) * 2;
+        MovingAverages.Add(new MovingAverageEditorViewModel(new MovingAverageStyle
+        {
+            Period = Math.Clamp(period, 2, 1000),
+            Color = palette[MovingAverages.Count % palette.Length],
+            Thickness = 1,
+        }));
+    }
+
+    public void RemoveMovingAverage(MovingAverageEditorViewModel average) => MovingAverages.Remove(average);
+
+    /// <summary>Przywraca domyślny wygląd wykresu D/W/M (zapis dopiero po kliknięciu „Zapisz”).</summary>
+    public void ResetCandleChart()
+    {
+        LoadCandleChart(new CandleChartStyle());
+        LoadTpoAverages(new TpoAveragesStyle());
+        OnPropertyChanged(string.Empty);
+    }
+
+    /// <summary>Wygląd wykresu D/W/M z formularza; null + komunikat błędu, gdy coś jest niepoprawne.</summary>
+    private CandleChartStyle? TryCreateCandleChart(out string? error)
+    {
+        error = null;
+        if (!ColorUtil.TryParse(CandleUpColor, out _) || !ColorUtil.TryParse(CandleDownColor, out _))
+        {
+            error = "Wykres D/W/M: kolory świec podaj w formacie #RRGGBB.";
+            return null;
+        }
+
+        if (!TryParseInt(CandleVolumeOpacity, 5, 100, out var volumeOpacity))
+        {
+            error = "Wykres D/W/M: krycie wolumenu podaj w procentach od 5 do 100.";
+            return null;
+        }
+
+        if (!TryParseInt(CandleIbRefreshMinutes, 1, 60, out var ibRefreshMinutes))
+        {
+            error = "Wykres D/W/M: odświeżanie z IB podaj w minutach od 1 do 60.";
+            return null;
+        }
+
+        var averages = new List<MovingAverageStyle>();
+        for (var i = 0; i < MovingAverages.Count; i++)
+        {
+            if (MovingAverages[i].TryCreate(out var average) is { } averageError)
+            {
+                error = $"Wykres D/W/M – średnia nr {i + 1}: {averageError}";
+                return null;
+            }
+
+            averages.Add(average!);
+        }
+
+        return new CandleChartStyle
+        {
+            Type = CandleTypeOhlc ? CandleChartType.OhlcBars : CandleChartType.Candles,
+            UpColor = CandleUpColor.Trim().ToUpperInvariant(),
+            DownColor = CandleDownColor.Trim().ToUpperInvariant(),
+            ShowVolume = CandleShowVolume,
+            VolumeOpacity = volumeOpacity,
+            IbRefreshMinutes = ibRefreshMinutes,
+            MovingAverages = averages,
+        };
     }
 
     /// <summary>Liczba okresów TPO tworzących Initial Balance.</summary>
@@ -171,6 +350,13 @@ public sealed class SettingsViewModel : ObservableObject
     public string HalfBackOpacity { get; set; } = string.Empty;
 
     /// <summary>Style linii do wyboru.</summary>
+    /// <summary>Linia albo pasek – rodzaj średniej na wykresie TPO.</summary>
+    public IReadOnlyList<KeyValuePair<TpoAverageShape, string>> TpoShapes { get; } =
+    [
+        new(TpoAverageShape.Line, "Linia"),
+        new(TpoAverageShape.Band, "Pasek"),
+    ];
+
     public IReadOnlyList<KeyValuePair<LineStyle, string>> LineStyles { get; } =
     [
         new(LineStyle.Solid, "Ciągła"),
@@ -1015,6 +1201,16 @@ public sealed class SettingsViewModel : ObservableObject
             return Fail("Zegar i tempo TPO: kolor podaj w formacie #RRGGBB.");
         }
 
+        if (TryCreateCandleChart(out var candleError) is not { } candleChart)
+        {
+            return Fail(candleError!);
+        }
+
+        if (TryCreateTpoAverages(out var tpoAveragesError) is not { } tpoAverages)
+        {
+            return Fail(tpoAveragesError!);
+        }
+
         // Kolory sesji.
         if (DayColors.TryCreate(out var dayColors) is { } dayError)
         {
@@ -1047,6 +1243,12 @@ public sealed class SettingsViewModel : ObservableObject
         if (instruments.GroupBy(i => i.Symbol).FirstOrDefault(g => g.Count() > 1) is { } duplicate)
         {
             return Fail($"Instrumenty: symbol {duplicate.Key} występuje więcej niż raz.");
+        }
+
+        var broadSymbol = BroadMarketSymbol?.Trim() ?? string.Empty;
+        if (Instrument.Find(instruments, broadSymbol) is not { } broadInstrument)
+        {
+            return Fail($"Wykres D/W/M: nieznany instrument rynku szerokiego „{broadSymbol}” – wybierz symbol z listy instrumentów (np. SPX).");
         }
 
         // Wybrany instrument zostaje, chyba że został usunięty – wtedy pierwszy z listy.
@@ -1146,6 +1348,9 @@ public sealed class SettingsViewModel : ObservableObject
                 HeadSize = arrowHead,
                 Length = arrowLength,
             },
+            CandleChart = candleChart,
+            TpoAverages = tpoAverages,
+            BroadMarketSymbol = broadInstrument.Symbol,
             PeriodTimer = new PeriodTimerStyle
             {
                 Enabled = TimerEnabled,
@@ -1266,6 +1471,155 @@ public sealed class ColorSchemeViewModel : ObservableObject
             ValueAreaColor = ValueAreaColor.Trim().ToUpperInvariant(),
             ValueAreaOpacity = vaOpacity,
             IbColor = IbColor.Trim().ToUpperInvariant(),
+        };
+        return null;
+    }
+}
+
+/// <summary>Edycja jednej średniej kroczącej (SMA) wykresu D/W/M.</summary>
+public sealed class MovingAverageEditorViewModel : ObservableObject
+{
+    public MovingAverageEditorViewModel(MovingAverageStyle style)
+    {
+        Enabled = style.Enabled;
+        _period = style.Period.ToString(CultureInfo.InvariantCulture);
+        Color = style.Color;
+        Thickness = style.Thickness.ToString(CultureInfo.InvariantCulture);
+        ShowOnTpo = style.ShowOnTpo;
+        TpoLabel = style.TpoLabel;
+        TpoLineStyle = style.TpoLineStyle;
+        TpoThickness = style.TpoThickness.ToString(CultureInfo.InvariantCulture);
+        _tpoShape = style.TpoShape;
+        TpoBandHeight = style.TpoBandHeight.ToString(CultureInfo.InvariantCulture);
+        TpoBandOpacity = style.TpoBandOpacity.ToString(CultureInfo.InvariantCulture);
+        TpoColor = style.EffectiveTpoColor;
+        TpoBlink = style.TpoBlink;
+        _tpoColorFollowed = string.IsNullOrWhiteSpace(style.TpoColor) ? style.Color : null;
+    }
+
+    private TpoAverageShape _tpoShape;
+    private readonly string? _tpoColorFollowed; // kolor z wykresu, gdy kolor TPO nie był ustawiony osobno
+
+    /// <summary>Linia albo pasek na wykresie TPO.</summary>
+    public TpoAverageShape TpoShape
+    {
+        get => _tpoShape;
+        set
+        {
+            if (SetProperty(ref _tpoShape, value))
+            {
+                OnPropertyChanged(nameof(IsTpoBand));
+                OnPropertyChanged(nameof(IsTpoLine));
+            }
+        }
+    }
+
+    public bool IsTpoBand => _tpoShape == TpoAverageShape.Band;
+    public bool IsTpoLine => _tpoShape == TpoAverageShape.Line;
+    public string TpoBandHeight { get; set; }
+    public string TpoBandOpacity { get; set; }
+
+    /// <summary>Kolor na wykresie TPO (domyślnie jak na wykresie dziennym).</summary>
+    public string TpoColor { get; set; }
+
+    /// <summary>Czy miga, gdy cena zbliży się do średniej.</summary>
+    public bool TpoBlink { get; set; }
+
+    private string _period;
+
+    public bool Enabled { get; set; }
+
+    public string Period
+    {
+        get => _period;
+        set
+        {
+            if (SetProperty(ref _period, value))
+            {
+                OnPropertyChanged(nameof(DefaultTpoLabel));
+                OnPropertyChanged(nameof(Title));
+            }
+        }
+    }
+
+    public string Color { get; set; }
+    public string Thickness { get; set; }
+
+    // --- Linia na wykresie TPO (wartość średniej dziennej „na dziś”) ---
+    public bool ShowOnTpo { get; set; }
+
+    /// <summary>Własny opis linii na wykresie TPO (pusty = automatyczny).</summary>
+    public string TpoLabel { get; set; }
+
+    public LineStyle TpoLineStyle { get; set; }
+    public string TpoThickness { get; set; }
+
+    /// <summary>Opis automatyczny – podpowiedź przy pustym polu opisu.</summary>
+    public string DefaultTpoLabel => int.TryParse(Period, out var p) ? MovingAverageStyle.DefaultTpoLabel(p) : string.Empty;
+
+    /// <summary>Nazwa średniej w liście „na wykresie TPO” (np. „SMA 20”).</summary>
+    public string Title => $"SMA {Period}";
+
+    /// <summary>Średnia z formularza; zwraca opis błędu albo null.</summary>
+    public string? TryCreate(out MovingAverageStyle? style)
+    {
+        style = null;
+        if (!SettingsViewModel.TryParseInt(Period, 1, 1000, out var period))
+        {
+            return "okres podaj jako liczbę świec od 1 do 1000.";
+        }
+
+        if (!ColorUtil.TryParse(Color, out _))
+        {
+            return "kolor podaj w formacie #RRGGBB.";
+        }
+
+        if (!SettingsViewModel.TryParseInt(Thickness, 1, 10, out var thickness))
+        {
+            return "grubość podaj w pikselach od 1 do 10.";
+        }
+
+        if (!SettingsViewModel.TryParseInt(TpoThickness, 1, 10, out var tpoThickness))
+        {
+            return "grubość linii na wykresie TPO podaj w pikselach od 1 do 10.";
+        }
+
+        if (!SettingsViewModel.TryParseInt(TpoBandHeight, 2, 60, out var bandHeight))
+        {
+            return "szerokość paska na wykresie TPO podaj w pikselach od 2 do 60.";
+        }
+
+        if (!SettingsViewModel.TryParseInt(TpoBandOpacity, 5, 100, out var bandOpacity))
+        {
+            return "krycie paska na wykresie TPO podaj w procentach od 5 do 100.";
+        }
+
+        if (!ColorUtil.TryParse(TpoColor, out _))
+        {
+            return "kolor na wykresie TPO podaj w formacie #RRGGBB.";
+        }
+
+        // Kolor TPO taki jak na wykresie (albo niezmieniony, gdy podążał za wykresem) – zapisywany jako pusty:
+        // dalej podąża za kolorem średniej z wykresu dziennego.
+        var tpoColor = TpoColor.Trim().ToUpperInvariant();
+        var follows = string.Equals(tpoColor, Color.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                      (_tpoColorFollowed is { } followed && string.Equals(tpoColor, followed, StringComparison.OrdinalIgnoreCase));
+
+        style = new MovingAverageStyle
+        {
+            Enabled = Enabled,
+            Period = period,
+            Color = Color.Trim().ToUpperInvariant(),
+            Thickness = thickness,
+            ShowOnTpo = ShowOnTpo,
+            TpoLabel = (TpoLabel ?? string.Empty).Trim(),
+            TpoLineStyle = TpoLineStyle,
+            TpoThickness = tpoThickness,
+            TpoShape = TpoShape,
+            TpoBandHeight = bandHeight,
+            TpoBandOpacity = bandOpacity,
+            TpoColor = follows ? string.Empty : tpoColor,
+            TpoBlink = TpoBlink,
         };
         return null;
     }

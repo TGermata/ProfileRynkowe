@@ -35,6 +35,63 @@
             <Setter Property="FontSize" Value="14" />
             <Setter Property="Padding" Value="6,0" />
         </Style>
+        <!-- Zakładki (ciemne): „Profil TPO” i „Wykres D/W/M”. -->
+        <Style x:Key="DarkTabControl" TargetType="TabControl">
+            <Setter Property="Background" Value="#14171C" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="#808894" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Tab" Background="#1A1E24" BorderBrush="#2C313A" BorderThickness="1,1,1,0"
+                                Padding="14,4" Margin="0,0,2,0" CornerRadius="4,4,0,0">
+                            <ContentPresenter ContentSource="Header" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Tab" Property="Background" Value="#2A3240" />
+                                <Setter TargetName="Tab" Property="BorderBrush" Value="#5A7598" />
+                                <Setter Property="Foreground" Value="#E8EEF6" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#C8CDD4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- Przełącznik interwału M / W / D – przycisk z zaznaczeniem. -->
+        <Style x:Key="IntervalButton" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#C8CDD4" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Box" Background="#262B33" BorderBrush="#3A4250" BorderThickness="1"
+                                MinWidth="38" Height="26" Margin="0,0,4,0" CornerRadius="3" Padding="8,0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="#3A4F6B" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#5A7598" />
+                                <Setter Property="Foreground" Value="#FFFFFF" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#7A95B8" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style x:Key="SimSeparator" TargetType="Border">
             <Setter Property="Width" Value="1" />
             <Setter Property="Height" Value="20" />
@@ -70,6 +127,8 @@
                 <Button Content="▤ Parametry profili" Click="OnProfileStatsClick" Padding="8,0" Margin="6,0,0,0"
                         ToolTip="Tabela parametrów profili (kształt, otwarcie, migracja wartości, IB, ogony, nietknięte POC…) – zapisywanych w bazie dla algorytmów" />
 
+                <!-- Elementy tylko dla zakładki „Profil TPO” (sesje, liczba profili, powiększenie, wolumen). -->
+                <StackPanel Orientation="Horizontal" Visibility="{Binding IsTpoTab, Converter={StaticResource BoolToVisibility}}">
                 <!-- Szybkie pokazywanie/ukrywanie profili poszczególnych sesji. -->
                 <TextBlock Text="Sesje:" Foreground="#C8CDD4" VerticalAlignment="Center" Margin="20,0,6,0" />
                 <CheckBox Content="Nocna" IsChecked="{Binding ShowNightSession}" Foreground="#C8CDD4"
@@ -95,6 +154,7 @@
                 <ComboBox Width="170" ItemsSource="{Binding VolumeModes}"
                           DisplayMemberPath="Value" SelectedValuePath="Key"
                           SelectedValue="{Binding SelectedVolumeMode}" />
+                </StackPanel>
 
                 <TextBlock Text="{Binding SourceName}" Foreground="#808894" VerticalAlignment="Center" Margin="20,0,0,0" />
             </StackPanel>
@@ -222,16 +282,185 @@
 
         <!-- Wykres profili – kontrolka dostaje tylko migawki danych (oddzielenie prezentacji od modelu). -->
         <!-- Akcje użytkownika (linie, rozbijanie profili) kontrolka zgłasza zdarzeniami obsługiwanymi w MainWindow.xaml.cs. -->
-        <controls:ProfileChartControl x:Name="Chart"
-                                      Profiles="{Binding Profiles}"
-                                      Lines="{Binding Lines}"
-                                      Appearance="{Binding Appearance}"
-                                      PeriodTimerText="{Binding PeriodTimerText}"
-                                      TempoValue="{Binding TempoValue}"
-                                      TempoActive="{Binding TempoActive}"
-                                      SimulationMenu="{Binding IsSimulationMode}"
-                                      TempoStateText="{Binding TempoStateLabel}"
-                                      ProfilesToFit="{Binding ProfilesOnScreen}" />
+        <!-- Zakładki: profile TPO i wykres świecowy szerszej perspektywy (dzienny / tygodniowy / miesięczny). -->
+        <TabControl Style="{StaticResource DarkTabControl}" SelectedIndex="{Binding SelectedTab}">
+            <TabItem Header="Profil TPO">
+                <controls:ProfileChartControl x:Name="Chart"
+                                              Profiles="{Binding Profiles}"
+                                              Lines="{Binding Lines}"
+                                              Averages="{Binding TpoAverages}"
+                                              Appearance="{Binding Appearance}"
+                                              PeriodTimerText="{Binding PeriodTimerText}"
+                                              TempoValue="{Binding TempoValue}"
+                                              TempoActive="{Binding TempoActive}"
+                                              SimulationMenu="{Binding IsSimulationMode}"
+                                              TempoStateText="{Binding TempoStateLabel}"
+                                              ProfilesToFit="{Binding ProfilesOnScreen}" />
+            </TabItem>
+
+            <TabItem Header="Wykres D/W/M">
+                <DockPanel>
+                    <!-- Interwał, odświeżenie z IB i opis danych w bazie. -->
+                    <Border DockPanel.Dock="Top" Background="#1E2229" Padding="8,5" BorderBrush="#2C313A" BorderThickness="0,0,0,1">
+                        <DockPanel>
+                            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                                <!-- Instrument bazowy albo rynek szeroki (np. ES / SPX) – ukryte, gdy wybrany instrument to sam rynek szeroki. -->
+                                <StackPanel Orientation="Horizontal" Visibility="{Binding HasBroadMarketSwitch, Converter={StaticResource BoolToVisibility}}">
+                                    <RadioButton Content="{Binding BaseSymbolLabel}" GroupName="CandleSymbol" IsChecked="{Binding IsBaseSelected}"
+                                                 Style="{StaticResource IntervalButton}" ToolTip="Wybrany instrument" />
+                                    <RadioButton Content="{Binding BroadSymbolLabel}" GroupName="CandleSymbol" IsChecked="{Binding IsBroadSelected}"
+                                                 Style="{StaticResource IntervalButton}" ToolTip="{Binding BroadSymbolToolTip}" />
+                                    <Border Style="{StaticResource SimSeparator}" Margin="10,0" />
+                                </StackPanel>
+                                <RadioButton Content="M" GroupName="CandleInterval" IsChecked="{Binding IsMonthly}"
+                                             Style="{StaticResource IntervalButton}" ToolTip="Świece miesięczne (20 lat)" />
+                                <RadioButton Content="W" GroupName="CandleInterval" IsChecked="{Binding IsWeekly}"
+                                             Style="{StaticResource IntervalButton}" ToolTip="Świece tygodniowe (10 lat)" />
+                                <RadioButton Content="D" GroupName="CandleInterval" IsChecked="{Binding IsDaily}"
+                                             Style="{StaticResource IntervalButton}" ToolTip="Świece dzienne – pełna doba z sesją nocną (5 lat)" />
+
+                                <!-- Rodzaj prezentacji (zapisywany w ustawieniach; kolory i średnie – Ustawienia → Wykres D/W/M). -->
+                                <Border Style="{StaticResource SimSeparator}" Margin="10,0" />
+                                <RadioButton Content="Świece" GroupName="CandleType" IsChecked="{Binding IsCandlesType}"
+                                             Style="{StaticResource IntervalButton}" ToolTip="Świece japońskie" />
+                                <RadioButton Content="OHLC" GroupName="CandleType" IsChecked="{Binding IsOhlcType}"
+                                             Style="{StaticResource IntervalButton}" ToolTip="Słupki OHLC: kreska maksimum–minimum, otwarcie w lewo, zamknięcie w prawo" />
+
+                                <!-- Skala: poziomo (szerokość świec) i pionowo (automatyczna / ręczna). -->
+                                <Border Style="{StaticResource SimSeparator}" Margin="10,0" />
+                                <Button Content="−" Width="26" Height="26" Click="OnCandleZoomOutClick"
+                                        ToolTip="Węższe świece – więcej świec na ekranie (kółko myszy w dół)" />
+                                <Button Content="+" Width="26" Height="26" Margin="3,0,0,0" Click="OnCandleZoomInClick"
+                                        ToolTip="Szersze świece – mniej świec na ekranie (kółko myszy w górę)" />
+                                <Button Content="↕ Skala auto" Padding="8,0" Height="26" Margin="3,0,0,0" Click="OnCandleAutoScaleClick"
+                                        ToolTip="Skala pionowa dopasowana do widocznych świec (2× klik na osi cen).&#x0a;Skalę pionową zmienisz przeciągając oś cen w górę/w dół, kółkiem nad osią cen albo Shift+kółko." />
+                                <Button Content="⤢ Najnowsze" Padding="8,0" Height="26" Margin="3,0,0,0" Click="OnCandleFitClick"
+                                        ToolTip="Najnowsze świece przy prawej krawędzi, domyślna szerokość i skala auto (2× klik na wykresie).&#x0a;Przeciągnij – przesuń (przy ręcznej skali także w pionie)." />
+                            </StackPanel>
+                            <TextBlock Text="{Binding CandleInfo}" Foreground="#808894" VerticalAlignment="Center" Margin="16,0,0,0"
+                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding CandleInfo}" />
+                        </DockPanel>
+                    </Border>
+                    <controls:CandleChartControl x:Name="CandleChart"
+                                                 Bars="{Binding CandleBars}"
+                                                 Interval="{Binding CandleInterval}"
+                                                 TickSize="{Binding CandleTickSize}"
+                                                 Appearance="{Binding CandleAppearance}"
+                                                 EmptyText="{Binding CandleEmptyText}" />
+                </DockPanel>
+            </TabItem>
+
+            <TabItem Header="Wolumen dziś / wczoraj">
+                <DockPanel>
+                    <!-- Które sesje są porównywane i suma do teraz. -->
+                    <Border DockPanel.Dock="Top" Background="#1E2229" Padding="10,6" BorderBrush="#2C313A" BorderThickness="0,0,0,1">
+                        <TextBlock Text="{Binding VolumeSummary}" Foreground="#C8CDD4" FontSize="13"
+                                   ToolTip="Wolumen bieżącej sesji w okresach TPO w porównaniu z tymi samymi okresami poprzedniej sesji tego samego rodzaju (dzienna z dzienną, nocna z nocną).&#x0a;Okres w trakcie porównywany jest do tej samej minuty. Odświeżanie co sekundę." />
+                    </Border>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="3*" MinHeight="150" />
+                            <RowDefinition Height="5" />
+                            <RowDefinition Height="2*" MinHeight="100" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Okresy TPO (dziś / poprzednia sesja / różnica) i obok wolumen całkowity sesji. -->
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="300" />
+                            </Grid.ColumnDefinitions>
+                            <controls:VolumeCompareChartControl Grid.Column="0" Result="{Binding VolumeResult}"
+                                                                SelectedIndex="{Binding VolumeSelectedIndex}" />
+                            <controls:SessionVolumeChartControl Grid.Column="1" Result="{Binding VolumeResult}"
+                                                                ToolTip="Wolumen całkowity profilu: dziś do teraz, poprzednia sesja do tej samej chwili i cała poprzednia sesja (przerywana ramka – ile wolumenu zwykle przychodzi do końca sesji)." />
+                        </Grid>
+                        <GridSplitter Grid.Row="1" HorizontalAlignment="Stretch" Background="#2C313A" />
+
+                        <DataGrid x:Name="VolumeGrid" Grid.Row="2" ItemsSource="{Binding VolumeRows}" AutoGenerateColumns="False" IsReadOnly="True"
+                                  SelectedIndex="{Binding VolumeSelectedIndex, Mode=TwoWay}" SelectionChanged="OnVolumeGridSelectionChanged"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" CanUserSortColumns="False"
+                                  CanUserReorderColumns="False" SelectionMode="Single"
+                                  Background="#14171C" AlternationCount="2"
+                                  Foreground="#C8CDD4" BorderThickness="0" HorizontalGridLinesBrush="#262B33"
+                                  FontFamily="Consolas" FontSize="13">
+                            <DataGrid.Resources>
+                                <Style TargetType="DataGridColumnHeader">
+                                    <Setter Property="Background" Value="#1E2229" />
+                                    <Setter Property="Foreground" Value="#808894" />
+                                    <Setter Property="FontFamily" Value="Segoe UI" />
+                                    <Setter Property="Padding" Value="10,5" />
+                                    <Setter Property="BorderBrush" Value="#2C313A" />
+                                    <Setter Property="BorderThickness" Value="0,0,1,1" />
+                                </Style>
+                                <Style TargetType="DataGridCell">
+                                    <Setter Property="BorderThickness" Value="0" />
+                                    <Setter Property="Padding" Value="10,3" />
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="DataGridCell">
+                                                <Border Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}">
+                                                    <ContentPresenter />
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                    <Style.Triggers>
+                                        <!-- Zaznaczony wiersz (także kliknięciem słupków na wykresie) – w kolorze zaznaczenia wykresu. -->
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter Property="Background" Value="#24405F" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                                <!-- Liczby wyrównane do prawej. -->
+                                <Style x:Key="NumberCell" TargetType="TextBlock">
+                                    <Setter Property="HorizontalAlignment" Value="Right" />
+                                </Style>
+                                <!-- Różnica: zielona = więcej niż w poprzedniej sesji, czerwona = mniej. -->
+                                <Style x:Key="DiffCell" TargetType="TextBlock" BasedOn="{StaticResource NumberCell}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Sign}" Value="1">
+                                            <Setter Property="Foreground" Value="#30C070" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Sign}" Value="-1">
+                                            <Setter Property="Foreground" Value="#E05050" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.Resources>
+                            <DataGrid.RowStyle>
+                                <!-- Tło wierszy w stylu (nie RowBackground – DataGrid wymusza je i zasłania zaznaczenie). -->
+                                <Style TargetType="DataGridRow">
+                                    <Setter Property="Background" Value="#181C22" />
+                                    <Style.Triggers>
+                                        <Trigger Property="AlternationIndex" Value="1">
+                                            <Setter Property="Background" Value="#1C2027" />
+                                        </Trigger>
+                                        <!-- Okres w trakcie – pogrubiony; okresy przyszłe – przygaszone. -->
+                                        <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                            <Setter Property="FontWeight" Value="Bold" />
+                                            <Setter Property="Background" Value="#2A2A1E" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsFuture}" Value="True">
+                                            <Setter Property="Foreground" Value="#5A626E" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.RowStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Litera" Binding="{Binding Letter}" Width="60" />
+                                <DataGridTextColumn Header="Godziny" Binding="{Binding Hours}" Width="190" />
+                                <DataGridTextColumn Header="Dziś" Binding="{Binding Today}" Width="130" ElementStyle="{StaticResource NumberCell}" />
+                                <DataGridTextColumn Header="Poprzednia sesja" Binding="{Binding Previous}" Width="140" ElementStyle="{StaticResource NumberCell}" />
+                                <DataGridTextColumn Header="Różnica" Binding="{Binding Difference}" Width="130" ElementStyle="{StaticResource DiffCell}" />
+                                <DataGridTextColumn Header="Różnica %" Binding="{Binding DifferencePercent}" Width="100" ElementStyle="{StaticResource DiffCell}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </DockPanel>
+            </TabItem>
+        </TabControl>
         <!--
             Obsługa wykresu:
             przeciągnij – przesuń | kółko – zoom pionowy | Ctrl+kółko – zoom poziomy | 2× klik – śledź cenę

@@ -10,7 +10,10 @@ namespace MarketProfile.App.ViewModels;
 ///  1. świece 1-minutowe z ostatnich N dni (szybko – kilka zapytań),
 ///  2. kompletne ticki (każda transakcja) z ostatnich M dni – symulacja odtwarza wtedy rynek dokładnie
 ///     tak, jak wyglądał. Ticki pobierają się powoli (limit IB), więc w jednym przebiegu każdy instrument
-///     dostaje jedną dobę (od najnowszej), a przebiegi idą jeden za drugim, aż wszystko będzie pobrane.
+///     dostaje jedną dobę (od najnowszej), a przebiegi idą jeden za drugim, aż wszystko będzie pobrane,
+///  3. świece dzienne, tygodniowe i miesięczne (<see cref="OhlcBarDownloader"/>) – najpierw pełna historia,
+///     potem co 30 minut tylko ostatnie świece (bieżący dzień / tydzień / miesiąc),
+///  4. świece D/W/M „rynku szerokiego” (np. SPX) – także gdy nie ma zaznaczonego „Pobieraj dane” (tylko D/W/M).
 ///
 ///  - działa w osobnym zadaniu – okno aplikacji nie jest blokowane,
 ///  - używa własnego połączenia z TWS (Client ID o 1 większy niż główne), więc nie przeszkadza danym na żywo,
@@ -36,6 +39,7 @@ public sealed class BackgroundHistoryDownloader
     private static readonly TimeSpan TickLag = TimeSpan.FromMinutes(2);
 
     private readonly IReadOnlyList<Instrument> _instruments;
+    private readonly Instrument? _broadMarket;   // rynek szeroki spoza listy pobierania – tylko świece D/W/M
     private readonly IbConnectionSettings _connection;
     private readonly MarketDataStore _store;
     private readonly int _days;
@@ -48,10 +52,14 @@ public sealed class BackgroundHistoryDownloader
     // Granica, przed którą broker nie ma ticków danego instrumentu (wykryta w tym uruchomieniu) – starszych nie pobieramy.
     private readonly Dictionary<string, DateTimeOffset> _tickFloor = [];
 
+    // Kiedy ostatnio uzupełniono świece D/W/M instrumentu (w tym uruchomieniu) – odświeżane co RepeatInterval.
+    private readonly Dictionary<string, DateTimeOffset> _ohlcUpdatedAt = [];
+
     public BackgroundHistoryDownloader(IReadOnlyList<Instrument> instruments, IbConnectionSettings mainConnection,
-        MarketDataStore store, int days, int tickDays)
+        MarketDataStore store, int days, int tickDays, Instrument? broadMarket = null)
     {
         _instruments = instruments;
+        _broadMarket = broadMarket is { } b && instruments.All(i => i.Symbol != b.Symbol) ? b : null;
         _connection = mainConnection with { ClientId = mainConnection.ClientId + 1 };
         _store = store;
         _days = Math.Max(1, days);
@@ -104,6 +112,23 @@ public sealed class BackgroundHistoryDownloader
                 await Task.Delay(PauseBetweenInstruments, token).ConfigureAwait(false);
             }
 
+            // Rynek szeroki (np. SPX) – tylko świece D/W/M.
+            if (_broadMarket is { } broad)
+            {
+                try
+                {
+                    bars += await UpdateBroadMarketAsync(broad, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{broad.Symbol}: {ex.Message}");
+                }
+            }
+
             var state = moreTicks && errors.Count == 0 ? "pobieranie ticków trwa" : "gotowe";
             var summary = $"Dane w tle: {state} ({_instruments.Count} instr., +{bars:N0} świec, +{ticks:N0} ticków, {DateTime.Now:HH:mm})";
             if (errors.Count > 0)
@@ -121,6 +146,38 @@ public sealed class BackgroundHistoryDownloader
                 await Task.Delay(RepeatInterval, token).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>Świece D/W/M rynku szerokiego (co <see cref="RepeatInterval"/>); zwraca liczbę zapisanych świec.</summary>
+    private async Task<long> UpdateBroadMarketAsync(Instrument instrument, CancellationToken token)
+    {
+        var symbol = instrument.Symbol;
+        if (_ohlcUpdatedAt.TryGetValue(symbol, out var at) && DateTimeOffset.UtcNow - at < RepeatInterval)
+        {
+            return 0;
+        }
+
+        Progress?.Invoke(this, $"Dane w tle: {symbol} (rynek szeroki) – świece D/W/M...");
+        string? lastFeedMessage = null;
+        await using var feed = IbFeeds.Create(_connection);
+        feed.StatusChanged += (_, message) => lastFeedMessage = message;
+        try
+        {
+            await feed.ConnectAsync(instrument, token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!token.IsCancellationRequested)
+        {
+            throw new InvalidOperationException(lastFeedMessage is { } m && !m.Contains("łączenie") ? m : ex.Message, ex);
+        }
+
+        var results = await OhlcBarUpdater.UpdateAsync(feed, symbol, _store, token).ConfigureAwait(false);
+        _ohlcUpdatedAt[symbol] = DateTimeOffset.UtcNow;
+        if (OhlcBarUpdater.Errors(results) is { } error)
+        {
+            throw new InvalidOperationException($"świece D/W/M: {error}");
+        }
+
+        return results.Sum(r => r.Saved);
     }
 
     /// <summary>Wynik przebiegu dla jednego instrumentu.</summary>
@@ -141,7 +198,8 @@ public sealed class BackgroundHistoryDownloader
             .Where(g => !(olderDone && existing is { } e && g.To <= e.Oldest))
             .ToList();
 
-        if (barGaps.Count == 0 && TickChunks(symbol, now).Count == 0)
+        var ohlcDue = !_ohlcUpdatedAt.TryGetValue(symbol, out var ohlcAt) || now - ohlcAt >= RepeatInterval;
+        if (barGaps.Count == 0 && TickChunks(symbol, now).Count == 0 && !ohlcDue)
         {
             return new PassResult(0, 0, false);
         }
@@ -182,7 +240,20 @@ public sealed class BackgroundHistoryDownloader
         // Starsza historia: raz na uruchomienie – jeśli broker nie ma starszych danych, nie pytamy w kółko.
         _olderDone.Add(symbol);
 
-        // 2. Ticki: jedna doba (najnowsza brakująca); świece z kroku 1 pozwalają przeskakiwać przerwy w handlu.
+        // 2. Świece D/W/M (krótkie zapytania – przed tickami, które mogą trwać długo).
+        if (ohlcDue)
+        {
+            Progress?.Invoke(this, $"{prefix} – świece D/W/M...");
+            var ohlc = await OhlcBarUpdater.UpdateAsync(feed, symbol, _store, token).ConfigureAwait(false);
+            _ohlcUpdatedAt[symbol] = DateTimeOffset.UtcNow;
+            savedBars += ohlc.Sum(r => r.Saved);
+            if (OhlcBarUpdater.Errors(ohlc) is { } ohlcError)
+            {
+                Progress?.Invoke(this, $"{prefix} – świece D/W/M: {ohlcError}");
+            }
+        }
+
+        // 3. Ticki: jedna doba (najnowsza brakująca); świece z kroku 1 pozwalają przeskakiwać przerwy w handlu.
         var tickChunks = TickChunks(symbol, DateTimeOffset.UtcNow);
         if (tickChunks.Count == 0)
         {

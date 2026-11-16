@@ -40,9 +40,9 @@ public sealed class ProfileBuilder
     /// <summary>Przetwarza pojedynczy tick (transakcję na żywo).</summary>
     public void ProcessTick(Tick tick)
     {
-        if (TryResolve(tick.Time, out var profile, out var periodIndex))
+        if (TryResolve(tick.Time, out var profile, out var periodIndex, out var minute))
         {
-            profile.AddPriceRange(periodIndex, tick.Price, tick.Price, tick.Price, tick.Volume);
+            profile.AddPriceRange(periodIndex, tick.Price, tick.Price, tick.Price, tick.Volume, minute: minute);
         }
     }
 
@@ -52,16 +52,16 @@ public sealed class ProfileBuilder
     /// </summary>
     public void ProcessBar(Bar bar)
     {
-        if (TryResolve(bar.Time, out var profile, out var periodIndex))
+        if (TryResolve(bar.Time, out var profile, out var periodIndex, out var minute))
         {
-            profile.AddPriceRange(periodIndex, bar.Low, bar.High, bar.Close, bar.Volume, bar.Open);
+            profile.AddPriceRange(periodIndex, bar.Low, bar.High, bar.Close, bar.Volume, bar.Open, minute);
         }
     }
 
     /// <summary>
-    /// Znajduje (lub tworzy) profil dla danego czasu i wylicza numer okresu TPO.
+    /// Znajduje (lub tworzy) profil dla danego czasu i wylicza numer okresu TPO oraz minutę od początku sesji.
     /// </summary>
-    private bool TryResolve(DateTimeOffset time, out SessionProfile profile, out int periodIndex)
+    private bool TryResolve(DateTimeOffset time, out SessionProfile profile, out int periodIndex, out int minute)
     {
         // Przeliczamy czas transakcji na strefę czasową giełdy (godziny sesji są podane w tej strefie).
         var local = TimeZoneInfo.ConvertTime(time, Settings.TimeZone).DateTime;
@@ -75,11 +75,13 @@ public sealed class ProfileBuilder
 
             profile = GetOrCreate(session, sessionStart);
             periodIndex = (int)((local - sessionStart).Ticks / Settings.TpoPeriod.Ticks);
+            minute = (int)((local - sessionStart).Ticks / TimeSpan.TicksPerMinute);
             return true;
         }
 
         profile = null!;
         periodIndex = -1;
+        minute = -1;
         return false;
     }
 
