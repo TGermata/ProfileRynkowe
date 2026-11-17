@@ -217,10 +217,21 @@
                             Command="{Binding SimStepBackCommand}" Style="{StaticResource SimBarButton}">
                         <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" />
                     </Button>
-                    <Button Content="▶" ToolTip="Play – odtwarzaj (po zmianie startu wczytuje symulację od nowa)"
-                            Command="{Binding SimPlayCommand}" IsEnabled="{Binding CanSimPlay}" Style="{StaticResource SimButton}" />
-                    <Button Content="⏸" ToolTip="Pauza"
-                            Command="{Binding SimPauseCommand}" IsEnabled="{Binding IsSimPlaying}" Style="{StaticResource SimButton}" />
+                    <!-- Jeden przycisk: ▶ (odtwarzaj) ↔ ⏸ (pauza) – zmienia się po każdym naciśnięciu. -->
+                    <Button Command="{Binding SimPlayPauseCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource SimButton}">
+                                <Setter Property="Content" Value="▶" />
+                                <Setter Property="ToolTip" Value="Play – odtwarzaj (po zmianie startu wczytuje symulację od nowa)" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSimPlaying}" Value="True">
+                                        <Setter Property="Content" Value="⏸" />
+                                        <Setter Property="ToolTip" Value="Pauza – wstrzymaj odtwarzanie" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
                     <Button ToolTip="Słupek w przód – przesuń czas o jeden okres TPO (działa także w pauzie)"
                             Command="{Binding SimStepCommand}" Style="{StaticResource SimBarButton}">
                         <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" />

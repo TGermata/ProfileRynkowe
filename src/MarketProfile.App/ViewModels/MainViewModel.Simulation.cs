@@ -51,6 +51,7 @@ public sealed partial class MainViewModel
 
     /// <summary>Najwięcej klatek płynnego przewijania (dłuższe odcinki – kilka okresów TPO na klatkę).</summary>
     private const int SimAnimationMaxFrames = 40;
+    private ICommand? _simPlayPauseCommand;
     private ICommand? _simPlayCommand, _simPauseCommand, _simStepCommand, _simStepBackCommand, _simResetCommand;
     private ICommand? _simPrevProfileCommand, _simNextProfileCommand, _simClearEndCommand;
 
@@ -517,6 +518,9 @@ public sealed partial class MainViewModel
 
     public ICommand SimPlayCommand => _simPlayCommand ??= new AsyncRelayCommand(PlayAsync);
     public ICommand SimPauseCommand => _simPauseCommand ??= new AsyncRelayCommand(PauseAsync);
+
+    /// <summary>Jeden przycisk ▶/⏸: w pauzie uruchamia odtwarzanie, w trakcie odtwarzania – pauza.</summary>
+    public ICommand SimPlayPauseCommand => _simPlayPauseCommand ??= new AsyncRelayCommand(() => IsSimPlaying ? PauseAsync() : PlayAsync());
     public ICommand SimStepCommand => _simStepCommand ??= new AsyncRelayCommand(StepAsync);
     public ICommand SimStepBackCommand => _simStepBackCommand ??= new AsyncRelayCommand(StepBackAsync);
     public ICommand SimClearEndCommand => _simClearEndCommand ??= new AsyncRelayCommand(ClearSimEndAsync);
