@@ -36,8 +36,8 @@ public sealed record ProfileSettings
     /// <summary>Sesje, dla których budowane są osobne profile (domyślnie: nocna i dzienna).</summary>
     public IReadOnlyList<SessionDefinition> Sessions { get; init; } =
     [
-        new SessionDefinition { Name = "Nocna", Start = new TimeOnly(18, 0), End = new TimeOnly(9, 30) },
-        new SessionDefinition { Name = "Dzienna", Start = new TimeOnly(9, 30), End = new TimeOnly(16, 0) },
+        new SessionDefinition { Name = SessionNames.Night, Start = new TimeOnly(18, 0), End = new TimeOnly(9, 30) },
+        new SessionDefinition { Name = SessionNames.Day, Start = new TimeOnly(9, 30), End = new TimeOnly(16, 0) },
     ];
 
     /// <summary>Wysokość wiersza w jednostkach ceny (np. 4 × 0.25 = 1.00).</summary>

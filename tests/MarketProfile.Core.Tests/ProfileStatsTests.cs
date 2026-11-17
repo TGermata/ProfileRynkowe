@@ -1,4 +1,5 @@
 using MarketProfile.Core;
+using MarketProfile.DataFeed.Settlements;
 
 namespace MarketProfile.Core.Tests;
 
@@ -9,6 +10,7 @@ namespace MarketProfile.Core.Tests;
 public sealed class ProfileStatsTests
 {
     private static readonly ProfileSettings Settings = new() { TimeZone = TimeZoneInfo.Utc, TicksPerRow = 4 }; // wiersz = 1.00
+    private static readonly SessionDefinition Night = Settings.Sessions[0];
     private static readonly SessionDefinition Day = Settings.Sessions[1];
     private static readonly DateTime Start = new(2026, 11, 12, 9, 30, 0);
 
@@ -16,9 +18,13 @@ public sealed class ProfileStatsTests
     private static ProfileSnapshot Profile(decimal open, params (decimal Low, decimal High, decimal Close)[] letters) =>
         Profile(Start, open, letters);
 
-    private static ProfileSnapshot Profile(DateTime start, decimal open, params (decimal Low, decimal High, decimal Close)[] letters)
+    private static ProfileSnapshot Profile(DateTime start, decimal open, params (decimal Low, decimal High, decimal Close)[] letters) =>
+        Profile(Day, start, open, letters);
+
+    private static ProfileSnapshot Profile(SessionDefinition session, DateTime start, decimal open,
+        params (decimal Low, decimal High, decimal Close)[] letters)
     {
-        var profile = new SessionProfile(Day, start, Settings);
+        var profile = new SessionProfile(session, start, Settings);
         for (var i = 0; i < letters.Length; i++)
         {
             var (low, high, close) = letters[i];
@@ -179,5 +185,368 @@ public sealed class ProfileStatsTests
 
         var back = Stats(Profile(112, (108, 120, 118), (109, 119, 117)), day1, day2);
         Assert.Equal([day1.Poc], back.NakedPocs); // POC dnia 2 dotknięty
+    }
+
+    private static readonly DateTime NightStart = new(2026, 11, 11, 18, 0, 0); // noc przed dniem Start
+
+    private static ProfileSnapshot PreviousDay() => Profile(Start.AddDays(-1), 105,
+        (95, 115, 105), (100, 110, 105), (100, 110, 104), (100, 110, 106), (101, 109, 105), (102, 108, 105));
+
+    [Fact]
+    public void Noc_BezRelacjiZPoprzedniaNoca()
+    {
+        var night1 = Profile(Night, NightStart.AddDays(-1), 100, (95, 105, 100), (98, 102, 100), (99, 101, 100));
+        var night2 = Profile(Night, NightStart, 120, (118, 125, 120), (119, 124, 121), (119, 123, 122));
+        var stats = Stats(night2, night1);
+
+        Assert.False(stats.IsDaySession);
+        Assert.Null(stats.PreviousTradingDate);
+        Assert.Equal(ValueMigration.None, stats.ValueMigration);
+        Assert.Equal(OpenLocation.None, stats.OpenLocation);
+        Assert.Equal(OpenType.None, stats.OpenType);
+        Assert.Empty(stats.NakedPocs);
+        Assert.Null(stats.OvernightHigh);
+        Assert.Equal(121.5m, stats.Halfback); // (125 + 118) / 2 – zaokrąglone do ticka 0.25
+    }
+
+    [Fact]
+    public void Dzien_PoprzedniDzienTenSamTypPomimoNocyPomiedzy()
+    {
+        var previous = PreviousDay();
+        var night = Profile(Night, NightStart, 112, (110, 121, 118), (112, 119, 117), (113, 118, 115));
+        var day = Profile(116, (111, 118, 115), (111, 118, 116), (112, 117, 115), (113, 118, 114));
+        var stats = Stats(day, previous, night);
+
+        Assert.Equal(previous.TradingDate, stats.PreviousTradingDate);
+        Assert.Equal(ValueMigration.Higher, stats.ValueMigration);
+        Assert.Equal(121m, stats.OvernightHigh);
+        Assert.Equal(110m, stats.OvernightLow);
+        Assert.Equal(night.Poc, stats.OvernightPoc);
+        Assert.Equal(OvernightLocation.InRange, stats.OpenVsOvernight);
+        Assert.Equal(previous.LastPrice, stats.PreviousClose);
+        Assert.Equal(105m, stats.PreviousHalfback);
+        Assert.Equal(1, stats.OpenVsPreviousHalfback);
+        Assert.Equal(1m, stats.Gap); // otwarcie 116 nad High poprzedniego dnia (115)
+    }
+
+    [Fact]
+    public void Dzien_StaraNocNieJestNocaPrzedDniem()
+    {
+        var night = Profile(Night, NightStart.AddDays(-1), 112, (110, 121, 118), (112, 119, 117));
+        var previous = PreviousDay(); // dzień po tej nocy
+        var stats = Stats(Profile(116, (111, 118, 115), (111, 118, 116)), night, previous);
+
+        Assert.Null(stats.OvernightHigh);
+        Assert.Equal(OvernightLocation.None, stats.OpenVsOvernight);
+    }
+
+    [Fact]
+    public void Dzien_TrendowyPomijaWartosc()
+    {
+        var trend = Profile(116, (116, 120, 120), (120, 124, 124), (124, 128, 128), (128, 132, 132), (132, 136, 136), (136, 140, 140));
+        var stats = Stats(trend, PreviousDay());
+
+        Assert.Equal(ProfileShape.Trend, stats.Shape);
+        Assert.Equal(ValueMigration.TrendDay, stats.ValueMigration);
+        Assert.Null(stats.ValueAreaOverlap);
+    }
+
+    [Fact]
+    public void Wartosc_WewnatrzINizej()
+    {
+        var previous = PreviousDay();
+        var inside = Stats(Profile(105, (103, 107, 105), (104, 106, 105), (104, 106, 104), (103, 107, 106)), previous);
+        Assert.Equal(ValueMigration.Inside, inside.ValueMigration);
+
+        var lower = Stats(Profile(95, (90, 97, 93), (91, 96, 92), (90, 96, 94), (91, 97, 93)), previous);
+        Assert.Equal(ValueMigration.Lower, lower.ValueMigration);
+    }
+
+    [Fact]
+    public void Settle_TylkoDlaZakonczonejSesjiILukaDoSettlePoprzedniego()
+    {
+        var previous = PreviousDay();
+        var day = Profile(116, (111, 118, 115), (111, 118, 116));
+        var settlements = new Dictionary<DateOnly, Settlement>
+        {
+            [previous.TradingDate] = new(previous.TradingDate, 106.25m, Settlement.SourceCme, "DEC 26"),
+            [day.TradingDate] = new(day.TradingDate, 115.75m, Settlement.SourceManual),
+        };
+
+        var complete = ProfileAnalyzer.Analyze(day, [previous], isComplete: true, tpoMinutes: 30, settlements: settlements);
+        Assert.Equal(115.75m, complete.Settle);
+        Assert.Equal(Settlement.SourceManual, complete.SettleSource);
+        Assert.Equal(106.25m, complete.PreviousSettle);
+        Assert.Equal(1m, complete.Gap); // luka liczona od High poprzedniego dnia (115), nie od settle
+
+        var running = ProfileAnalyzer.Analyze(day, [previous], isComplete: false, tpoMinutes: 30, settlements: settlements);
+        Assert.Null(running.Settle); // sesja w toku – settle jeszcze nie istnieje
+        Assert.Equal(106.25m, running.PreviousSettle);
+    }
+
+    [Fact]
+    public void Baza_SettleRecznyMaPierwszenstwoIStaraTabelaDostajeKolumny()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"mp-settle-{Guid.NewGuid():N}.db");
+        try
+        {
+            // Stara baza: tabela profile_stats bez nowych kolumn.
+            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "CREATE TABLE profile_stats (symbol TEXT NOT NULL, session TEXT NOT NULL, session_start TEXT NOT NULL, " +
+                                      "trading_date TEXT NOT NULL, PRIMARY KEY (symbol, session, session_start))";
+                command.ExecuteNonQuery();
+            }
+
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            var store = new MarketProfile.DataFeed.Storage.MarketDataStore(path);
+            var date = new DateOnly(2026, 11, 16);
+
+            Assert.True(store.SaveSettlement("ES", new Settlement(date, 6881.25m, Settlement.SourceManual)));
+            Assert.False(store.SaveSettlement("ES", new Settlement(date, 6880m, Settlement.SourceCme, "DEC 26"))); // nie nadpisuje ręcznego
+            Assert.Equal(6881.25m, store.ReadSettlements("ES")[date].Price);
+
+            store.DeleteSettlement("ES", date);
+            Assert.True(store.SaveSettlement("ES", new Settlement(date, 6880m, Settlement.SourceCme, "DEC 26")));
+            Assert.True(store.SaveSettlement("ES", new Settlement(date, 6879.5m, Settlement.SourceManual)));
+            var read = store.ReadSettlements("ES")[date];
+            Assert.Equal(6879.5m, read.Price);
+            Assert.True(read.IsManual);
+            Assert.Empty(store.ReadSettlements("NQ"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach (var file in new[] { path, path + "-wal", path + "-shm" })
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    [Fact]
+    public void Baza_NoweKolumnyParametrowWStarejBazie()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"mp-stats-old-{Guid.NewGuid():N}.db");
+        try
+        {
+            // Stara baza: tabela profile_stats w poprzednim formacie (bez nowych kolumn) – tworzy ją bieżąca wersja,
+            // po czym usuwamy kolumny, odtwarzając tabelę ze starym zestawem pól.
+            var store = new MarketProfile.DataFeed.Storage.MarketDataStore(path);
+            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    ALTER TABLE profile_stats DROP COLUMN halfback; ALTER TABLE profile_stats DROP COLUMN settle;
+                    ALTER TABLE profile_stats DROP COLUMN settle_source; ALTER TABLE profile_stats DROP COLUMN on_high;
+                    ALTER TABLE profile_stats DROP COLUMN on_poc; ALTER TABLE profile_stats DROP COLUMN open_vs_overnight;
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            store = new MarketProfile.DataFeed.Storage.MarketDataStore(path); // migracja dopisuje brakujące kolumny
+
+            var previous = PreviousDay();
+            var night = Profile(Night, NightStart, 112, (110, 121, 118), (112, 119, 117));
+            var stats = Stats(Profile(116, (111, 118, 115), (111, 118, 116)), previous, night) with { Settle = 115.5m, SettleSource = "CME" };
+            store.SaveProfileStats("ES", [stats]);
+            var back = Assert.Single(store.ReadProfileStats("ES"));
+
+            Assert.Equal(stats.Halfback, back.Halfback);
+            Assert.Equal(115.5m, back.Settle);
+            Assert.Equal("CME", back.SettleSource);
+            Assert.Equal(stats.OvernightHigh, back.OvernightHigh);
+            Assert.Equal(stats.OvernightPoc, back.OvernightPoc);
+            Assert.Equal(stats.OpenVsOvernight, back.OpenVsOvernight);
+            Assert.Equal(stats.Gap, back.Gap);
+            Assert.Equal(stats.OpeningInventory, back.OpeningInventory);
+            Assert.Equal(stats.InventorySize, back.InventorySize);
+            Assert.Equal(stats.InventoryCorrected, back.InventoryCorrected);
+            Assert.Equal(stats.InventoryCorrectedLetter, back.InventoryCorrectedLetter);
+            Assert.Equal(stats.PreviousHalfback, back.PreviousHalfback);
+            Assert.Equal(stats.TrendDirection, back.TrendDirection);
+            Assert.Equal(stats.IsTrendDay, back.IsTrendDay);
+            Assert.Equal(stats.IntervalFrom, back.IntervalFrom);
+            Assert.Equal(stats.IntervalTo, back.IntervalTo);
+            Assert.Equal(stats.IntervalPeriods, back.IntervalPeriods);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach (var file in new[] { path, path + "-wal", path + "-shm" })
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    [Fact]
+    public void Cme_OdczytOdpowiedzi()
+    {
+        const string json = """
+            {"settlements":[
+              {"month":"DEC 26","open":"6870.00","settle":"6,881.25","volume":"1,234,567"},
+              {"month":"MAR 27","open":"-","settle":"6942.50","volume":"12,345"},
+              {"month":"Total","settle":"","volume":"1,246,912"}],
+             "tradeDate":"11/16/2026","empty":false}
+            """;
+        var date = new DateOnly(2026, 11, 16);
+
+        var front = CmeSettlementClient.Parse(json, date, "");
+        Assert.Equal(6881.25m, front.Settlement!.Price);
+        Assert.Equal("DEC 26", front.Settlement.Contract);
+        Assert.Equal(Settlement.SourceCme, front.Settlement.Source);
+
+        Assert.Equal(6942.5m, CmeSettlementClient.Parse(json, date, "202703").Settlement!.Price);
+
+        var missing = CmeSettlementClient.Parse(json, date, "202706");
+        Assert.Null(missing.Settlement);
+        Assert.True(missing.NotPublished);
+
+        Assert.Null(CmeSettlementClient.Parse("<html>Access denied</html>", date, "").Settlement);
+        Assert.Equal("DEC 26", CmeSettlementClient.MonthLabel("202612"));
+        Assert.Null(CmeSettlementClient.ParsePrice("-"));
+        Assert.Null(CmeSettlementClient.ParsePrice("110'16"));
+    }
+
+    /// <summary>Okresy TPO z podanych (Open, Low, High) – kolejno od A.</summary>
+    private static List<TpoPeriod> Periods(params (decimal Open, decimal Low, decimal High)[] bars) =>
+        [.. bars.Select((b, i) => new TpoPeriod(i, Start.AddMinutes(30 * i), Start.AddMinutes(30 * (i + 1)), b.High, b.Low) { Open = b.Open })];
+
+    [Fact]
+    public void Interwalowanie_WGoreDzienTrendowyIPullbackLow()
+    {
+        // A..H: początki coraz wyżej (A–H = 8 z 10 okresów), potem I i J – wybicie w dół (PULLBACK LOW w J).
+        var trend = ProfileAnalyzer.TrendOf(Periods(
+            (100, 99, 102), (101, 100, 103), (102, 101, 104), (103, 102, 105), (104, 103, 106),
+            (105, 104, 107), (106, 105, 108), (107, 106, 109), (106, 101, 107), (102, 97, 103)), totalPeriods: 10);
+
+        Assert.Equal(1, trend.Direction);
+        Assert.Equal('A', trend.From);
+        Assert.Equal('H', trend.To);
+        Assert.Equal(8, trend.Periods);
+        Assert.True(trend.IsTrendDay);
+        Assert.Equal(97m, trend.PullbackPrice);
+        Assert.Equal('J', trend.PullbackLetter);
+    }
+
+    [Fact]
+    public void Interwalowanie_WDolPullbackHigh()
+    {
+        var trend = ProfileAnalyzer.TrendOf(Periods(
+            (110, 108, 111), (109, 107, 110), (108, 106, 109), (107, 105, 108), (106, 104, 107), (105, 103, 106), (108, 104, 112)),
+            totalPeriods: 7);
+
+        Assert.Equal(-1, trend.Direction);
+        Assert.Equal(6, trend.Periods); // A–F
+        Assert.True(trend.IsTrendDay);
+        Assert.Equal(112m, trend.PullbackPrice); // PULLBACK HIGH w G
+        Assert.Equal('G', trend.PullbackLetter);
+    }
+
+    [Fact]
+    public void Interwalowanie_NizszyPoczatekPrzerywaNawetBezWybiciaDolka()
+    {
+        // D otwiera się niżej niż C (ale nad dołkiem C) – koniec serii A–C, potem nowa seria D–F.
+        var trend = ProfileAnalyzer.TrendOf(Periods(
+            (100, 99, 102), (101, 100, 103), (103, 101, 105), (102.5m, 102, 104), (103.5m, 103, 105), (104.5m, 104, 106)), totalPeriods: 6);
+
+        Assert.Equal(3, trend.Periods);
+        Assert.False(trend.IsTrendDay); // 3 z 6 < 60%
+        Assert.Null(trend.PullbackPrice);
+    }
+
+    [Fact]
+    public void Interwalowanie_Prog60ProcentISesjaWToku()
+    {
+        var six = Periods((100, 99, 101), (101, 100, 102), (102, 101, 103), (103, 102, 104), (104, 103, 105), (105, 104, 106));
+
+        Assert.True(ProfileAnalyzer.TrendOf(six, totalPeriods: 10).IsTrendDay);   // 6 z 10 = 60%
+        Assert.False(ProfileAnalyzer.TrendOf(six, totalPeriods: 11).IsTrendDay);  // 6 z 11 < 60%
+
+        // Sesja w toku: 5 rosnących okresów z planowanych 13 – jeszcze nie dzień trendowy.
+        var day = Profile(100, (99, 101, 100), (100, 102, 101), (101, 103, 102), (102, 104, 103), (103, 105, 104));
+        var running = ProfileAnalyzer.Analyze(day, [], isComplete: false, tpoMinutes: 30);
+        Assert.Equal(1, running.TrendDirection);
+        Assert.False(running.IsTrendDay);
+        Assert.NotEqual(ProfileShape.Trend, running.Shape);
+
+        // Ta sama sesja zakończona po 5 okresach (np. krótka sesja) – dzień trendowy.
+        var complete = ProfileAnalyzer.Analyze(day, [], isComplete: true, tpoMinutes: 30);
+        Assert.True(complete.IsTrendDay);
+        Assert.Equal(ProfileShape.Trend, complete.Shape);
+    }
+
+    [Fact]
+    public void Settle_BezWpisuToClose()
+    {
+        var previous = PreviousDay();
+        var day = Profile(116, (111, 118, 115), (111, 118, 116));
+        var stats = Stats(day, previous);
+
+        Assert.Equal(day.LastPrice, stats.Settle);
+        Assert.Equal(Settlement.SourceClose, stats.SettleSource);
+        Assert.Equal(previous.LastPrice, stats.PreviousSettle);
+        Assert.Equal(1m, stats.Gap);
+
+        Assert.Null(Stats(Profile(Night, NightStart, 112, (110, 121, 118), (112, 119, 117))).Settle); // noc – bez settle
+    }
+
+    [Fact]
+    public void Luka_OdHighLubLowPoprzedniegoDnia()
+    {
+        var previous = PreviousDay(); // zakres 95–115, Close 105
+
+        Assert.Equal(3m, Stats(Profile(118, (117, 120, 119), (118, 121, 120)), previous).Gap);   // nad High: 118 − 115
+        Assert.Equal(-4.5m, Stats(Profile(90.5m, (89, 92, 91), (90, 93, 92)), previous).Gap);   // pod Low: 90.5 − 95
+        Assert.Null(Stats(Profile(110, (108, 112, 110), (109, 113, 111)), previous).Gap);       // w zakresie – brak luki
+        Assert.Null(Stats(Profile(115, (114, 117, 116), (115, 118, 117)), previous).Gap);       // na samym High – brak luki
+    }
+
+    [Fact]
+    public void Inwentarz_DlugiKrotkiIWyrownanie()
+    {
+        var previous = PreviousDay(); // SETTLE = Close 105 (brak wpisu)
+
+        // Długi: otwarcie 108 nad SETTLE 105; C schodzi do 104 – wyrównany w C.
+        var longCorrected = Stats(Profile(108, (107, 110, 109), (106, 109, 107), (104, 107, 105)), previous);
+        Assert.Equal(OpeningInventory.Long, longCorrected.OpeningInventory);
+        Assert.Equal(3m, longCorrected.InventorySize);
+        Assert.True(longCorrected.InventoryCorrected);
+        Assert.Equal('C', longCorrected.InventoryCorrectedLetter);
+
+        // Krótki: otwarcie 101 pod SETTLE 105; cena nie wraca – niewyrównany.
+        var shortOpen = Profile(101, (99, 102, 100), (98, 101, 99));
+        var shortStats = Stats(shortOpen, previous);
+        Assert.Equal(OpeningInventory.Short, shortStats.OpeningInventory);
+        Assert.Equal(-4m, shortStats.InventorySize);
+        Assert.False(shortStats.InventoryCorrected);
+        Assert.Null(shortStats.InventoryCorrectedLetter);
+
+        // Wyrównanie już w A: otwarcie 106, A schodzi do 105.
+        var inA = Stats(Profile(106, (105, 107, 106), (106, 108, 107)), previous);
+        Assert.True(inA.InventoryCorrected);
+        Assert.Equal('A', inA.InventoryCorrectedLetter);
+
+        // Otwarcie dokładnie na SETTLE – neutralny, bez wyrównania.
+        var neutral = Stats(Profile(105, (104, 106, 105), (104, 107, 106)), previous);
+        Assert.Equal(OpeningInventory.Neutral, neutral.OpeningInventory);
+        Assert.Null(neutral.InventoryCorrected);
+
+        // Wpis ręczny SETTLE poprzedniego dnia (100) zmienia inwentarz krótki na długi.
+        var settlements = new Dictionary<DateOnly, Settlement>
+        {
+            [previous.TradingDate] = new(previous.TradingDate, 100m, Settlement.SourceManual),
+        };
+        var manual = ProfileAnalyzer.Analyze(shortOpen, [previous], isComplete: true, tpoMinutes: 30, settlements: settlements);
+        Assert.Equal(OpeningInventory.Long, manual.OpeningInventory);
+        Assert.True(manual.InventoryCorrected); // A schodzi do 99 ≤ 100
+
+        // Noc – bez inwentarza.
+        Assert.Equal(OpeningInventory.None, Stats(Profile(Night, NightStart, 112, (110, 121, 118), (112, 119, 117)), previous).OpeningInventory);
     }
 }

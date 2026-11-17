@@ -18,10 +18,48 @@ public sealed partial class MarketDataStore
         ib_high, ib_low, ib_width, ib_ext_up, ib_ext_up_letter, ib_ext_down, ib_ext_down_letter, range_extension,
         shape, tpo_above_poc, tpo_below_poc, single_prints, excess_high, excess_low, poor_high, poor_low,
         previous_trading_date, open_location, open_type, open_direction, value_migration, va_overlap,
-        naked_pocs, naked_vpocs
+        naked_pocs, naked_vpocs,
+        halfback, settle, settle_source, prev_close, prev_settle, prev_halfback, gap, open_vs_prev_halfback,
+        on_high, on_low, on_poc, open_vs_overnight,
+        opening_inventory, inventory_size, inventory_corrected, inventory_corrected_letter,
+        trend_direction, is_trend_day, interval_from, interval_to, interval_periods, pullback_low, pullback_high, pullback_letter
         """;
 
-    private static void EnsureProfileStatsTable(SqliteConnection connection) => Execute(connection, """
+    /// <summary>Kolumny dodane w późniejszych wersjach – w starych bazach dopisywane przez ALTER TABLE.</summary>
+    private static readonly (string Name, string Type)[] ProfileStatsAddedColumns =
+    [
+        ("halfback", "REAL"), ("settle", "REAL"), ("settle_source", "TEXT"), ("prev_close", "REAL"), ("prev_settle", "REAL"),
+        ("prev_halfback", "REAL"), ("gap", "REAL"), ("open_vs_prev_halfback", "INTEGER"),
+        ("on_high", "REAL"), ("on_low", "REAL"), ("on_poc", "REAL"), ("open_vs_overnight", "TEXT"),
+        ("opening_inventory", "TEXT"), ("inventory_size", "REAL"), ("inventory_corrected", "INTEGER"),
+        ("inventory_corrected_letter", "TEXT"),
+        ("trend_direction", "INTEGER"), ("is_trend_day", "INTEGER"), ("interval_from", "TEXT"), ("interval_to", "TEXT"),
+        ("interval_periods", "INTEGER"), ("pullback_low", "REAL"), ("pullback_high", "REAL"), ("pullback_letter", "TEXT"),
+    ];
+
+    private static void EnsureProfileStatsTable(SqliteConnection connection)
+    {
+        CreateProfileStatsTable(connection);
+
+        // Migracja: brakujące kolumny (bazy z wcześniejszych wersji).
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var info = connection.CreateCommand())
+        {
+            info.CommandText = "PRAGMA table_info(profile_stats)";
+            using var reader = info.ExecuteReader();
+            while (reader.Read())
+            {
+                existing.Add(reader.GetString(1));
+            }
+        }
+
+        foreach (var (name, type) in ProfileStatsAddedColumns.Where(c => !existing.Contains(c.Name)))
+        {
+            Execute(connection, $"ALTER TABLE profile_stats ADD COLUMN {name} {type}");
+        }
+    }
+
+    private static void CreateProfileStatsTable(SqliteConnection connection) => Execute(connection, """
         CREATE TABLE IF NOT EXISTS profile_stats (
             symbol                TEXT    NOT NULL,
             session               TEXT    NOT NULL,   -- Dzienna / Nocna
@@ -54,6 +92,24 @@ public sealed partial class MarketDataStore
             va_overlap            REAL,               -- 0–1
             naked_pocs            TEXT,               -- "cena;cena"
             naked_vpocs           TEXT,
+            halfback REAL,                            -- (High + Low) / 2
+            settle REAL,                              -- cena rozliczeniowa (sesja dzienna), NULL = brak
+            settle_source         TEXT,               -- CME / ręcznie
+            prev_close REAL, prev_settle REAL, prev_halfback REAL,
+            gap                   REAL,               -- luka: Open − High (nad) / Open − Low (pod) poprzedniego dnia; NULL = brak
+            open_vs_prev_halfback INTEGER,            -- 1 nad, -1 pod
+            on_high REAL, on_low REAL, on_poc REAL,   -- sesja nocna przed dniem
+            open_vs_overnight     TEXT,               -- AboveHigh / InRange / BelowLow
+            opening_inventory     TEXT,               -- Long / Short / Neutral – względem SETTLE poprzedniego dnia
+            inventory_size        REAL,               -- Open − SETTLE poprzedniego dnia
+            inventory_corrected   INTEGER,            -- 1 = cena wróciła do SETTLE, 0 = nie (jeszcze), NULL = brak inwentarza
+            inventory_corrected_letter TEXT,
+            trend_direction       INTEGER,            -- interwałowanie: 1 w górę, -1 w dół, 0 brak
+            is_trend_day          INTEGER,            -- 1 = dzień trendowy (interwałowanie przez większą część sesji)
+            interval_from TEXT, interval_to TEXT,     -- litery początku i końca interwałowania
+            interval_periods      INTEGER,
+            pullback_low REAL, pullback_high REAL,    -- PULLBACK LOW (trend w górę) / PULLBACK HIGH (w dół)
+            pullback_letter       TEXT,
             PRIMARY KEY (symbol, session, session_start)
         );
         CREATE INDEX IF NOT EXISTS ix_profile_stats_date ON profile_stats (symbol, trading_date);
@@ -123,6 +179,30 @@ public sealed partial class MarketDataStore
             Set("va_overlap", s.ValueAreaOverlap);
             Set("naked_pocs", string.Join(";", s.NakedPocs.Select(Price)));
             Set("naked_vpocs", string.Join(";", s.NakedVolumePocs.Select(Price)));
+            Set("halfback", (double)s.Halfback);
+            Set("settle", (double?)s.Settle);
+            Set("settle_source", s.SettleSource);
+            Set("prev_close", (double?)s.PreviousClose);
+            Set("prev_settle", (double?)s.PreviousSettle);
+            Set("prev_halfback", (double?)s.PreviousHalfback);
+            Set("gap", (double?)s.Gap);
+            Set("open_vs_prev_halfback", s.OpenVsPreviousHalfback);
+            Set("on_high", (double?)s.OvernightHigh);
+            Set("on_low", (double?)s.OvernightLow);
+            Set("on_poc", (double?)s.OvernightPoc);
+            Set("open_vs_overnight", s.OpenVsOvernight.ToString());
+            Set("opening_inventory", s.OpeningInventory.ToString());
+            Set("inventory_size", (double?)s.InventorySize);
+            Set("inventory_corrected", s.InventoryCorrected is { } corrected ? corrected ? 1 : 0 : null);
+            Set("inventory_corrected_letter", s.InventoryCorrectedLetter?.ToString());
+            Set("trend_direction", s.TrendDirection);
+            Set("is_trend_day", s.IsTrendDay ? 1 : 0);
+            Set("interval_from", s.IntervalFrom?.ToString());
+            Set("interval_to", s.IntervalTo?.ToString());
+            Set("interval_periods", s.IntervalPeriods);
+            Set("pullback_low", (double?)s.PullbackLow);
+            Set("pullback_high", (double?)s.PullbackHigh);
+            Set("pullback_letter", s.PullbackLetter?.ToString());
             command.ExecuteNonQuery();
         }
 
@@ -207,6 +287,30 @@ public sealed partial class MarketDataStore
                 ValueAreaOverlap = reader.IsDBNull(i("va_overlap")) ? null : reader.GetDouble(i("va_overlap")),
                 NakedPocs = ParsePrices(T("naked_pocs")),
                 NakedVolumePocs = ParsePrices(T("naked_vpocs")),
+                Halfback = Dn("halfback") ?? 0,
+                Settle = Dn("settle"),
+                SettleSource = T("settle_source"),
+                PreviousClose = Dn("prev_close"),
+                PreviousSettle = Dn("prev_settle"),
+                PreviousHalfback = Dn("prev_halfback"),
+                Gap = Dn("gap"),
+                OpenVsPreviousHalfback = N("open_vs_prev_halfback"),
+                OvernightHigh = Dn("on_high"),
+                OvernightLow = Dn("on_low"),
+                OvernightPoc = Dn("on_poc"),
+                OpenVsOvernight = E<OvernightLocation>("open_vs_overnight"),
+                OpeningInventory = E<OpeningInventory>("opening_inventory"),
+                InventorySize = Dn("inventory_size"),
+                InventoryCorrected = reader.IsDBNull(i("inventory_corrected")) ? null : N("inventory_corrected") == 1,
+                InventoryCorrectedLetter = C("inventory_corrected_letter"),
+                TrendDirection = N("trend_direction"),
+                IsTrendDay = N("is_trend_day") == 1,
+                IntervalFrom = C("interval_from"),
+                IntervalTo = C("interval_to"),
+                IntervalPeriods = N("interval_periods"),
+                PullbackLow = Dn("pullback_low"),
+                PullbackHigh = Dn("pullback_high"),
+                PullbackLetter = C("pullback_letter"),
             });
         }
 

@@ -45,7 +45,8 @@ public sealed class SettingsViewModel : ObservableObject
 
         // Baza danych.
         RecordToDatabase = settings.RecordToDatabase;
-        ShowTickDownloadBar = settings.ShowTickDownloadBar;
+        ShowDownloadProgress = settings.ShowDownloadProgress;
+        ControlSize = settings.ControlSize;
         TempoGauge = settings.TempoGauge;
         TempoGaugePosition = settings.TempoGaugePosition;
         TempoInStatusBar = settings.TempoInStatusBar;
@@ -811,8 +812,19 @@ public sealed class SettingsViewModel : ObservableObject
     // --- Baza danych ---
     public bool RecordToDatabase { get; set; }
 
-    /// <summary>Czy pokazywać pasek stanu pobierania ticków w oknie głównym.</summary>
-    public bool ShowTickDownloadBar { get; set; }
+    /// <summary>Czy pokazywać postęp pobierania w tle w polu informacji okna głównego.</summary>
+    public bool ShowDownloadProgress { get; set; }
+
+    /// <summary>Rozmiar kontrolek pasków okna głównego.</summary>
+    public ControlSize ControlSize { get; set; }
+
+    /// <summary>Rozmiary kontrolek do wyboru (wartość – opis).</summary>
+    public IReadOnlyList<KeyValuePair<ControlSize, string>> ControlSizes { get; } =
+    [
+        new(ControlSize.Small, "Małe"),
+        new(ControlSize.Normal, "Normalne"),
+        new(ControlSize.Large, "Duże"),
+    ];
 
     // --- Tempo budowania TPO ---
     public bool TempoGauge { get; set; }
@@ -1267,7 +1279,8 @@ public sealed class SettingsViewModel : ObservableObject
             HistoryDays = historyDays,
             SimulatorSpeed = speed,
             RecordToDatabase = RecordToDatabase,
-            ShowTickDownloadBar = ShowTickDownloadBar,
+            ShowDownloadProgress = ShowDownloadProgress,
+            ControlSize = ControlSize,
             TempoGauge = TempoGauge,
             TempoGaugePosition = TempoGaugePosition,
             TempoInStatusBar = TempoInStatusBar,

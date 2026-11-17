@@ -142,8 +142,54 @@ public sealed record AppSettings
     /// <summary>Czy pokazywać linię z tempem (wartość, stan, ostatnie zatrzymanie) w pasku na dole okna.</summary>
     public bool TempoInStatusBar { get; init; } = true;
 
-    /// <summary>Czy pokazywać pod paskiem narzędzi pasek stanu pobierania ticków (postęp i komplet dni).</summary>
-    public bool ShowTickDownloadBar { get; init; } = true;
+    /// <summary>
+    /// Czy pokazywać w polu informacji postęp pobierania w tle (doba, procent, komplet dni ticków).
+    /// Domyślnie nie – pole informacji pokazuje tylko problemy (błąd pobierania – zawsze).
+    /// </summary>
+    public bool ShowDownloadProgress { get; init; }
+
+    /// <summary>Rozmiar kontrolek pasków (narzędzia i symulacja): małe / normalne / duże.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<ControlSize>))]
+    public ControlSize ControlSize { get; init; } = ControlSize.Normal;
+
+    /// <summary>Kursor z liniami ceny i czasu na wykresie TPO (panel narzędzi, klawisz C).</summary>
+    public bool ShowCrosshair { get; init; }
+
+    /// <summary>Położenie panelu narzędzi na wykresie TPO (od lewego górnego rogu wykresu).</summary>
+    public double ToolPanelLeft { get; init; } = 12;
+
+    /// <summary>Położenie panelu narzędzi na wykresie TPO – odległość od góry wykresu.</summary>
+    public double ToolPanelTop { get; init; } = 48;
+
+    /// <summary>Czy panel narzędzi jest zwinięty (widać tylko jego nagłówek).</summary>
+    public bool ToolPanelCollapsed { get; init; }
+
+    /// <summary>Opisy analizy na profilach dziennych (menu „Wyświetlanie” nad wykresem TPO).</summary>
+    public ChartNotesStyle Notes { get; init; } = new();
+
+    /// <summary>Położenie menu „Wyświetlanie” na wykresie TPO.</summary>
+    public double DisplayPanelLeft { get; init; } = 12;
+
+    /// <summary>Położenie menu „Wyświetlanie” – odległość od góry wykresu.</summary>
+    public double DisplayPanelTop { get; init; } = 96;
+
+    /// <summary>Czy menu „Wyświetlanie” jest zwinięte (domyślnie tak – nie zasłania wykresu).</summary>
+    public bool DisplayPanelCollapsed { get; init; } = true;
+
+    /// <summary>Tabela „Parametry profili”: pokazuj tylko profile sesji dziennych (najważniejsze w analizie).</summary>
+    public bool ProfileStatsDayOnly { get; init; } = true;
+
+    /// <summary>Czy kody produktów CME (do pobierania SETTLE) zostały już uzupełnione w zapisanej liście instrumentów.</summary>
+    public bool CmeDefaultsApplied { get; init; }
+
+    /// <summary>Skala pasków dla <see cref="ControlSize"/>.</summary>
+    [JsonIgnore]
+    public double ControlScale => ControlSize switch
+    {
+        ControlSize.Small => 0.85,
+        ControlSize.Large => 1.2,
+        _ => 1.0,
+    };
 
     /// <summary>
     /// Czy wykonano jednorazowe zaznaczenie „Pobieraj dane” dla ES i NQ w ustawieniach zapisanych przez
@@ -296,7 +342,7 @@ public sealed record AppSettings
     {
         if (Instruments.Count > 0)
         {
-            return WithDownloadDefaults();
+            return WithDownloadDefaults().WithCmeDefaults();
         }
 
         TimeOnly Parse(string text, TimeOnly fallback) =>
@@ -316,7 +362,23 @@ public sealed record AppSettings
                 : i)
             .ToList();
 
-        return this with { Instruments = instruments, DownloadDefaultsApplied = true };
+        return this with { Instruments = instruments, DownloadDefaultsApplied = true, CmeDefaultsApplied = true };
+    }
+
+    /// <summary>Jednorazowo uzupełnia kody produktów CME wbudowanych instrumentów w liście z wcześniejszej wersji.</summary>
+    private AppSettings WithCmeDefaults()
+    {
+        if (CmeDefaultsApplied)
+        {
+            return this;
+        }
+
+        var instruments = Instruments
+            .Select(i => i.CmeProductId == 0 && i.Type == InstrumentType.Future
+                ? i with { CmeProductId = Instrument.DefaultCmeProductId(i.Symbol) }
+                : i)
+            .ToList();
+        return this with { Instruments = instruments, CmeDefaultsApplied = true };
     }
 
     /// <summary>
@@ -353,6 +415,28 @@ public sealed record AppSettings
     /// <summary>Zamienia tekst "HH:mm" na godzinę.</summary>
     public static TimeOnly ParseTime(string text) =>
         TimeOnly.ParseExact(text.Trim(), "HH:mm", CultureInfo.InvariantCulture);
+
+    // --- Układ okien (praca na kilku monitorach) ---
+
+    /// <summary>Położenie i rozmiar okna głównego przy ostatnim zamknięciu (null = domyślne – zmaksymalizowane).</summary>
+    public WindowLayout? MainWindowLayout { get; init; }
+
+    /// <summary>Zakładki przeniesione do osobnych okien – wracają na swoje miejsca przy kolejnym uruchomieniu.</summary>
+    public List<WindowLayout> DetachedTabs { get; init; } = [];
+}
+
+/// <summary>
+/// Położenie okna na pulpicie (współrzędne WPF, mogą wskazywać dowolny monitor) i jego stan.
+/// </summary>
+/// <param name="Key">Zakładka w osobnym oknie: "tpo", "candles" albo "volume" (dla okna głównego – "main").</param>
+public sealed record WindowLayout(string Key, double Left, double Top, double Width, double Height, bool Maximized);
+
+/// <summary>Rozmiar kontrolek pasków okna głównego.</summary>
+public enum ControlSize
+{
+    Small,
+    Normal,
+    Large,
 }
 
 /// <summary>Tryb wyświetlania profilu wolumenowego.</summary>
@@ -567,6 +651,39 @@ public enum LiveSourceKind
 
     /// <summary>Interactive Brokers (przez TWS / IB Gateway).</summary>
     InteractiveBrokers,
+}
+
+/// <summary>Które poziomy sesji nocnej (ONH / ONL / ON POC) rysować na profilach dziennych.</summary>
+public enum OvernightLevelsMode
+{
+    /// <summary>Tylko na ostatnim profilu dziennym.</summary>
+    LastDay,
+
+    /// <summary>Na wszystkich profilach dziennych.</summary>
+    AllDays,
+
+    /// <summary>Wcale.</summary>
+    None,
+}
+
+/// <summary>Opisy analizy na profilach dziennych – włączane osobno w menu „Wyświetlanie”.</summary>
+public sealed record ChartNotesStyle
+{
+    /// <summary>Znacznik HB – halfback (połowa zakresu profilu).</summary>
+    public bool ShowHalfback { get; init; } = true;
+
+    /// <summary>Znacznik S – SETTLE (wpis ręczny, a gdy go brak – Close sesji).</summary>
+    public bool ShowSettle { get; init; } = true;
+
+    /// <summary>Znacznik PULLBACK LOW / HIGH dnia trendowego.</summary>
+    public bool ShowPullback { get; init; } = true;
+
+    /// <summary>Linia opisu pod profilem (relacja wartości, trend, otwarcie względem nocy, luka względem High / Low dnia poprzedniego).</summary>
+    public bool ShowNoteText { get; init; } = true;
+
+    /// <summary>Poziomy sesji nocnej ONH / ONL / ON POC.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<OvernightLevelsMode>))]
+    public OvernightLevelsMode OvernightLevels { get; init; } = OvernightLevelsMode.LastDay;
 }
 
 /// <summary>

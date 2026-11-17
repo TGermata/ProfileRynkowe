@@ -24,10 +24,12 @@ public partial class MainWindow : Window
         Chart.LineMoved += _viewModel.MoveLine;
         Chart.SplitRequested += _viewModel.SplitProfile;
         Chart.MergeRequested += _viewModel.MergeProfile;
-        Chart.SimulateFromRequested += time => _ = _viewModel.SimulateFromAsync(time);
+        Chart.SimulateBackToRequested += time => _ = _viewModel.SimulateBackToAsync(time);
+        _viewModel.FreezeViewRequested += Chart.FreezeView;
         Chart.ToggleExpandRequested += _viewModel.ToggleExpanded;
         Chart.ToggleLockRequested += _viewModel.ToggleLineLock;
         Chart.LockAllRequested += _viewModel.SetAllLinesLocked;
+        Chart.SettleRequested += (date, close) => SettleWindow.Edit(this, _viewModel, date, close);
 
         // Widać początek najstarszego profilu – doczytujemy starszą historię.
         Chart.OlderHistoryRequested += () => _ = _viewModel.LoadOlderHistoryAsync();
@@ -36,10 +38,22 @@ public partial class MainWindow : Window
         _viewModel.FitRequested += Chart.FitAndPinLatest; // „Dopasuj” po starcie, po zmianie instrumentu i po zmianie czasu symulacji
         _viewModel.PinLatestRequested += () => Chart.PinLatest();
 
+        // Panel narzędzi nad wykresem TPO – w miejscu z ostatniego uruchomienia; po przesunięciu zapamiętujemy położenie.
+        ToolPanel.MoveTo(_viewModel.Settings.ToolPanelLeft, _viewModel.Settings.ToolPanelTop);
+        ToolPanel.PositionCommitted += _viewModel.SaveToolPanelPosition;
+        DisplayPanel.MoveTo(_viewModel.Settings.DisplayPanelLeft, _viewModel.Settings.DisplayPanelTop);
+        DisplayPanel.PositionCommitted += _viewModel.SaveDisplayPanelPosition;
+
+        // Zakładki w osobnych oknach (kilka monitorów): obsługa nagłówków i układ okien z ostatniego uruchomienia.
+        InitializeDetachableTabs();
+        RestoreMainWindowLayout();
+
         // Dane od brokera (na żywo lub opóźnione) łączą się same po otwarciu okna – bez przycisku Start.
         // Parametr --autostart uruchamia od razu także generator.
         Loaded += async (_, _) =>
         {
+            RestoreDetachedTabs();
+
             if (Environment.GetCommandLineArgs().Contains("--autostart"))
             {
                 await _viewModel.StartAsync();
@@ -176,6 +190,13 @@ public partial class MainWindow : Window
         {
             e.Cancel = true; // użytkownik się rozmyślił – okno zostaje otwarte
             return;
+        }
+
+        // Układ okien na następne uruchomienie; okna zakładek zamykają się razem z aplikacją.
+        SaveWindowLayout();
+        foreach (var window in _detachedWindows.ToList())
+        {
+            window.CloseWithApplication();
         }
 
         base.OnClosing(e);

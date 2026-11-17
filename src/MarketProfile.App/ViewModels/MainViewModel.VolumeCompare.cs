@@ -58,7 +58,7 @@ public sealed partial class MainViewModel
     /// <summary>Przelicza porównanie (z zegara odświeżania – co sekundę, tylko na tej zakładce; <paramref name="force"/> – od razu).</summary>
     private void UpdateVolumeComparison(bool force = false)
     {
-        if (_selectedTab != VolumeTab || (!force && DateTime.UtcNow - _volumeUpdatedAt < VolumeRefreshInterval))
+        if (!IsTabShown(VolumeTab) || (!force && DateTime.UtcNow - _volumeUpdatedAt < VolumeRefreshInterval))
         {
             return;
         }

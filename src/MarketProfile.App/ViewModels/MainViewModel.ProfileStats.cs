@@ -69,8 +69,10 @@ public sealed partial class MainViewModel
             visible.Add((profile, toPeriod, complete));
         }
 
-        // Klucz stanu: wersje danych, odcięcie i zakończenie – bez zmian = bez przeliczania.
-        var key = string.Join("|", visible.Select(v => $"{v.Profile.SessionStart.Ticks}:{v.Profile.Version}:{v.ToPeriod}:{v.Complete}"));
+        // Klucz stanu: wersje danych, odcięcie, zakończenie i ceny rozliczeniowe – bez zmian = bez przeliczania.
+        var settlements = SettlementsForStats();
+        var key = $"{_settlementsVersion}:{settlements.Count}#" +
+                  string.Join("|", visible.Select(v => $"{v.Profile.SessionStart.Ticks}:{v.Profile.Version}:{v.ToPeriod}:{v.Complete}"));
         if (key == _statsKey)
         {
             return;
@@ -101,7 +103,7 @@ public sealed partial class MainViewModel
         var stats = new List<ProfileStats>(snapshots.Count);
         foreach (var (snapshot, complete) in snapshots)
         {
-            stats.Add(ProfileAnalyzer.Analyze(snapshot, history, complete, tpoMinutes));
+            stats.Add(ProfileAnalyzer.Analyze(snapshot, history, complete, tpoMinutes, settlements: settlements));
             history.Add(snapshot);
         }
 
@@ -146,7 +148,8 @@ public sealed partial class MainViewModel
 
             // Zapisujemy, gdy zmieniło się coś istotnego (zakończenie, liczba liter, poziomy, relacje).
             var signature = $"{s.IsComplete}:{s.Periods}:{s.High}:{s.Low}:{s.Poc}:{s.ValueAreaHigh}:{s.ValueAreaLow}:{s.RowHeight}:" +
-                            $"{s.TpoMinutes}:{s.PreviousTradingDate}:{string.Join(",", s.NakedPocs)}:{s.Close}";
+                            $"{s.TpoMinutes}:{s.PreviousTradingDate}:{string.Join(",", s.NakedPocs)}:{s.Close}:{s.Settle}:{s.PreviousSettle}:" +
+                            $"{s.OvernightHigh}:{s.OvernightLow}:{s.OvernightPoc}";
             if (!s.IsComplete)
             {
                 signature = $"{s.Periods}:{s.RowHeight}:{s.TpoMinutes}"; // bieżąca sesja – po każdej nowej literze

@@ -19,6 +19,9 @@
         <!-- Filtry i akcje -->
         <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
             <TextBlock x:Name="SymbolText" FontWeight="SemiBold" Margin="0,0,16,0" />
+            <CheckBox x:Name="DayOnly" Content="Tylko profile dzienne" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0"
+                      Checked="OnFilterChanged" Unchecked="OnFilterChanged"
+                      ToolTip="Pokazuj tylko profile sesji dziennych – najważniejszych w analizie (relacje wartości, luki, trend)" />
             <TextBlock Text="Sesja:" Margin="0,0,4,0" />
             <ComboBox x:Name="SessionFilter" Width="110" SelectedIndex="0" SelectionChanged="OnFilterChanged">
                 <ComboBoxItem Content="Wszystkie" />
@@ -45,7 +48,14 @@
                   HeadersVisibility="Column" GridLinesVisibility="Horizontal" AlternatingRowBackground="#F4F6F8"
                   FrozenColumnCount="3" SelectionMode="Single" MouseDoubleClick="OnRowDoubleClick"
                   SelectionChanged="OnSelectionChanged"
-                  EnableRowVirtualization="True">
+                  EnableRowVirtualization="True" ContextMenuOpening="OnGridContextMenuOpening"
+                  PreviewMouseRightButtonDown="OnGridRightButtonDown">
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem x:Name="SettleMenuItem" Header="SETTLE – wpisz ręcznie (domyślnie Close)…" Click="OnEditSettleClick" />
+                    <MenuItem x:Name="RemoveSettleMenuItem" Header="SETTLE – usuń wpis ręczny (wróć do Close)" Click="OnRemoveSettleClick" />
+                </ContextMenu>
+            </DataGrid.ContextMenu>
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Data" Binding="{Binding Date}" />
                 <DataGridTextColumn Header="Sesja" Binding="{Binding Session}" />
@@ -53,12 +63,36 @@
                 <DataGridTextColumn Header="Kształt" Binding="{Binding Shape}" />
                 <DataGridTextColumn Header="Otwarcie" Binding="{Binding OpenLocation}" />
                 <DataGridTextColumn Header="Typ otwarcia" Binding="{Binding OpenType}" />
+                <DataGridTextColumn Header="Trend / interwał" Binding="{Binding Trend}" />
+                <DataGridTextColumn Header="Pullback" Binding="{Binding Pullback}" />
                 <DataGridTextColumn Header="Migracja VA" Binding="{Binding ValueMigration}" />
                 <DataGridTextColumn Header="Nakł. VA" Binding="{Binding ValueAreaOverlap}" />
+                <DataGridTextColumn Header="Open vs noc" Binding="{Binding OpenVsOvernight}" />
+                <DataGridTextColumn Header="Luka (GAP)" Binding="{Binding Gap}" />
+                <DataGridTextColumn Header="Inwentarz" Binding="{Binding Inventory}">
+                    <DataGridTextColumn.CellStyle>
+                        <Style TargetType="DataGridCell">
+                            <Setter Property="ToolTip"
+                                    Value="Inwentarz na otwarciu względem SETTLE poprzedniego dnia: nad = długi, pod = krótki. Ok. 65% szans, że zostanie wyrównany (cena wróci do SETTLE)." />
+                        </Style>
+                    </DataGridTextColumn.CellStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Open vs HB poprz." Binding="{Binding OpenVsPreviousHalfback}" />
                 <DataGridTextColumn Header="Open" Binding="{Binding Open}" />
                 <DataGridTextColumn Header="High" Binding="{Binding High}" />
                 <DataGridTextColumn Header="Low" Binding="{Binding Low}" />
                 <DataGridTextColumn Header="Close" Binding="{Binding Close}" />
+                <DataGridTextColumn Header="Settle" Binding="{Binding Settle}">
+                    <DataGridTextColumn.CellStyle>
+                        <Style TargetType="DataGridCell">
+                            <Setter Property="ToolTip" Value="{Binding SettleToolTip}" />
+                        </Style>
+                    </DataGridTextColumn.CellStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Halfback" Binding="{Binding Halfback}" />
+                <DataGridTextColumn Header="ONH" Binding="{Binding OvernightHigh}" />
+                <DataGridTextColumn Header="ONL" Binding="{Binding OvernightLow}" />
+                <DataGridTextColumn Header="ON POC" Binding="{Binding OvernightPoc}" />
                 <DataGridTextColumn Header="Zakres" Binding="{Binding Range}" />
                 <DataGridTextColumn Header="POC" Binding="{Binding Poc}" />
                 <DataGridTextColumn Header="VPOC" Binding="{Binding VolumePoc}" />

@@ -82,6 +82,7 @@ public sealed partial class MarketDataStore
 
         EnsureProfileStatsTable(connection);
         EnsureOhlcBarsTable(connection);
+        EnsureSettlementsTable(connection);
 
         // Migracja: bazy zapisane przez wcześniejsze wersje mają ceny × 10⁴ – przeliczamy je na × 10⁸ (bez strat).
         using var version = connection.CreateCommand();

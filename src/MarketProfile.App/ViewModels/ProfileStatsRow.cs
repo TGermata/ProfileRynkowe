@@ -8,9 +8,17 @@ public sealed class ProfileStatsRow
 {
     private readonly decimal _tick;
 
-    public ProfileStatsRow(ProfileStats stats, decimal tickSize)
+    /// <param name="settlement">
+    /// Aktualny wpis ręczny SETTLE dnia (null = brak – SETTLE to Close sesji). Ważniejszy niż wartość zapisana
+    /// w parametrach, bo wpis mógł się zmienić po ich zapisaniu.
+    /// </param>
+    public ProfileStatsRow(ProfileStats stats, decimal tickSize, Settlement? settlement = null)
     {
-        Stats = stats;
+        Stats = stats is { IsDaySession: true, IsComplete: true }
+            ? settlement is not null
+                ? stats with { Settle = settlement.Price, SettleSource = settlement.Source }
+                : stats with { Settle = stats.Close, SettleSource = Settlement.SourceClose }
+            : stats;
         _tick = tickSize;
     }
 
@@ -110,13 +118,103 @@ public sealed class ProfileStatsRow
     public string ValueMigration => Stats.ValueMigration switch
     {
         Core.ValueMigration.Higher => "wyżej",
-        Core.ValueMigration.OverlappingHigher => "nakładająca, wyżej",
-        Core.ValueMigration.OverlappingLower => "nakładająca, niżej",
+        Core.ValueMigration.OverlappingHigher => "pokrywająca wyżej",
+        Core.ValueMigration.OverlappingLower => "pokrywająca niżej",
         Core.ValueMigration.Lower => "niżej",
         Core.ValueMigration.Inside => "wewnątrz",
-        Core.ValueMigration.Outside => "obejmuje poprzednią",
+        Core.ValueMigration.Outside => "pokrywająca, obejmuje",
+        Core.ValueMigration.TrendDay => "dzień trendowy",
         _ => "–",
     };
+
+    /// <summary>Krótki opis relacji wartości (do opisu pod profilem): np. „VA ↑ wyżej”.</summary>
+    public static string ValueMigrationShort(ValueMigration migration) => migration switch
+    {
+        Core.ValueMigration.Higher => "VA ↑ wyżej",
+        Core.ValueMigration.OverlappingHigher => "VA ↗ pokr. wyżej",
+        Core.ValueMigration.OverlappingLower => "VA ↘ pokr. niżej",
+        Core.ValueMigration.Lower => "VA ↓ niżej",
+        Core.ValueMigration.Inside => "VA ↔ wewnątrz",
+        Core.ValueMigration.Outside => "VA ⇕ obejmuje",
+        Core.ValueMigration.TrendDay => "Trend – VA pominięta",
+        _ => string.Empty,
+    };
+
+    public string Halfback => P(Stats.Halfback);
+
+    public string Settle => Stats.Settle is { } settle
+        ? Stats.SettleSource == Settlement.SourceManual ? $"{P(settle)} ✎" : P(settle)
+        : "–";
+
+    public string SettleToolTip => Stats.Settle is null
+        ? "Sesja w toku albo sesja nocna – bez SETTLE"
+        : Stats.SettleSource == Settlement.SourceManual
+            ? "Wpis ręczny (prawy klik – zmień albo usuń, wtedy SETTLE = Close)"
+            : "Close sesji (prawy klik – wpisz SETTLE ręcznie)";
+
+    /// <summary>Interwałowanie, np. „↑ trend B–K (10)” (dzień trendowy) albo „↓ B–E (4)”.</summary>
+    public string Trend => Stats.TrendDirection == 0 || Stats.IntervalFrom is null
+        ? "–"
+        : $"{(Stats.TrendDirection > 0 ? "↑" : "↓")} {(Stats.IsTrendDay ? "trend " : string.Empty)}" +
+          $"{Stats.IntervalFrom}–{Stats.IntervalTo} ({Stats.IntervalPeriods})";
+
+    /// <summary>PULLBACK LOW / HIGH dnia trendowego, np. „PBL 6850.25 (M)”.</summary>
+    public string Pullback => Stats.PullbackLow is { } low
+        ? $"PBL {P(low)} ({Stats.PullbackLetter})"
+        : Stats.PullbackHigh is { } high
+            ? $"PBH {P(high)} ({Stats.PullbackLetter})"
+            : "–";
+
+    public string OvernightHigh => P(Stats.OvernightHigh);
+    public string OvernightLow => P(Stats.OvernightLow);
+    public string OvernightPoc => P(Stats.OvernightPoc);
+
+    public string OpenVsOvernight => Stats.OpenVsOvernight switch
+    {
+        OvernightLocation.AboveHigh => "nad ONH",
+        OvernightLocation.InRange => "w zakresie nocy",
+        OvernightLocation.BelowLow => "pod ONL",
+        _ => "–",
+    };
+
+    /// <summary>Inwentarz na otwarciu, np. „długi +3.25 → wyrównany (C)”, „krótki −2.00 → nie”, „… → jeszcze nie”.</summary>
+    public string Inventory
+    {
+        get
+        {
+            if (Stats.InventorySize is not { } size)
+            {
+                return "–";
+            }
+
+            var kind = Stats.OpeningInventory switch
+            {
+                OpeningInventory.Long => $"długi +{P(size)}",
+                OpeningInventory.Short => $"krótki −{P(-size)}",
+                _ => "neutralny (Open = SETTLE)",
+            };
+            return Stats.InventoryCorrected switch
+            {
+                true => $"{kind} → wyrównany ({Stats.InventoryCorrectedLetter})",
+                false => $"{kind} → {(Stats.IsComplete ? "nie" : "jeszcze nie")}",
+                _ => kind,
+            };
+        }
+    }
+
+    /// <summary>Luka względem zakresu poprzedniego dnia, np. „↑ +6.25 (nad High)”; brak luki – „–”.</summary>
+    public string Gap => Stats.Gap is { } gap
+        ? gap > 0 ? $"↑ +{P(gap)} (nad High)" : $"↓ −{P(-gap)} (pod Low)"
+        : "–";
+
+    public string OpenVsPreviousHalfback => Stats.PreviousHalfback is null
+        ? "–"
+        : Stats.OpenVsPreviousHalfback switch
+        {
+            > 0 => $"nad ({P(Stats.PreviousHalfback)})",
+            < 0 => $"pod ({P(Stats.PreviousHalfback)})",
+            _ => $"na poziomie ({P(Stats.PreviousHalfback)})",
+        };
 
     public string ValueAreaOverlap => Stats.ValueAreaOverlap is { } o ? o.ToString("P0", CultureInfo.CurrentCulture) : "–";
 

@@ -193,7 +193,7 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions>
-                                        <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                        <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
                                     </Grid.RowDefinitions>
 
                                     <TextBlock Grid.Row="0" Text="Symbol w IB / klasa" />
@@ -217,6 +217,13 @@
                                     <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal">
                                         <TextBox Text="{Binding ContractMonth}" />
                                         <TextBlock Style="{StaticResource Hint}" Text="futures: RRRRMM, puste = najbliższy" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="4" Text="Kod produktu CME" />
+                                    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding CmeProductId}"
+                                                 ToolTip="Numer produktu w adresie danych rozliczeniowych CME (ES 133, NQ 146, YM 318, RTY 8314, CL 425, GC 437, 6E 58)" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="pobieranie SETTLE z CME na razie wyłączone" />
                                     </StackPanel>
                                 </Grid>
                             </GroupBox>
@@ -920,6 +927,26 @@
                 </ScrollViewer>
             </TabItem>
 
+            <!-- Wygląd okna głównego. -->
+            <TabItem Header="  Okno  " Padding="10,5">
+                <ScrollViewer>
+                    <StackPanel>
+                        <GroupBox Header="Kontrolki">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Rozmiar kontrolek" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                    <ComboBox Width="140" ItemsSource="{Binding ControlSizes}"
+                                              DisplayMemberPath="Value" SelectedValuePath="Key"
+                                              SelectedValue="{Binding ControlSize}" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
+                                           Text="Pasek narzędzi i pasek symulacji (przyciski, listy, pola czasu) – mniejsze zostawiają więcej miejsca na wykres." />
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <TabItem Header="  Dane i broker  " Padding="10,5">
                 <TabControl Style="{StaticResource SubTabs}">
 
@@ -1048,8 +1075,8 @@
                                             <TextBlock Grid.Row="1" Grid.Column="2" Style="{StaticResource Hint}"
                                                        Text="każda transakcja; 0 = tylko świece" />
                                         </Grid>
-                                        <CheckBox Content="Pokazuj pasek stanu pobierania ticków (postęp i komplet dni) w oknie głównym"
-                                                  IsChecked="{Binding ShowTickDownloadBar}" Margin="4,8,4,4" />
+                                        <CheckBox Content="Pokazuj postęp pobierania w tle w polu informacji (doba, procent, komplet dni ticków) – błąd pobierania widać zawsze"
+                                                  IsChecked="{Binding ShowDownloadProgress}" Margin="4,8,4,4" />
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="Po połączeniu z brokerem brakujące dni świec 1-min, a potem ticków są pobierane w tle (osobne połączenie, Client ID + 1) – od najnowszych dni, z kontynuacją po ponownym uruchomieniu. Ticki pobierają się powoli (limit IB 60 zapytań / 10 min, ok. 40 min na dzień ES); przycisk „Sprawdź historię ticków” (Źródło i połączenie) pokazuje szacunek." />
                                     </StackPanel>

@@ -39,7 +39,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private AppSettings _settings;
     private ChartStyle _appearance;
     private MarketDataStore? _store;
-    private string? _ibContractName;           // np. "ESZ6" – po połączeniu z IB
     private int _loadedHistoryDays;            // ile dni historii wczytano przy ostatnim starcie
     private DateTimeOffset? _oldestLoaded;     // czas najstarszej wczytanej świecy
     private bool _loadingOlder;                // trwa doczytywanie starszej historii
@@ -58,7 +57,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     // Profile wyświetlane w trybie Split/Expanded (czas rozpoczęcia profilu/części).
     private readonly HashSet<DateTime> _expanded = [];
     private bool _isRunning;
-    private string _status = "Gotowy";
     private string _summary = string.Empty;
 
     public MainViewModel()
@@ -94,6 +92,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Bieżące ustawienia aplikacji.</summary>
     public AppSettings Settings => _settings;
+
+    /// <summary>Skala pasków narzędzi i symulacji (Ustawienia → Okno → Rozmiar kontrolek).</summary>
+    public double ControlScale => _settings.ControlScale;
 
     /// <summary>Instrumenty do wyboru na pasku narzędzi.</summary>
     public IReadOnlyList<Instrument> Instruments => _settings.Instruments;
@@ -216,7 +217,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             // W symulacji nie przerywamy odtwarzania samoczynnie – użytkownik decyduje.
             _loadedSimStart = null;
-            Status = $"Na {ProfilesOnScreen} profili potrzeba {_settings.RequiredHistoryDays()} dni historii – naciśnij ▶, aby wczytać symulację od nowa";
+            Hint($"Na {ProfilesOnScreen} profili potrzeba {_settings.RequiredHistoryDays()} dni historii – naciśnij ▶, aby wczytać symulację od nowa");
             return;
         }
 
@@ -266,7 +267,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         try
         {
             // 1. Lokalna baza.
-            Status = $"Doczytywanie historii z bazy ({TimeZoneInfo.ConvertTime(from, zone):dd.MM} – {TimeZoneInfo.ConvertTime(oldest, zone):dd.MM})...";
             var store = GetStore();
             var symbol = _settings.InstrumentSymbol;
             var dbBars = await Task.Run(() => BarAggregator.LoadMinuteBars(store, symbol, from, oldest, MarketDataStore.SourceBroker));
@@ -292,7 +292,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             var missingTo = _oldestLoaded!.Value;
             if (missingTo - from > TimeSpan.FromDays(1) && IsBrokerFeed(feed))
             {
-                Status = $"Doczytywanie historii z IB w tle ({TimeZoneInfo.ConvertTime(from, zone):dd.MM} – {TimeZoneInfo.ConvertTime(missingTo, zone):dd.MM}) – wykres działa...";
                 var ibBars = await Task.Run(() => feed.GetHistoryRangeAsync(from, missingTo, cts.Token));
                 if (!ReferenceEquals(feed, _feed) || !ReferenceEquals(builder, _builder) || cts.IsCancellationRequested)
                 {
@@ -317,15 +316,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
 
             _loadedHistoryDays = required;
-            Status = $"Historia od {TimeZoneInfo.ConvertTime(_oldestLoaded!.Value, zone):dd.MM.yyyy} ({ProfilesOnScreen} profili)";
         }
         catch (OperationCanceledException)
         {
-            Status = "Doczytywanie dłuższej historii przerwane";
+            // Przerwane (np. zmiana instrumentu albo zatrzymanie) – nic do zgłaszania.
         }
         catch (Exception ex)
         {
-            Status = $"Nie udało się doczytać historii: {ex.Message}";
+            ShowError($"Nie udało się doczytać historii: {ex.Message}");
         }
         finally
         {
@@ -353,7 +351,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var recorder = _recorder;
         var from = to - OlderHistoryStep;
         var zone = _settings.ExchangeTimeZone;
-        Status = $"Doczytywanie starszej historii ({TimeZoneInfo.ConvertTime(from, zone):dd.MM} – {TimeZoneInfo.ConvertTime(to, zone):dd.MM})...";
 
         try
         {
@@ -366,7 +363,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             if (bars.Count == 0)
             {
                 _noOlderData = true;
-                Status = "Brak starszych danych w źródle";
+                Hint("Brak starszych danych w źródle");
                 return;
             }
 
@@ -380,13 +377,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             });
 
             _oldestLoaded = bars.Min(b => b.Time);
-            Status = $"Doczytano {bars.Count} świec – historia od {TimeZoneInfo.ConvertTime(_oldestLoaded.Value, zone):dd.MM.yyyy}";
             RefreshSnapshots();
         }
         catch (Exception ex)
         {
             _noOlderData = true; // nie ponawiamy w kółko po błędzie
-            Status = $"Nie udało się doczytać starszej historii: {ex.Message}";
+            ShowError($"Nie udało się doczytać starszej historii: {ex.Message}");
         }
         finally
         {
@@ -417,6 +413,50 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         SaveDisplaySettings(_settings with { HiddenSessions = hidden });
+    }
+
+    /// <summary>Kursor z liniami ceny i czasu na wykresie TPO (panel narzędzi, klawisz C) – zapamiętywany.</summary>
+    public bool ShowCrosshair
+    {
+        get => _settings.ShowCrosshair;
+        set
+        {
+            if (value != _settings.ShowCrosshair)
+            {
+                _settings = _settings with { ShowCrosshair = value }; // tylko zapis – bez przeliczania profili
+                SettingsStore.Save(_settings);
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    /// <summary>Czy panel narzędzi jest zwinięty – zapamiętywane.</summary>
+    public bool ToolPanelCollapsed
+    {
+        get => _settings.ToolPanelCollapsed;
+        set
+        {
+            if (value != _settings.ToolPanelCollapsed)
+            {
+                _settings = _settings with { ToolPanelCollapsed = value }; // tylko zapis – bez przeliczania profili
+                SettingsStore.Save(_settings);
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    /// <summary>Zapisuje położenie panelu narzędzi (po przesunięciu go myszą).</summary>
+    public void SaveToolPanelPosition(double left, double top)
+    {
+        _settings = _settings with { ToolPanelLeft = left, ToolPanelTop = top };
+        SettingsStore.Save(_settings);
+    }
+
+    /// <summary>Zapisuje układ okien (okno główne i zakładki w osobnych oknach) – przy zamykaniu aplikacji.</summary>
+    public void SaveWindowLayout(WindowLayout main, IReadOnlyList<WindowLayout> detachedTabs)
+    {
+        _settings = _settings with { MainWindowLayout = main, DetachedTabs = [.. detachedTabs] };
+        SettingsStore.Save(_settings);
     }
 
     /// <summary>
@@ -566,12 +606,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    /// <summary>Komunikat stanu (pasek statusu).</summary>
-    public string Status
-    {
-        get => _status;
-        private set => SetProperty(ref _status, value);
-    }
 
     /// <summary>Podsumowanie bieżącego profilu: POC, VAH, VAL, IB itd.</summary>
     public string Summary
@@ -601,13 +635,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Status = $"Błąd biblioteki TWS API: {ex.Message} – sprawdź ścieżkę w Ustawieniach → Dane i broker → Źródło i połączenie.";
+            ShowError($"Błąd biblioteki TWS API: {ex.Message} – sprawdź ścieżkę w Ustawieniach → Dane i broker → Źródło i połączenie.");
             return;
         }
 
         if (await StartFeedAsync(IbFeeds.Create(_settings.ToIbSettings())))
         {
-            _ibContractName = IbFeeds.ContractName(_feed);
             _tickSizeWarning = IbFeeds.TickSizeWarning(_feed);
             NotifyDataSource();
             StartBackgroundDownload();
@@ -741,23 +774,21 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private string? _backgroundError;          // błędy ostatniego przebiegu
 
     /// <summary>
-    /// Stan pobierania ticków (pasek pod paskiem narzędzi): czy pobieranie trwa, dla której doby i ile procent,
-    /// a także ile dni z ustawionych ma już komplet ticków dla każdego instrumentu z „Pobieraj dane”.
+    /// Stan pobierania ticków: czy pobieranie trwa, dla której doby i ile procent, a także ile dni z ustawionych ma już
+    /// komplet ticków. W polu informacji tylko, gdy włączono „Pokazuj postęp pobierania” (błąd pobierania – zawsze).
     /// </summary>
-    public string TickDownloadText
+    private string TickDownloadText
     {
         get => _tickDownloadText;
-        private set
+        set
         {
-            if (SetProperty(ref _tickDownloadText, value))
+            if (_tickDownloadText != value)
             {
-                OnPropertyChanged(nameof(HasTickDownloadText));
+                _tickDownloadText = value;
+                NotifyInfo();
             }
         }
     }
-
-    /// <summary>Czy pokazać pasek stanu pobierania ticków (można go ukryć w Ustawieniach → Dane i broker → Pobieranie i baza).</summary>
-    public bool HasTickDownloadText => _settings.ShowTickDownloadBar && TickDownloadText.Length > 0;
 
     /// <summary>Przelicza tekst stanu pobierania ticków (stan pobierania + komplet dni w bazie).</summary>
     private void RefreshTickDownloadText()
@@ -878,7 +909,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
 
             // Historia: pobieramy i przetwarzamy w tle, żeby nie blokować okna.
-            Status = "Pobieranie historii...";
             var builder = _builder;
             var recorder = _recorder;
 
@@ -912,7 +942,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
                 if (dbBars.Count > 0)
                 {
-                    Status = "Historia z bazy – dociąganie najnowszych danych z IB...";
                     RefreshSnapshots();
                     if (_fitPending)
                     {
@@ -954,8 +983,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             beforeLive?.Invoke(_feed);
             await _feed.StartLiveAsync();
 
+            // Symulacja: najpierw cały odcinek od początku bieżącego profilu do startu (np. po cofnięciu o słupek),
+            // dopiero potem pokazujemy wykres – inaczej profil „rysowałby się” od początku sesji na oczach.
+            if (_feed is DatabaseReplayFeed caughtUpFeed)
+            {
+                await caughtUpFeed.CaughtUp;
+            }
+
             _refreshTimer.Start();
             RefreshSnapshots();
+            ClearError(); // źródło danych działa – wcześniejszy błąd (np. brak połączenia) już nieaktualny
 
             // Pierwsze dane po starcie / po zmianie instrumentu – dopasowanie, żeby wykres był od razu widoczny.
             if (_fitPending)
@@ -969,15 +1006,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         catch (Exception ex)
         {
             _loadingOlder = false;
-            await StopAsync($"Błąd: {ex.Message}");
+            await StopAsync();
+            ShowError($"Błąd: {ex.Message}");
             return false;
         }
     }
 
     /// <summary>Zatrzymuje pobieranie danych (profile pozostają na ekranie).</summary>
-    public async Task StopAsync() => await StopAsync("Zatrzymano");
-
-    private async Task StopAsync(string status)
+    public async Task StopAsync()
     {
         _refreshTimer.Stop();
         CancelHistoryExtension();
@@ -1010,7 +1046,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         RefreshSnapshots(); // ostatnie dane na ekran
         IsRunning = false;
-        Status = status;
         PeriodTimerText = string.Empty; // zegar okresu TPO tylko podczas pobierania/odtwarzania danych
         Interlocked.Exchange(ref _lastTickUtcTicks, 0);
     }
@@ -1023,13 +1058,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Lokalna baza danych (otwierana przy pierwszym użyciu).</summary>
     public MarketDataStore GetStore() => _store ??= new MarketDataStore(MarketDataStore.DefaultPath);
-
-    /// <summary>Nazwa źródła danych wyświetlana na pasku narzędzi.</summary>
-    public string SourceName => IsSimulationMode
-        ? (IsUsingTestData ? "Źródło: lokalna baza – DANE TESTOWE" : "Źródło: lokalna baza – dane od brokera")
-        : _settings.LiveSource == LiveSourceKind.InteractiveBrokers
-            ? $"Źródło: Interactive Brokers {_ibContractName} ({_settings.IbHost}:{_settings.IbPort}, dane {_settings.ToIbSettings().DataTypeName})"
-            : $"Źródło: generator (×{_settings.SimulatorSpeed})";
 
     /// <summary>
     /// Zapisuje nowe ustawienia. Jeśli zmieniły się parametry danych (np. wysokość wiersza albo godziny sesji),
@@ -1055,7 +1083,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _settings = newSettings;
         SettingsStore.Save(newSettings);
         Appearance = ChartStyle.Create(newSettings);
+        NotifyDisplayOptions();
         OnPropertyChanged(nameof(Settings));
+        OnPropertyChanged(nameof(ControlScale));
         OnPropertyChanged(nameof(Instruments));
         OnPropertyChanged(nameof(SelectedInstrument));
         OnPropertyChanged(nameof(SelectedVolumeMode));
@@ -1087,7 +1117,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             // Symulacja nie startuje sama – po zmianie ustawień użytkownik naciska ▶ (dane zostaną wczytane od nowa).
             _loadedSimStart = null;
-            Status = "Ustawienia zmienione – naciśnij ▶, aby wczytać symulację od nowa";
+            Hint("Ustawienia zmienione – naciśnij ▶, aby wczytać symulację od nowa");
         }
         else if (wasRunning)
         {
@@ -1109,7 +1139,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         StartBackgroundDownload();
 
         RefreshTickDownloadText();
-        OnPropertyChanged(nameof(HasTickDownloadText)); // np. ukryto / pokazano pasek w ustawieniach
     }
 
     public async ValueTask DisposeAsync()
@@ -1226,15 +1255,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>
-    /// Komunikat od źródła danych → pasek statusu. Komunikaty od już zatrzymanego źródła (spóźnione)
-    /// są pomijane, żeby nie zasłoniły np. opisu błędu połączenia.
+    /// Komunikat od źródła danych → pole informacji (tylko problemy; komunikaty rutynowe są pomijane).
+    /// Komunikaty od już zatrzymanego źródła (spóźnione) są pomijane.
     /// </summary>
     private void OnFeedStatusChanged(object? sender, string message) =>
         System.Windows.Application.Current.Dispatcher.BeginInvoke(() =>
         {
             if (ReferenceEquals(sender, _feed))
             {
-                Status = message;
+                OnFeedMessage(sender, message);
             }
         });
 

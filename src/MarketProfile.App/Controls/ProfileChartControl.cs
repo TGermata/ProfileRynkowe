@@ -25,7 +25,7 @@ namespace MarketProfile.App.Controls;
 ///  - prawy przycisk – menu: dodaj/edytuj/zablokuj/usuń linię, rozbij profil, połącz części,
 ///    rozwiń/zwiń profil (tryb Split).
 /// </summary>
-public sealed class ProfileChartControl : FrameworkElement
+public sealed partial class ProfileChartControl : FrameworkElement
 {
     /// <summary>Lista profili do narysowania (w kolejności chronologicznej) wraz ze sposobem wyświetlania.</summary>
     public static readonly DependencyProperty ProfilesProperty = DependencyProperty.Register(
@@ -63,8 +63,11 @@ public sealed class ProfileChartControl : FrameworkElement
         set => SetValue(SimulationMenuProperty, value);
     }
 
-    /// <summary>Prośba o start symulacji od podanego momentu (czas lokalny giełdy – początek profilu albo słupka).</summary>
-    public event Action<DateTime>? SimulateFromRequested;
+    /// <summary>
+    /// Prośba o cofnięcie symulacji do początku profilu albo klikniętego słupka (czas lokalny giełdy) –
+    /// bez zmiany widoku wykresu.
+    /// </summary>
+    public event Action<DateTime>? SimulateBackToRequested;
 
     /// <summary>
     /// Tempo budowania TPO (× normy, ze znakiem; NaN = brak) – wskaźnik ze wskazówką i kolor drugiej linii zegara.
@@ -352,7 +355,8 @@ public sealed class ProfileChartControl : FrameworkElement
         _hasData = all is { Count: > 0 };
         if (!_hasData)
         {
-            DrawText(dc, "Brak danych – kliknij „Start”, aby rozpocząć.", 14, DimTextBrush, new Point(20, 20));
+            DrawText(dc, "Brak danych", 14, DimTextBrush, new Point(20, 20)); // przyczyna – w polu informacji
+            UpdateCrosshair();
             return;
         }
 
@@ -414,6 +418,7 @@ public sealed class ProfileChartControl : FrameworkElement
         // 2. Rysowanie widocznych kolumn.
         dc.PushClip(new RectangleGeometry(new Rect(0, 0, Math.Max(0, chartRight), ActualHeight)));
 
+        var latestDayStart = LatestDayStart();
         foreach (var column in layout)
         {
             if (column.X > chartRight || column.X + column.Width < 0)
@@ -432,6 +437,7 @@ public sealed class ProfileChartControl : FrameworkElement
             _columns.Add(new ColumnLayout(profile, column.View.IsExpanded, column.X, column.Width, column.X + OpenSpace + IbBarWidth + IbGap));
             DrawProfile(dc, column.View, column.X, column.Width, LetterColumns(column.View) * _letterPx,
                 isLatest: ReferenceEquals(profile, latest));
+            DrawProfileNotes(dc, profile, column.X, column.Width, latestDayStart);
         }
 
         DrawAverageLines(dc, chartRight);
@@ -440,6 +446,7 @@ public sealed class ProfileChartControl : FrameworkElement
 
         DrawPriceAxis(dc, chartRight, latest);
         DrawTempoGauge(dc, chartRight, DrawPeriodTimer(dc, chartRight));
+        UpdateCrosshair(); // nowe dane / przesunięcie – etykiety kursora (cena, słupek) na nowo
     }
 
     /// <summary>Pozycja kolumny profilu w układzie (także poza ekranem).</summary>
@@ -1462,11 +1469,12 @@ public sealed class ProfileChartControl : FrameworkElement
     protected override void OnMouseMove(MouseEventArgs e)
     {
         var position = e.GetPosition(this);
+        TrackCursor(position);
 
         if (_dragStart is not { } start)
         {
             // Bez przeciągania – zmieniamy kursor nad odblokowaną linią, żeby było widać, że można ją złapać.
-            Cursor = HitTestLine(position) is { IsLocked: false } ? Cursors.SizeNS : null;
+            Cursor = HitTestLine(position) is { IsLocked: false } ? Cursors.SizeNS : CrosshairEnabled ? Cursors.Cross : null;
             return;
         }
 
@@ -1546,6 +1554,14 @@ public sealed class ProfileChartControl : FrameworkElement
                     menu.Items.Add(CreateMenuItem("Połącz z poprzednią częścią", () => MergeRequested?.Invoke(column.Profile)));
                 }
 
+                // Sesja dzienna: ręczny wpis ceny rozliczeniowej (gdy CME jej nie podało).
+                if (SessionNames.IsDay(column.Profile.Session.Name))
+                {
+                    var day = column.Profile;
+                    menu.Items.Add(CreateMenuItem($"SETTLE {day.TradingDate:dd.MM} (domyślnie Close) – wpisz ręcznie…",
+                        () => SettleRequested?.Invoke(day.TradingDate, day.LastPrice)));
+                }
+
                 // Tryb Split/Expanded – osobna kolumna dla każdego okresu TPO.
                 menu.Items.Add(CreateMenuItem(column.IsExpanded ? "Zwiń profil" : "Rozwiń profil (Split)",
                     () => ToggleExpandRequested?.Invoke(column.Profile)));
@@ -1557,12 +1573,12 @@ public sealed class ProfileChartControl : FrameworkElement
                     menu.Items.Add(new Separator());
                     menu.Items.Add(CreateMenuItem(
                         $"▶ Symulacja od początku profilu ({profile.Session.Name} {profile.TradingDate:dd.MM}, {profile.PartStart:HH:mm})",
-                        () => SimulateFromRequested?.Invoke(profile.PartStart)));
+                        () => SimulateBackToRequested?.Invoke(profile.PartStart)));
 
                     if (HitTestLetter(position) is { } bar && profile.Periods.FirstOrDefault(p => p.Index == bar.Period) is { } period)
                     {
                         menu.Items.Add(CreateMenuItem($"▶ Symulacja od słupka {period.Letter} ({period.Start:HH:mm})",
-                            () => SimulateFromRequested?.Invoke(period.Start)));
+                            () => SimulateBackToRequested?.Invoke(period.Start)));
                     }
                 }
             }
@@ -1612,6 +1628,10 @@ public sealed class ProfileChartControl : FrameworkElement
                 break;
             case Key.D0 or Key.NumPad0:
                 FitAndPinLatest();
+                e.Handled = true;
+                break;
+            case Key.C:
+                SetCurrentValue(CrosshairEnabledProperty, !CrosshairEnabled); // kursor z liniami – wł./wył.
                 e.Handled = true;
                 break;
         }
@@ -1675,6 +1695,19 @@ public sealed class ProfileChartControl : FrameworkElement
     /// „Dopasuj” (przycisk, klawisz 0, podwójne kliknięcie) – tak samo na żywo i w symulacji: ostatnie N profili
     /// w skali ekranu, bieżący profil od 0,3 szerokości wykresu, po prawej miejsce na dalsze rysowanie.
     /// </summary>
+    /// <summary>
+    /// Zamraża bieżący widok: obecna szerokość liter, wysokość wierszy, środek ceny i przesunięcie zostają jak są
+    /// (bez dopasowania i śledzenia ceny) – np. przy cofnięciu symulacji do słupka wykres się nie przesuwa.
+    /// „Dopasuj” albo podwójne kliknięcie przywraca dopasowanie.
+    /// </summary>
+    public void FreezeView()
+    {
+        _manualLetterWidth = true;
+        _manualRowHeight = true;
+        _manualCenter = _lastCenter;
+        ClearPin();
+    }
+
     public void FitAndPinLatest()
     {
         FitToScreen();

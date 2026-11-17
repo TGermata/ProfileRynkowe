@@ -39,6 +39,13 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     private long _pendingSeekTicks;   // zlecony przeskok do momentu (UTC, w tickach .NET); 0 = brak
     private long _currentTimeTicks;   // bieżący czas symulacji (UTC, w tickach .NET)
     private long _stopAtTicks;        // czas końca odtwarzania (UTC, w tickach .NET); 0 = bez ograniczeń
+    private readonly TaskCompletionSource _caughtUp = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Kończy się, gdy odcinek [<see cref="TicksFrom"/>, <see cref="From"/>] został oddany w całości – bieżący profil
+    /// jest już zbudowany do momentu startu (także gdy odtwarzanie skończyło się wcześniej albo zostało przerwane).
+    /// </summary>
+    public Task CaughtUp => _caughtUp.Task;
 
     /// <param name="store">Baza danych.</param>
     /// <param name="from">Początek odtwarzania.</param>
@@ -189,6 +196,18 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     /// </summary>
     private async Task ReplayAsync(string symbol, CancellationToken token)
     {
+        try
+        {
+            await ReplayLoopAsync(symbol, token).ConfigureAwait(false);
+        }
+        finally
+        {
+            _caughtUp.TrySetResult(); // koniec danych, przerwanie albo błąd – nikt nie czeka w nieskończoność
+        }
+    }
+
+    private async Task ReplayLoopAsync(string symbol, CancellationToken token)
+    {
         // Minuty z zapisanymi tickami odtwarzamy tick po ticku, pozostałe (np. historia od brokera) – całymi świecami.
         // Od początku bieżącego profilu; zegar startuje od From, więc odcinek [TicksFrom, From] jest oddany od razu.
         using var items = BarAggregator.Replay(_store, symbol, TicksFrom, To, _source).GetEnumerator();
@@ -265,6 +284,9 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
 
                 hasItem = items.MoveNext();
             }
+
+            // Pierwsze przejście oddało cały odcinek do momentu startu – bieżący profil jest gotowy do pokazania.
+            _caughtUp.TrySetResult();
 
             // 5. Zegar dla widoku – ok. 10 razy na sekundę.
             Interlocked.Exchange(ref _currentTimeTicks, simNow.UtcTicks);

@@ -1,0 +1,41 @@
+<UserControl x:Class="MarketProfile.App.Controls.FloatingToolPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root">
+    <!-- Pływający panel narzędzi nad wykresem: przesuwany za nagłówek (⠿), zwijany strzałką.
+         Narzędzia (przyciski) podaje się we właściwości Tools. -->
+    <Border Background="#E61E2229" BorderBrush="#4A5260" BorderThickness="1" CornerRadius="4">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="8" ShadowDepth="2" Opacity="0.5" />
+        </Border.Effect>
+        <StackPanel>
+            <DockPanel x:Name="Header" Background="Transparent" Cursor="SizeAll"
+                       ToolTip="Przeciągnij, żeby przesunąć panel w inne miejsce wykresu"
+                       MouseLeftButtonDown="OnHeaderMouseDown" MouseMove="OnHeaderMouseMove" MouseLeftButtonUp="OnHeaderMouseUp"
+                       LostMouseCapture="OnHeaderLostCapture">
+                <ToggleButton DockPanel.Dock="Right" IsChecked="{Binding IsCollapsed, ElementName=Root}" Cursor="Hand"
+                              Width="18" Height="18" Margin="4,2,3,2" Padding="0" FontSize="10" Focusable="False"
+                              ToolTip="Zwiń / rozwiń panel narzędzi">
+                    <ToggleButton.Template>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Border x:Name="Box" Background="Transparent" CornerRadius="2">
+                                <TextBlock x:Name="Arrow" Text="▾" Foreground="#C8CDD4" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="Arrow" Property="Text" Value="▸" />
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Box" Property="Background" Value="#3A4250" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </ToggleButton.Template>
+                </ToggleButton>
+                <TextBlock Text="{Binding Title, ElementName=Root}" Foreground="#9AA2AE" FontSize="11"
+                           VerticalAlignment="Center" Margin="6,2,0,2" />
+            </DockPanel>
+            <ContentPresenter x:Name="ToolsHost" Content="{Binding Tools, ElementName=Root}" Margin="4,0,4,4" />
+        </StackPanel>
+    </Border>
+</UserControl>

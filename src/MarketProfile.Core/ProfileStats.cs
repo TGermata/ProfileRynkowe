@@ -61,7 +61,37 @@ public enum ValueMigration
     OverlappingLower,
     Lower,
     Inside,
+
+    /// <summary>Wartość szersza – obejmuje całą wartość dnia poprzedniego (pokrywająca).</summary>
     Outside,
+
+    /// <summary>Dzień trendowy – wartości nie bierze się pod uwagę.</summary>
+    TrendDay,
+}
+
+/// <summary>Inwentarz na otwarciu sesji dziennej – względem SETTLE poprzedniego dnia.</summary>
+public enum OpeningInventory
+{
+    /// <summary>Brak (sesja nocna albo brak poprzedniego dnia).</summary>
+    None,
+
+    /// <summary>Otwarcie powyżej SETTLE poprzedniego dnia – inwentarz długi.</summary>
+    Long,
+
+    /// <summary>Otwarcie poniżej SETTLE poprzedniego dnia – inwentarz krótki.</summary>
+    Short,
+
+    /// <summary>Otwarcie dokładnie na SETTLE – bez inwentarza.</summary>
+    Neutral,
+}
+
+/// <summary>Otwarcie sesji dziennej względem zakresu poprzedzającej ją sesji nocnej.</summary>
+public enum OvernightLocation
+{
+    None,
+    AboveHigh,
+    InRange,
+    BelowLow,
 }
 
 /// <summary>Wybicie z Initial Balance.</summary>
@@ -71,6 +101,25 @@ public enum RangeExtension
     Up,
     Down,
     Both,
+}
+
+/// <summary>
+/// Interwałowanie: najdłuższa seria okresów TPO, w której początek (cena otwarcia) każdego okresu jest wyżej
+/// (trend w górę) albo niżej (trend w dół) niż początek poprzedniego. Pierwszy początek nie wyżej (nie niżej) kończy serię.
+/// </summary>
+/// <param name="Direction">1 = w górę, −1 = w dół, 0 = brak serii (mniej niż 2 okresy).</param>
+/// <param name="From">Pierwsza litera serii.</param>
+/// <param name="To">Ostatnia litera serii.</param>
+/// <param name="Periods">Liczba okresów serii (od pierwszego do ostatniego, np. B–E = 4).</param>
+/// <param name="IsTrendDay">Seria trwa przez większą część sesji (≥ <see cref="ProfileAnalysisOptions.TrendDayShare"/>).</param>
+/// <param name="PullbackPrice">
+/// PULLBACK LOW (trend w górę – najniższy Low po końcu serii) albo PULLBACK HIGH (w dół – najwyższy High);
+/// null = nie dzień trendowy albo seria trwa do końca.
+/// </param>
+/// <param name="PullbackLetter">Litera okresu, w którym wypadł pullback.</param>
+public sealed record TrendInfo(int Direction, char? From, char? To, int Periods, bool IsTrendDay, decimal? PullbackPrice, char? PullbackLetter)
+{
+    public static TrendInfo None { get; } = new(0, null, null, 0, false, null, null);
 }
 
 /// <summary>Zakres cen (np. single printy).</summary>
@@ -131,6 +180,18 @@ public sealed record ProfileStats
 
     public RangeExtension RangeExtension { get; init; }
 
+    /// <summary>Halfback – połowa zakresu profilu ((High + Low) / 2, zaokrąglona do ticka).</summary>
+    public decimal Halfback { get; init; }
+
+    /// <summary>Cena rozliczeniowa (SETTLE) sesji dziennej; null = jeszcze brak (lub sesja nocna).</summary>
+    public decimal? Settle { get; init; }
+
+    /// <summary>Źródło ceny rozliczeniowej: "CME" / "ręcznie" (null = brak).</summary>
+    public string? SettleSource { get; init; }
+
+    /// <summary>Czy to sesja dzienna (tylko ona bierze udział w relacjach między profilami).</summary>
+    public bool IsDaySession => SessionNames.IsDay(Session);
+
     // --- 2. Struktura ---
     public ProfileShape Shape { get; init; }
 
@@ -169,6 +230,65 @@ public sealed record ProfileStats
 
     public ValueMigration ValueMigration { get; init; }
 
+    /// <summary>Punkty charakterystyczne poprzedniej sesji dziennej.</summary>
+    public decimal? PreviousClose { get; init; }
+    public decimal? PreviousSettle { get; init; }
+    public decimal? PreviousHalfback { get; init; }
+
+    /// <summary>
+    /// Luka (GAP) otwarcia względem zakresu poprzedniego dnia: otwarcie nad jego High → Open − High (dodatnia),
+    /// pod jego Low → Open − Low (ujemna); otwarcie w zakresie poprzedniego dnia → null (brak luki).
+    /// </summary>
+    public decimal? Gap { get; init; }
+
+    /// <summary>Otwarcie względem halfback poprzedniego dnia: 1 = nad, −1 = pod, 0 = na poziomie / brak.</summary>
+    public int OpenVsPreviousHalfback { get; init; }
+
+    /// <summary>Inwentarz na otwarciu: długi (otwarcie nad SETTLE poprzedniego dnia) / krótki (pod) / neutralny.</summary>
+    public OpeningInventory OpeningInventory { get; init; }
+
+    /// <summary>Wielkość inwentarza: Open − SETTLE poprzedniego dnia (dodatnia = długi, ujemna = krótki).</summary>
+    public decimal? InventorySize { get; init; }
+
+    /// <summary>
+    /// Czy inwentarz został wyrównany – cena wróciła w tej sesji do SETTLE poprzedniego dnia
+    /// (w sesji w toku false = jeszcze nie); null = brak inwentarza.
+    /// </summary>
+    public bool? InventoryCorrected { get; init; }
+
+    /// <summary>Litera okresu, w którym inwentarz został wyrównany.</summary>
+    public char? InventoryCorrectedLetter { get; init; }
+
+    /// <summary>Sesja nocna bezpośrednio przed tym dniem – jej High, Low i POC (null = brak nocy).</summary>
+    public decimal? OvernightHigh { get; init; }
+    public decimal? OvernightLow { get; init; }
+    public decimal? OvernightPoc { get; init; }
+
+    /// <summary>Otwarcie dnia względem zakresu nocy.</summary>
+    public OvernightLocation OpenVsOvernight { get; init; }
+
+    // --- 4. Trend (interwałowanie) ---
+
+    /// <summary>Kierunek najdłuższego interwałowania: 1 = w górę, −1 = w dół, 0 = brak.</summary>
+    public int TrendDirection { get; init; }
+
+    /// <summary>Dzień trendowy – interwałowanie przez większą część sesji (wtedy wartości nie bierze się pod uwagę).</summary>
+    public bool IsTrendDay { get; init; }
+
+    /// <summary>Litery początku i końca najdłuższego interwałowania oraz liczba jego okresów.</summary>
+    public char? IntervalFrom { get; init; }
+    public char? IntervalTo { get; init; }
+    public int IntervalPeriods { get; init; }
+
+    /// <summary>PULLBACK LOW (dzień trendowy w górę) – wybicie w drugą stronę po końcu interwałowania.</summary>
+    public decimal? PullbackLow { get; init; }
+
+    /// <summary>PULLBACK HIGH (dzień trendowy w dół).</summary>
+    public decimal? PullbackHigh { get; init; }
+
+    /// <summary>Litera okresu pullbacku.</summary>
+    public char? PullbackLetter { get; init; }
+
     /// <summary>Jaka część obszaru wartości tej sesji pokrywa się z poprzednim (0–1; null = brak poprzedniego).</summary>
     public double? ValueAreaOverlap { get; init; }
 
@@ -186,6 +306,15 @@ public sealed record ProfileAnalysisOptions
     /// <summary>Ile poprzednich sesji przeszukiwać przy nietkniętych POC.</summary>
     public int NakedPocLookback { get; init; } = 20;
 
+    /// <summary>Dzień trendowy: interwałowanie obejmuje co najmniej taką część okresów sesji.</summary>
+    public double TrendDayShare { get; init; } = 0.6;
+
+    /// <summary>Najkrótsze interwałowanie, które może oznaczać dzień trendowy (liczba okresów).</summary>
+    public int TrendDayMinPeriods { get; init; } = 4;
+
+    /// <summary>Szansa wyrównania inwentarza z otwarcia (opisowo – do podpowiedzi), ok. 65%.</summary>
+    public const double InventoryCorrectionChance = 0.65;
+
     public static ProfileAnalysisOptions Default { get; } = new();
 }
 
@@ -199,8 +328,9 @@ public static class ProfileAnalyzer
     /// <param name="history">Wcześniejsze profile (wszystkie typy sesji) w kolejności chronologicznej.</param>
     /// <param name="isComplete">Czy sesja jest zakończona.</param>
     /// <param name="tpoMinutes">Długość okresu TPO w minutach (zapisywana razem z parametrami).</param>
+    /// <param name="settlements">Ceny rozliczeniowe sesji dziennych wg daty handlowej (null = brak).</param>
     public static ProfileStats Analyze(ProfileSnapshot profile, IReadOnlyList<ProfileSnapshot> history, bool isComplete,
-        int tpoMinutes, ProfileAnalysisOptions? options = null)
+        int tpoMinutes, ProfileAnalysisOptions? options = null, IReadOnlyDictionary<DateOnly, Settlement>? settlements = null)
     {
         options ??= ProfileAnalysisOptions.Default;
         var row = profile.RowHeight;
@@ -208,7 +338,21 @@ public static class ProfileAnalyzer
         var pocIndex = IndexOf(levels, profile.Poc);
         var range = profile.High - profile.Low;
 
-        var previous = history.LastOrDefault(h => h.Session.Name == profile.Session.Name && !h.IsEmpty && h.SessionStart < profile.SessionStart);
+        // Relacje między profilami liczymy tylko dla sesji dziennych (porównanie z poprzednim dniem).
+        // Sesja nocna nie bierze w nich udziału – z nocy liczą się tylko jej POC, High i Low (pola Overnight* dnia).
+        var isDay = SessionNames.IsDay(profile.Session.Name);
+        var previous = isDay
+            ? history.LastOrDefault(h => h.Session.Name == profile.Session.Name && !h.IsEmpty && h.SessionStart < profile.SessionStart)
+            : null;
+        // SETTLE: wpis ręczny, a gdy go brak – cena zamknięcia sesji dziennej (sesja w toku – jeszcze bez settle).
+        var settle = isDay && isComplete && !profile.IsEmpty
+            ? settlements?.GetValueOrDefault(profile.TradingDate) ??
+              new Settlement(profile.TradingDate, profile.LastPrice, Settlement.SourceClose)
+            : null;
+
+        // Interwałowanie – planowana liczba okresów sesji w toku (trend tylko, gdy seria obejmuje większość całej sesji).
+        var plannedPeriods = tpoMinutes > 0 ? (int)Math.Ceiling((profile.SessionEnd - profile.SessionStart).TotalMinutes / tpoMinutes) : 0;
+        var trend = TrendOf(profile.Periods, isComplete ? profile.Periods.Count : Math.Max(profile.Periods.Count, plannedPeriods), options);
 
         var stats = new ProfileStats
         {
@@ -237,17 +381,101 @@ public static class ProfileAnalyzer
             IbHigh = profile.InitialBalanceHigh,
             IbLow = profile.InitialBalanceLow,
             IbWidth = profile.InitialBalanceHigh - profile.InitialBalanceLow,
-            Shape = ShapeOf(levels, pocIndex, profile.Periods.Count, range > 0 ? (double)((profile.LastPrice - profile.Low) / range) : 0.5),
+            Shape = ShapeOf(levels, pocIndex, trend.IsTrendDay),
             TpoAbovePoc = pocIndex >= 0 ? levels.Skip(pocIndex + 1).Sum(l => l.TpoCount) : 0,
             TpoBelowPoc = pocIndex >= 0 ? levels.Take(pocIndex).Sum(l => l.TpoCount) : 0,
             PreviousTradingDate = previous?.TradingDate,
+            Halfback = profile.IsEmpty ? 0 : RoundToTick((profile.High + profile.Low) / 2, profile.TickSize),
+            Settle = settle?.Price,
+            SettleSource = settle?.Source,
+            TrendDirection = trend.Direction,
+            IsTrendDay = trend.IsTrendDay,
+            IntervalFrom = trend.From,
+            IntervalTo = trend.To,
+            IntervalPeriods = trend.Periods,
+            PullbackLow = trend.Direction > 0 ? trend.PullbackPrice : null,
+            PullbackHigh = trend.Direction < 0 ? trend.PullbackPrice : null,
+            PullbackLetter = trend.PullbackLetter,
         };
 
         stats = WithIbExtension(stats, profile);
         stats = WithTails(stats, levels);
+        if (!isDay)
+        {
+            return stats; // noc: tylko parametry własne profilu
+        }
+
         stats = WithOpen(stats, profile, previous);
         stats = WithValueMigration(stats, profile, previous);
+        stats = WithPreviousDay(stats, profile, previous, settlements);
+        stats = WithOvernight(stats, profile, history);
         return WithNakedPocs(stats, profile, history, options);
+    }
+
+    private static decimal RoundToTick(decimal price, decimal tick) =>
+        tick > 0 ? Math.Round(price / tick, MidpointRounding.AwayFromZero) * tick : price;
+
+    /// <summary>Punkty charakterystyczne poprzedniego dnia (Close, SETTLE, Halfback) i położenie otwarcia względem nich.</summary>
+    private static ProfileStats WithPreviousDay(ProfileStats stats, ProfileSnapshot profile, ProfileSnapshot? previous,
+        IReadOnlyDictionary<DateOnly, Settlement>? settlements)
+    {
+        if (previous is null || profile.IsEmpty)
+        {
+            return stats;
+        }
+
+        var previousSettle = settlements?.GetValueOrDefault(previous.TradingDate)?.Price ?? previous.LastPrice; // brak wpisu – Close
+        var previousHalfback = RoundToTick((previous.High + previous.Low) / 2, previous.TickSize);
+
+        // Inwentarz na otwarciu względem SETTLE poprzedniego dnia i jego wyrównanie (powrót ceny do SETTLE).
+        var inventory = profile.Open > previousSettle ? OpeningInventory.Long
+            : profile.Open < previousSettle ? OpeningInventory.Short
+            : OpeningInventory.Neutral;
+        var correctedIn = inventory switch
+        {
+            OpeningInventory.Long => profile.Periods.FirstOrDefault(p => p.Low <= previousSettle),
+            OpeningInventory.Short => profile.Periods.FirstOrDefault(p => p.High >= previousSettle),
+            _ => null,
+        };
+
+        return stats with
+        {
+            OpeningInventory = inventory,
+            InventorySize = profile.Open - previousSettle,
+            InventoryCorrected = inventory == OpeningInventory.Neutral ? null : correctedIn is not null,
+            InventoryCorrectedLetter = correctedIn?.Letter,
+            PreviousClose = previous.LastPrice,
+            PreviousSettle = previousSettle,
+            PreviousHalfback = previousHalfback,
+            Gap = profile.Open > previous.High ? profile.Open - previous.High
+                : profile.Open < previous.Low ? profile.Open - previous.Low
+                : null,
+            OpenVsPreviousHalfback = Math.Sign(profile.Open - previousHalfback),
+        };
+    }
+
+    /// <summary>
+    /// Noc bezpośrednio poprzedzająca dzień: ostatnia sesja nocna przed początkiem dnia, bez innego dnia pomiędzy nimi.
+    /// </summary>
+    private static ProfileStats WithOvernight(ProfileStats stats, ProfileSnapshot profile, IReadOnlyList<ProfileSnapshot> history)
+    {
+        var night = history.LastOrDefault(h => !SessionNames.IsDay(h.Session.Name) && !h.IsEmpty && h.SessionStart < profile.SessionStart);
+        if (night is null || profile.IsEmpty || history.Any(h => SessionNames.IsDay(h.Session.Name) && !h.IsEmpty &&
+                                                                h.SessionStart > night.SessionStart && h.SessionStart < profile.SessionStart))
+        {
+            return stats;
+        }
+
+        var o = profile.Open;
+        return stats with
+        {
+            OvernightHigh = night.High,
+            OvernightLow = night.Low,
+            OvernightPoc = night.Poc,
+            OpenVsOvernight = o > night.High ? OvernightLocation.AboveHigh
+                : o < night.Low ? OvernightLocation.BelowLow
+                : OvernightLocation.InRange,
+        };
     }
 
     private static int IndexOf(IReadOnlyList<PriceLevel> levels, decimal price)
@@ -293,13 +521,17 @@ public static class ProfileAnalyzer
     /// Kształt (kolejność sprawdzania):
     ///  - B: dwa wyraźne skupiska TPO (wygładzone liczby TPO), przewężenie między nimi ≤ 50% mniejszego szczytu,
     ///    każde skupisko ma co najmniej 25% TPO;
-    ///  - Trend: POC odwiedziło najwyżej 35% liter sesji (litery prawie się nie nakładają – profil wąski i wydłużony,
-    ///    niezależnie od wysokości wiersza), a sesja zamyka się przy skraju zakresu (w zewnętrznych 25%);
+    ///  - Trend: dzień trendowy wg interwałowania (<see cref="TrendOf"/>) – sprawdzany najpierw;
     ///  - P / b: środek ciężkości TPO i POC w górnych / dolnych ~40% zakresu;
     ///  - w pozostałych przypadkach D.
     /// </summary>
-    internal static ProfileShape ShapeOf(IReadOnlyList<PriceLevel> levels, int pocIndex, int periods, double closePosition)
+    internal static ProfileShape ShapeOf(IReadOnlyList<PriceLevel> levels, int pocIndex, bool isTrendDay)
     {
+        if (isTrendDay)
+        {
+            return ProfileShape.Trend;
+        }
+
         var n = levels.Count;
         var total = levels.Sum(l => l.TpoCount);
         if (n < 5 || total < 5 || pocIndex < 0)
@@ -311,11 +543,6 @@ public static class ProfileAnalyzer
         if (IsDoubleDistribution(counts, total))
         {
             return ProfileShape.DoubleB;
-        }
-
-        if (periods >= 4 && counts[pocIndex] <= 0.35 * periods && (closePosition >= 0.75 || closePosition <= 0.25))
-        {
-            return ProfileShape.Trend;
         }
 
         var centre = counts.Select((c, i) => c * i).Sum() / total / (n - 1);
@@ -331,6 +558,63 @@ public static class ProfileAnalyzer
         }
 
         return ProfileShape.D;
+    }
+
+    /// <summary>
+    /// Interwałowanie i dzień trendowy:
+    ///  - seria w górę: początek każdego kolejnego okresu wyżej niż początek poprzedniego (np. C &gt; B, D &gt; C, E &gt; D…);
+    ///    pierwszy początek nie wyżej kończy serię; w dół – analogicznie (coraz niżej);
+    ///  - dzień trendowy: najdłuższa seria obejmuje ≥ <see cref="ProfileAnalysisOptions.TrendDayShare"/> z
+    ///    <paramref name="totalPeriods"/> okresów (i co najmniej <see cref="ProfileAnalysisOptions.TrendDayMinPeriods"/>);
+    ///  - pullback (dzień trendowy, seria skończyła się przed ostatnim okresem): przy trendzie w górę najniższy Low
+    ///    okresów po końcu serii (PULLBACK LOW), przy trendzie w dół najwyższy High (PULLBACK HIGH).
+    /// </summary>
+    /// <param name="periods">Okresy sesji w kolejności.</param>
+    /// <param name="totalPeriods">Liczba okresów sesji (dla sesji w toku – planowana liczba okresów całej sesji).</param>
+    public static TrendInfo TrendOf(IReadOnlyList<TpoPeriod> periods, int totalPeriods, ProfileAnalysisOptions? options = null)
+    {
+        options ??= ProfileAnalysisOptions.Default;
+        int bestStart = 0, bestEnd = 0, bestDirection = 0;
+        for (var direction = 1; direction >= -1; direction -= 2)
+        {
+            var start = 0;
+            for (var i = 1; i <= periods.Count; i++)
+            {
+                var continues = i < periods.Count && periods[i].Open > 0 && periods[i - 1].Open > 0 &&
+                                Math.Sign(periods[i].Open - periods[i - 1].Open) == direction;
+                if (continues)
+                {
+                    continue;
+                }
+
+                // Seria start..i-1 (co najmniej dwa okresy = jeden wzrost/spadek).
+                if (i - 1 > start && i - 1 - start > bestEnd - bestStart)
+                {
+                    (bestStart, bestEnd, bestDirection) = (start, i - 1, direction);
+                }
+
+                start = i;
+            }
+        }
+
+        if (bestDirection == 0)
+        {
+            return TrendInfo.None;
+        }
+
+        var length = bestEnd - bestStart + 1;
+        var isTrendDay = length >= options.TrendDayMinPeriods && length >= Math.Ceiling(options.TrendDayShare * totalPeriods);
+        decimal? pullback = null;
+        char? pullbackLetter = null;
+        if (isTrendDay && bestEnd < periods.Count - 1)
+        {
+            var after = periods.Skip(bestEnd + 1).ToList();
+            var extreme = bestDirection > 0 ? after.MinBy(p => p.Low)! : after.MaxBy(p => p.High)!;
+            pullback = bestDirection > 0 ? extreme.Low : extreme.High;
+            pullbackLetter = extreme.Letter;
+        }
+
+        return new TrendInfo(bestDirection, periods[bestStart].Letter, periods[bestEnd].Letter, length, isTrendDay, pullback, pullbackLetter);
     }
 
     private static bool IsDoubleDistribution(double[] counts, int total)
@@ -524,6 +808,12 @@ public static class ProfileAnalyzer
         if (previous is null || profile.IsEmpty)
         {
             return stats;
+        }
+
+        // Dzień trendowy – wartości nie bierze się pod uwagę.
+        if (stats.IsTrendDay)
+        {
+            return stats with { ValueMigration = ValueMigration.TrendDay, ValueAreaOverlap = null };
         }
 
         var low = profile.ValueAreaLow;

@@ -37,7 +37,6 @@ public sealed partial class MainViewModel
     private string _simStartTime = "09:30";
     private double _simSpeedSlider = SpeedToSlider(60);
     private string _simClock = "–";
-    private string _simDataRange = string.Empty;
     private string? _simSource; // źródło danych symulacji wybranego instrumentu (MarketDataStore.SimulationSource)
     private DateTimeOffset? _loadedSimStart;   // moment, od którego wczytano bieżącą symulację (powrót przez ⏹)
     private bool _simNavigating;               // trwa płynne przewijanie czasu
@@ -116,9 +115,8 @@ public sealed partial class MainViewModel
             RememberSimPoint(); // przed zatrzymaniem – potem symulacji już nie ma
         }
 
-        await StopAsync(simulation
-            ? "Tryb symulacji – ustaw datę i godzinę, potem ▶"
-            : "Tryb na żywo – naciśnij Start");
+        await StopAsync();
+        ClearError(); // błąd poprzedniego trybu (np. brak połączenia z TWS) nie dotyczy nowego
 
         _loadedSimStart = null;
         _previewFrom = _previewEnd = null;
@@ -216,7 +214,6 @@ public sealed partial class MainViewModel
 
         _loadedSimStart = point.Origin ?? point.At;
         IsSimPlaying = false;
-        Status = "Symulacja wstrzymana w miejscu przerwania – ▶ rysuje dalej od tego momentu";
         return true;
     }
 
@@ -234,7 +231,10 @@ public sealed partial class MainViewModel
         RefreshSimDataRange();
     }
 
-    /// <summary>Odświeża informację o zakresie danych w bazie; jeśli start nie jest ustawiony – proponuje go.</summary>
+    /// <summary>
+    /// Sprawdza, skąd i czy są dane do symulacji (brak danych – ostrzeżenie w polu informacji);
+    /// jeśli start nie jest ustawiony – proponuje go.
+    /// </summary>
     private void RefreshSimDataRange()
     {
         _simSource = GetStore().SimulationSource(_settings.InstrumentSymbol);
@@ -242,15 +242,10 @@ public sealed partial class MainViewModel
 
         if (SimDataRangeOf(_settings.InstrumentSymbol) is not { } range)
         {
-            SimDataRange = NoSimDataMessage();
             return;
         }
 
-        var zone = _settings.ExchangeTimeZone;
-        var from = TimeZoneInfo.ConvertTime(range.From, zone);
-        var to = TimeZoneInfo.ConvertTime(range.To, zone);
-        var kind = _simSource == MarketDataStore.SourceTest ? "testowe" : "od brokera";
-        SimDataRange = $"Dane w bazie ({kind}): {from:yyyy-MM-dd HH:mm} – {to:yyyy-MM-dd HH:mm}";
+        var to = TimeZoneInfo.ConvertTime(range.To, _settings.ExchangeTimeZone);
 
         // Propozycja startu: początek sesji dziennej przedostatniego dnia z danymi.
         if (SimStartDate is null && _settings.TryParseExchangeTime(
@@ -305,6 +300,8 @@ public sealed partial class MainViewModel
                 }
 
                 OnPropertyChanged(nameof(SimSpeedText));
+                OnPropertyChanged(nameof(SimSpeedShortText));
+                OnPropertyChanged(nameof(SelectedSimSpeedPreset));
             }
         }
     }
@@ -313,17 +310,73 @@ public sealed partial class MainViewModel
     public double SimSpeed => SliderToSpeed(_simSpeedSlider);
 
     /// <summary>Prędkość do wyświetlenia, np. "×60 (1 s = 1 min)".</summary>
-    public string SimSpeedText
+    public string SimSpeedText => FormatSimSpeed(SimSpeed);
+
+    /// <summary>Prędkość krótko, np. "×60" – w polu listy (pełny opis na liście i w podpowiedzi).</summary>
+    public string SimSpeedShortText => $"×{SimSpeed:0}";
+
+    /// <summary>Gotowa prędkość symulacji do wyboru z listy (i krok strzałek przy suwaku).</summary>
+    public sealed record SimSpeedPreset(double Speed, string Label)
     {
-        get
+        /// <summary>Krótko, np. "×60" – tekst pola po wybraniu z listy.</summary>
+        public string ShortLabel => $"×{Speed:0}";
+
+        public override string ToString() => Label;
+    }
+
+    /// <summary>Zdefiniowane prędkości symulacji – lista rozwijana i kolejne kroki strzałek ◂ ▸.</summary>
+    public static IReadOnlyList<SimSpeedPreset> SimSpeedPresets { get; } =
+        [.. new double[] { 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900, 1800, 3600 }
+            .Select(speed => new SimSpeedPreset(speed, FormatSimSpeed(speed)))];
+
+    /// <summary>
+    /// Prędkość wybrana z listy; null, gdy suwak ustawiono pomiędzy gotowymi prędkościami.
+    /// Wybór z listy przestawia suwak (działa od razu, także w trakcie odtwarzania).
+    /// </summary>
+    public SimSpeedPreset? SelectedSimSpeedPreset
+    {
+        get => SimSpeedPresets.FirstOrDefault(p => p.Speed == SimSpeed);
+        set
         {
-            var speed = SimSpeed;
-            var perSecond = TimeSpan.FromSeconds(speed);
-            var description = perSecond.TotalMinutes >= 1
-                ? perSecond.TotalHours >= 1 ? $"{perSecond.TotalHours:0.#} h" : $"{perSecond.TotalMinutes:0.#} min"
-                : $"{perSecond.TotalSeconds:0} s";
-            return $"×{speed:0}  (1 s = {description})";
+            if (value is not null)
+            {
+                SimSpeedSlider = SpeedToSlider(value.Speed);
+            }
         }
+    }
+
+    /// <summary>◂ – następna mniejsza gotowa prędkość.</summary>
+    public ICommand SimSpeedDownCommand => _simSpeedDownCommand ??= new AsyncRelayCommand(() =>
+    {
+        if (SimSpeedPresets.LastOrDefault(p => p.Speed < SimSpeed) is { } lower)
+        {
+            SelectedSimSpeedPreset = lower;
+        }
+
+        return Task.CompletedTask;
+    });
+
+    /// <summary>▸ – następna większa gotowa prędkość.</summary>
+    public ICommand SimSpeedUpCommand => _simSpeedUpCommand ??= new AsyncRelayCommand(() =>
+    {
+        if (SimSpeedPresets.FirstOrDefault(p => p.Speed > SimSpeed) is { } higher)
+        {
+            SelectedSimSpeedPreset = higher;
+        }
+
+        return Task.CompletedTask;
+    });
+
+    private ICommand? _simSpeedDownCommand, _simSpeedUpCommand;
+
+    /// <summary>Prędkość do wyświetlenia, np. "×60  (1 s = 1 min)".</summary>
+    private static string FormatSimSpeed(double speed)
+    {
+        var perSecond = TimeSpan.FromSeconds(speed);
+        var description = perSecond.TotalMinutes >= 1
+            ? perSecond.TotalHours >= 1 ? $"{perSecond.TotalHours:0.#} h" : $"{perSecond.TotalMinutes:0.#} min"
+            : $"{perSecond.TotalSeconds:0} s";
+        return $"×{speed:0}  (1 s = {description})";
     }
 
     /// <summary>Bieżący czas symulacji (zegar).</summary>
@@ -331,13 +384,6 @@ public sealed partial class MainViewModel
     {
         get => _simClock;
         private set => SetProperty(ref _simClock, value);
-    }
-
-    /// <summary>Zakres danych dostępnych w bazie dla bieżącego instrumentu.</summary>
-    public string SimDataRange
-    {
-        get => _simDataRange;
-        private set => SetProperty(ref _simDataRange, value);
     }
 
     // =====================================================================
@@ -392,7 +438,7 @@ public sealed partial class MainViewModel
         var end = SimEnd;
         if (SimEndDate is not null && !string.IsNullOrWhiteSpace(SimEndTime) && end is null)
         {
-            Status = "Czas końca symulacji: godzinę podaj w formacie GG:MM – do tego czasu odtwarzanie jest bez ograniczeń.";
+            Hint("Czas końca symulacji: godzinę podaj w formacie GG:MM – do tego czasu odtwarzanie jest bez ograniczeń.");
         }
 
         if (SimFeed is { } feed)
@@ -440,14 +486,14 @@ public sealed partial class MainViewModel
         }
 
         ApplySimEnd();
-        Status = "Czas końca usunięty – symulacja odtwarza bez ograniczeń";
+        Hint("Czas końca usunięty – symulacja odtwarza bez ograniczeń");
         return Task.CompletedTask;
     }
 
     /// <summary>Komunikat o osiągnięciu czasu końca.</summary>
     private string SimEndReachedMessage(DateTimeOffset end) =>
         $"Osiągnięto czas końca symulacji ({TimeZoneInfo.ConvertTime(end, _settings.ExchangeTimeZone):yyyy-MM-dd HH:mm}) – " +
-        "zmień lub usuń czas końca (✕), aby odtwarzać dalej";
+        "▶ usuwa czas końca i odtwarza dalej";
 
     /// <summary>Czy symulacja jest odtwarzana (nie wstrzymana).</summary>
     public bool IsSimPlaying
@@ -480,7 +526,7 @@ public sealed partial class MainViewModel
 
     /// <summary>
     /// ▶ Play. Wczytana symulacja jest wznawiana; jeśli nie jest wczytana – wczytuje dane od czasu z pola
-    /// (historia sprzed tego momentu i odtwarzanie od niego).
+    /// (historia sprzed tego momentu i odtwarzanie od niego). Czas końca, który już minął, jest usuwany.
     /// </summary>
     private async Task PlayAsync()
     {
@@ -489,12 +535,11 @@ public sealed partial class MainViewModel
             return;
         }
 
-        // Czas końca już osiągnięty – odtwarzanie dalej wymaga zmiany albo usunięcia czasu końca.
+        // Czas końca już osiągnięty (albo przestarzały) – ▶ go usuwa i odtwarza dalej bez ograniczeń.
         var at = SimFeed?.CurrentTime ?? (TryGetSimStart(out var start) ? start : (DateTimeOffset?)null);
         if (SimEnd is { } end && at >= end)
         {
-            Status = SimEndReachedMessage(end);
-            return;
+            await ClearSimEndAsync();
         }
 
         if (SimFeed is { } loaded)
@@ -595,7 +640,7 @@ public sealed partial class MainViewModel
 
         if (target >= now)
         {
-            Status = "To początek danych w bazie – nie można cofnąć dalej";
+            Hint("To początek danych w bazie – nie można cofnąć dalej");
             return;
         }
 
@@ -614,14 +659,17 @@ public sealed partial class MainViewModel
         IsSimPlaying = false;
         await MoveSimTimeAsync(origin);
         SaveSimSettings();
-        Status = "Symulacja wstrzymana na początku – ▶ odtwarza dalej";
     }
 
+    /// <summary>Prośba do widoku: zamroź bieżący widok wykresu (bez dopasowania i przesuwania).</summary>
+    public event Action? FreezeViewRequested;
+
     /// <summary>
-    /// Menu podręczne wykresu: „Symulacja od początku profilu / od słupka” – ustawia datę i godzinę startu na ten moment
-    /// (czas lokalny giełdy) i wczytuje symulację od niego w pauzie; ▶ rusza rysowanie, ⏹ wraca do tego momentu.
+    /// Menu podręczne: „Symulacja od początku profilu / od słupka” – tylko cofnięcie czasu symulacji do tego momentu, bez ruszania
+    /// wykresu (widok zamrożony: ta sama skala, położenie i środek ceny; znikają tylko dane po tym momencie).
+    /// Symulacja wstrzymana; ▶ rysuje dalej od słupka, ⏹ wraca do niego.
     /// </summary>
-    public async Task SimulateFromAsync(DateTime localTime)
+    public async Task SimulateBackToAsync(DateTime localTime)
     {
         if (!IsSimulationMode || _simNavigating)
         {
@@ -632,23 +680,25 @@ public sealed partial class MainViewModel
         var target = new DateTimeOffset(DateTime.SpecifyKind(localTime, DateTimeKind.Unspecified), zone.GetUtcOffset(localTime));
         if (SimDataRangeOf(_settings.InstrumentSymbol) is not { } range || target < range.From || target >= range.To)
         {
-            Status = $"Brak danych w bazie dla {localTime:dd.MM HH:mm} – symulacja może zacząć się tylko w zakresie danych";
+            Hint($"Brak danych w bazie dla {localTime:dd.MM HH:mm} – symulacja może zacząć się tylko w zakresie danych");
             return;
         }
 
+        FreezeViewRequested?.Invoke();
         _simNavigating = true;
         try
         {
-            if (await LoadSimulationAsync(target, paused: true))
-            {
-                IsSimPlaying = false;
-                FitRequested?.Invoke();
-                PinLatestRequested?.Invoke();
-                Status = $"Symulacja od {localTime:dd.MM HH:mm} – ▶ uruchamia rysowanie";
-            }
+            SimFeed?.Pause();
+            IsSimPlaying = false;
+
+            // Od razu chowamy wszystko po tym momencie, potem dokładny stan (ticki do tej chwili) bez czyszczenia wykresu.
+            SetViewCutoff(target);
+            ShowSimTime(target);
+            await LoadSimulationAsync(target, paused: true, keepView: true);
         }
         finally
         {
+            SetViewCutoff(null);
             _simNavigating = false;
         }
     }
@@ -665,13 +715,12 @@ public sealed partial class MainViewModel
     private async Task<bool> LoadSimulationAsync(DateTimeOffset start, bool paused, bool keepView = false, bool keepOrigin = false)
     {
         var origin = _loadedSimStart;
-        await StopAsync("Wczytywanie symulacji...");
+        await StopAsync();
         RefreshSimDataRange(); // np. w międzyczasie pobrano pierwsze dane od brokera – wtedy one mają pierwszeństwo
 
         if (SimDataRangeOf(_settings.InstrumentSymbol) is not { } range)
         {
-            Status = NoSimDataMessage();
-            return false;
+            return false; // brak danych – ostrzeżenie w polu informacji
         }
 
         // Bieżący profil (sesja, w której jest start) – w całości z ticków z bazy; wcześniejsze profile – ze świec 1-min.
@@ -786,8 +835,7 @@ public sealed partial class MainViewModel
             _snapshotCache.Clear();
             _snapshots = [];
             Profiles = [];
-            Status = NoSimDataMessage();
-            return;
+            return; // brak danych – ostrzeżenie w polu informacji
         }
 
         var end = at is { } a && a < range.To ? a : range.To;
@@ -795,7 +843,6 @@ public sealed partial class MainViewModel
         var settings = _settings.ToProfileSettings();
         var store = GetStore();
         var version = ++_previewVersion;
-        Status = "Wczytywanie podglądu symulacji...";
 
         var builder = await Task.Run(() =>
         {
@@ -825,9 +872,6 @@ public sealed partial class MainViewModel
         }
 
         ShowSimTime(at ?? range.To);
-        Status = at is null
-            ? "Symulacja – profile jak na żywo. Ustaw datę i godzinę (Enter), potem ▶"
-            : "Podgląd na wybraną chwilę – ▶ uruchamia odtwarzanie (bieżący profil z ticków z bazy)";
     }
 
     /// <summary>
@@ -872,7 +916,6 @@ public sealed partial class MainViewModel
                 }
             }
 
-            Status = "Podgląd na wybraną chwilę – ▶ uruchamia odtwarzanie (bieżący profil z ticków z bazy)";
         }
         finally
         {
@@ -987,7 +1030,7 @@ public sealed partial class MainViewModel
 
         if (FindProfileStart(feed.CurrentTime, range.To, forward: true) is not { } target)
         {
-            Status = "To ostatni profil w bazie – brak dalszych danych";
+            Hint("To ostatni profil w bazie – brak dalszych danych");
             return;
         }
 
@@ -1017,7 +1060,7 @@ public sealed partial class MainViewModel
 
         if (FindProfileStart(now, range.From, forward: false) is not { } target)
         {
-            Status = "To pierwszy profil w bazie – brak wcześniejszych danych";
+            Hint("To pierwszy profil w bazie – brak wcześniejszych danych");
             return;
         }
 
@@ -1081,41 +1124,35 @@ public sealed partial class MainViewModel
         : _settings.LiveSource == LiveSourceKind.Generator;
 
     /// <summary>
-    /// Wyraźne ostrzeżenia o danych na wykresie (pusty tekst = dane od brokera, bez zastrzeżeń):
-    /// dane testowe, odtwarzanie okresu bez ticków (tylko świece 1-min), niezgodny tick instrumentu z IB.
+    /// Stałe ostrzeżenia o danych na wykresie (do pola informacji; brak = dane od brokera, bez zastrzeżeń):
+    /// dane testowe, odtwarzanie okresu bez ticków (tylko świece 1-min), brak danych do symulacji, niezgodny tick z IB.
     /// </summary>
-    public string DataWarning
+    private IEnumerable<string> DataWarnings()
     {
-        get
+        if (IsUsingTestData)
         {
-            var warnings = new List<string>();
-            if (IsUsingTestData)
-            {
-                warnings.Add(IsSimulationMode
-                    ? $"⚠  DANE TESTOWE – brak danych {_settings.InstrumentSymbol} od brokera w lokalnej bazie. Symulacja odtwarza losowe ceny " +
-                      "z generatora, NIE prawdziwy rynek. Uruchom TWS – prawdziwe dane pobiorą się w tle do bazy (także w trakcie " +
-                      "symulacji) i będą używane zamiast testowych."
-                    : "⚠  DANE TESTOWE – brak dostępu do danych brokera: źródłem jest generator losowych cen, NIE prawdziwy rynek. " +
-                      "Wybierz Interactive Brokers w Ustawieniach → Dane i broker → Źródło i połączenie.");
-            }
+            yield return IsSimulationMode
+                ? $"DANE TESTOWE – brak danych {_settings.InstrumentSymbol} od brokera w lokalnej bazie. Symulacja odtwarza losowe ceny " +
+                  "z generatora, NIE prawdziwy rynek. Uruchom TWS – prawdziwe dane pobiorą się w tle do bazy (także w trakcie " +
+                  "symulacji) i będą używane zamiast testowych."
+                : "DANE TESTOWE – brak dostępu do danych brokera: źródłem jest generator losowych cen, NIE prawdziwy rynek. " +
+                  "Wybierz Interactive Brokers w Ustawieniach → Dane i broker → Źródło i połączenie.";
+        }
 
-            if (IsSimulationMode && _replayingBarsOnly && !IsUsingTestData)
-            {
-                warnings.Add("⚠  BRAK TICKÓW dla tego okresu – odtwarzane są świece 1-min: każda minuta trafia do profilu w całości, " +
-                             "bez przebiegu ceny wewnątrz minuty. Prawdziwe ticki pobierają się w tle, gdy działa TWS (także w trakcie symulacji).");
-            }
+        if (IsSimulationMode && _replayingBarsOnly && !IsUsingTestData)
+        {
+            yield return "BRAK TICKÓW dla tego okresu – odtwarzane są świece 1-min: każda minuta trafia do profilu w całości, " +
+                         "bez przebiegu ceny wewnątrz minuty. Prawdziwe ticki pobierają się w tle, gdy działa TWS.";
+        }
 
-            if (IsSimulationMode && _simSource is null)
-            {
-                warnings.Add($"⚠  {NoSimDataMessage()}");
-            }
+        if (IsSimulationMode && _simSource is null)
+        {
+            yield return NoSimDataMessage();
+        }
 
-            if (_tickSizeWarning is { } tick)
-            {
-                warnings.Add($"⚠  {tick}");
-            }
-
-            return string.Join(Environment.NewLine, warnings);
+        if (_tickSizeWarning is { } tick)
+        {
+            yield return tick;
         }
     }
 
@@ -1133,20 +1170,15 @@ public sealed partial class MainViewModel
         }
 
         return _settings.Instrument.DownloadData
-            ? $"Brak danych {symbol} w bazie – pobierają się w tle, gdy działa TWS (świece w kilka minut, ticki dłużej); postęp na pasku na dole."
+            ? $"Brak danych {symbol} w bazie – pobierają się w tle, gdy działa TWS (świece w kilka minut, ticki dłużej)."
             : $"Brak danych {symbol} w bazie – zaznacz „Pobieraj dane w tle” dla {symbol} w Ustawieniach → Instrumenty i połącz się z brokerem.";
     }
 
-    /// <summary>Czy pokazać pasek ostrzeżeń o danych.</summary>
-    public bool HasDataWarning => DataWarning.Length > 0;
-
-    /// <summary>Odświeża w widoku nazwę źródła danych i ostrzeżenia o danych.</summary>
+    /// <summary>Odświeża ostrzeżenia o danych (pole informacji).</summary>
     private void NotifyDataSource()
     {
-        OnPropertyChanged(nameof(SourceName));
         OnPropertyChanged(nameof(IsUsingTestData));
-        OnPropertyChanged(nameof(DataWarning));
-        OnPropertyChanged(nameof(HasDataWarning));
+        NotifyInfo();
     }
 
     // =====================================================================
@@ -1204,8 +1236,8 @@ public sealed partial class MainViewModel
     private void OnReplayCompleted(object? sender, EventArgs e) =>
         System.Windows.Application.Current.Dispatcher.BeginInvoke(async () =>
         {
-            var message = Status; // komunikat "Symulacja zakończona..." od źródła danych
-            await StopAsync(message);
+            await StopAsync();
+            Hint("Symulacja zakończona – koniec danych w bazie");
             _loadedSimStart = null;
         });
 
@@ -1222,7 +1254,7 @@ public sealed partial class MainViewModel
             RefreshSnapshots();
             ShowSimTime(end);
             SaveSimSettings();
-            Status = SimEndReachedMessage(end);
+            Hint(SimEndReachedMessage(end));
         });
 
     /// <summary>Odczytuje moment z pól daty i godziny.</summary>
@@ -1232,7 +1264,7 @@ public sealed partial class MainViewModel
         if (SimStartDate is not { } date ||
             !_settings.TryParseExchangeTime($"{date:yyyy-MM-dd} {SimStartTime?.Trim()}", out start))
         {
-            Status = "Ustaw datę i godzinę symulacji (godzina w formacie GG:MM, w strefie czasowej instrumentu).";
+            Hint("Ustaw datę i godzinę symulacji (godzina w formacie GG:MM, w strefie czasowej instrumentu).");
             return false;
         }
 

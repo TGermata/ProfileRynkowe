@@ -75,6 +75,12 @@ public sealed record Instrument
     public string ContractMonth { get; init; } = string.Empty;
 
     /// <summary>
+    /// Kod produktu na stronie CME (np. 133 = ES) – do pobierania ceny rozliczeniowej (SETTLE).
+    /// 0 = nie pobieramy (cenę można wpisać ręcznie).
+    /// </summary>
+    public int CmeProductId { get; init; }
+
+    /// <summary>
     /// Czy po połączeniu z brokerem pobierać w tle historię tego instrumentu do lokalnej bazy
     /// (do późniejszych symulacji) – także wtedy, gdy nie jest on pokazany na wykresie.
     /// </summary>
@@ -100,10 +106,10 @@ public sealed record Instrument
     public IReadOnlyList<SessionDefinition> Sessions => HasNightSession
         ?
         [
-            new SessionDefinition { Name = "Nocna", Start = NightStart, End = NightEnd },
-            new SessionDefinition { Name = "Dzienna", Start = DayStart, End = DayEnd },
+            new SessionDefinition { Name = SessionNames.Night, Start = NightStart, End = NightEnd },
+            new SessionDefinition { Name = SessionNames.Day, Start = DayStart, End = DayEnd },
         ]
-        : [new SessionDefinition { Name = "Dzienna", Start = DayStart, End = DayEnd }];
+        : [new SessionDefinition { Name = SessionNames.Day, Start = DayStart, End = DayEnd }];
 
     /// <summary>Liczba miejsc po przecinku wynikająca z wielkości ticka (najmniej 2), np. 0.00005 → 5.</summary>
     [JsonIgnore]
@@ -139,14 +145,14 @@ public sealed record Instrument
     /// <summary>Kontrakt E-mini S&amp;P 500.</summary>
     public static Instrument ES { get; } = new()
     {
-        Symbol = "ES", Description = "E-mini S&P 500", Exchange = "CME", TickSize = 0.25m, TicksPerRow = 4, ReferencePrice = 6000m,
+        Symbol = "ES", CmeProductId = 133, Description = "E-mini S&P 500", Exchange = "CME", TickSize = 0.25m, TicksPerRow = 4, ReferencePrice = 6000m,
         DownloadData = true,
     };
 
     /// <summary>Kontrakt E-mini Nasdaq 100.</summary>
     public static Instrument NQ { get; } = new()
     {
-        Symbol = "NQ", Description = "E-mini Nasdaq 100", Exchange = "CME", TickSize = 0.25m, TicksPerRow = 8, ReferencePrice = 21000m,
+        Symbol = "NQ", CmeProductId = 146, Description = "E-mini Nasdaq 100", Exchange = "CME", TickSize = 0.25m, TicksPerRow = 8, ReferencePrice = 21000m,
         DownloadData = true,
     };
 
@@ -159,21 +165,21 @@ public sealed record Instrument
         // --- Futures (USA) ---
         ES,
         NQ,
-        new() { Symbol = "YM", Description = "E-mini Dow Jones", Exchange = "CBOT", TickSize = 1m, TicksPerRow = 5, ReferencePrice = 44000m },
-        new() { Symbol = "RTY", Description = "E-mini Russell 2000", Exchange = "CME", TickSize = 0.1m, TicksPerRow = 5, ReferencePrice = 2300m },
+        new() { Symbol = "YM", CmeProductId = 318, Description = "E-mini Dow Jones", Exchange = "CBOT", TickSize = 1m, TicksPerRow = 5, ReferencePrice = 44000m },
+        new() { Symbol = "RTY", CmeProductId = 8314, Description = "E-mini Russell 2000", Exchange = "CME", TickSize = 0.1m, TicksPerRow = 5, ReferencePrice = 2300m },
         new()
         {
-            Symbol = "CL", Description = "Ropa WTI", Exchange = "NYMEX", TickSize = 0.01m, TicksPerRow = 5, ReferencePrice = 70m,
+            Symbol = "CL", CmeProductId = 425, Description = "Ropa WTI", Exchange = "NYMEX", TickSize = 0.01m, TicksPerRow = 5, ReferencePrice = 70m,
             DayStart = new(9, 0), DayEnd = new(14, 30), NightStart = new(18, 0), NightEnd = new(9, 0),
         },
         new()
         {
-            Symbol = "GC", Description = "Złoto", Exchange = "COMEX", TickSize = 0.1m, TicksPerRow = 10, ReferencePrice = 2600m,
+            Symbol = "GC", CmeProductId = 437, Description = "Złoto", Exchange = "COMEX", TickSize = 0.1m, TicksPerRow = 10, ReferencePrice = 2600m,
             DayStart = new(8, 20), DayEnd = new(13, 30), NightStart = new(18, 0), NightEnd = new(8, 20),
         },
         new()
         {
-            Symbol = "6E", Description = "Euro FX", IbSymbol = "EUR", TradingClass = "6E", Exchange = "CME",
+            Symbol = "6E", CmeProductId = 58, Description = "Euro FX", IbSymbol = "EUR", TradingClass = "6E", Exchange = "CME",
             TickSize = 0.00005m, TicksPerRow = 5, ReferencePrice = 1.08m,
             DayStart = new(8, 20), DayEnd = new(15, 0), NightStart = new(18, 0), NightEnd = new(8, 20),
         },
@@ -230,6 +236,10 @@ public sealed record Instrument
 
     /// <summary>Wszystkie wbudowane instrumenty (dla zgodności z wcześniejszym kodem).</summary>
     public static IReadOnlyList<Instrument> All => BuiltIn;
+
+    /// <summary>Kod produktu CME wbudowanego instrumentu o tym symbolu (0 = nieznany).</summary>
+    public static int DefaultCmeProductId(string symbol) =>
+        BuiltIn.FirstOrDefault(i => string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase))?.CmeProductId ?? 0;
 
     /// <summary>Symbol domyślnego instrumentu „rynku szerokiego” (indeks S&amp;P 500).</summary>
     public const string DefaultBroadMarketSymbol = "SPX";

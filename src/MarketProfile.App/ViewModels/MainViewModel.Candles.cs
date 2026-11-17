@@ -59,8 +59,38 @@ public sealed partial class MainViewModel
         }
     }
 
-    /// <summary>Czy wybrana jest zakładka profili TPO (elementy paska narzędzi tylko dla TPO).</summary>
-    public bool IsTpoTab => _selectedTab == TpoTab;
+    /// <summary>
+    /// Czy zakładka profili TPO jest widoczna – wybrana w oknie głównym albo w osobnym oknie
+    /// (elementy paska narzędzi tylko dla TPO).
+    /// </summary>
+    public bool IsTpoTab => IsTabShown(TpoTab);
+
+    private readonly HashSet<int> _detachedTabs = [];
+
+    /// <summary>Czy zakładka jest na ekranie: wybrana w oknie głównym albo przeniesiona do osobnego okna.</summary>
+    private bool IsTabShown(int tab) => _selectedTab == tab || _detachedTabs.Contains(tab);
+
+    /// <summary>
+    /// Zakładka przeniesiona do osobnego okna (albo z powrotem) – w osobnym oknie jest widoczna zawsze,
+    /// więc jej dane odświeżają się niezależnie od zakładki wybranej w oknie głównym.
+    /// </summary>
+    public void SetTabDetached(int tab, bool detached)
+    {
+        if (!(detached ? _detachedTabs.Add(tab) : _detachedTabs.Remove(tab)))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(IsTpoTab));
+        if (detached && tab == CandlesTab)
+        {
+            _ = LoadCandlesAsync();
+        }
+        else if (detached && tab == VolumeTab)
+        {
+            UpdateVolumeComparison(force: true);
+        }
+    }
 
     /// <summary>Interwał świec na wykresie.</summary>
     public BarInterval CandleInterval
@@ -164,7 +194,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(BaseSymbolLabel));
         OnPropertyChanged(nameof(BroadSymbolLabel));
         OnPropertyChanged(nameof(BroadSymbolToolTip));
-        if (_selectedTab == CandlesTab)
+        if (IsTabShown(CandlesTab))
         {
             _ = LoadCandlesAsync(); // np. zmieniono rynek szeroki
         }
@@ -202,7 +232,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(BaseSymbolLabel));
         _nextCandleIbRefresh = null; // świece nowego instrumentu – z IB od razu (gdy połączony)
         _ = LoadDailyBarsAsync(); // średnie dzienne na wykresie TPO – nowego instrumentu
-        if (_selectedTab == CandlesTab)
+        if (IsTabShown(CandlesTab))
         {
             _ = LoadCandlesAsync();
         }
@@ -212,7 +242,7 @@ public sealed partial class MainViewModel
     private void OnCandleBackgroundPass()
     {
         _ = LoadDailyBarsAsync(); // nowe świece dzienne → aktualne średnie na wykresie TPO
-        if (_selectedTab == CandlesTab && !_candleRefreshing)
+        if (IsTabShown(CandlesTab) && !_candleRefreshing)
         {
             _ = LoadCandlesAsync();
         }
@@ -258,7 +288,7 @@ public sealed partial class MainViewModel
     private void OnCandleTimer()
     {
         RefreshCandlesFromIbIfDue();
-        if (_selectedTab == CandlesTab && DateTime.Now >= _nextLiveCandleUpdate)
+        if (IsTabShown(CandlesTab) && DateTime.Now >= _nextLiveCandleUpdate)
         {
             _nextLiveCandleUpdate = DateTime.Now.AddSeconds(1);
             UpdateLiveCandles(force: false);
@@ -396,7 +426,7 @@ public sealed partial class MainViewModel
             _ = LoadDailyBarsAsync();
         }
 
-        if (symbol == CandleInstrument.Symbol && _selectedTab == CandlesTab)
+        if (symbol == CandleInstrument.Symbol && IsTabShown(CandlesTab))
         {
             await LoadCandlesAsync();
         }
