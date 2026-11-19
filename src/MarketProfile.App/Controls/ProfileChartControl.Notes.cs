@@ -139,13 +139,13 @@ public sealed partial class ProfileChartControl
         }
     }
 
-    /// <summary>Opis pod profilem, np. „VA ↑ wyżej · Open &gt; ONH · GAP ↑ +6.25” albo „Trend ↑ B–K · …”.</summary>
+    /// <summary>Opis pod profilem, np. „VA ↑ wyżej · Otwarcie &gt; ONH · GAP ↑ +6.25” albo „Trend ↑ B–K · …”.</summary>
     private void DrawNoteText(DrawingContext dc, ProfileSnapshot profile, ProfileStats stats, double left, double right)
     {
         var parts = new List<string>();
         if (stats.IsTrendDay)
         {
-            parts.Add($"Trend {(stats.TrendDirection > 0 ? "↑" : "↓")} {stats.IntervalFrom}–{stats.IntervalTo}");
+            parts.Add($"Trend {(stats.TrendDirection > 0 ? "↑" : "↓")} {stats.TrendFrom}–{stats.TrendTo}");
         }
         else if (ProfileStatsRow.ValueMigrationShort(stats.ValueMigration) is { Length: > 0 } va)
         {
@@ -154,22 +154,22 @@ public sealed partial class ProfileChartControl
 
         switch (stats.OpenVsOvernight)
         {
-            case OvernightLocation.AboveHigh:
-                parts.Add("Open > ONH");
+            case OvernightLocation.AboveOnh:
+                parts.Add("Otwarcie > ONH");
                 break;
-            case OvernightLocation.BelowLow:
-                parts.Add("Open < ONL");
+            case OvernightLocation.BelowOnl:
+                parts.Add("Otwarcie < ONL");
                 break;
-            case OvernightLocation.InRange:
-                parts.Add("Open w nocy");
+            case OvernightLocation.InOvernight:
+                parts.Add("Otwarcie w nocy");
                 break;
         }
 
-        if (stats.InventorySize is { } inventory && stats.OpeningInventory is OpeningInventory.Long or OpeningInventory.Short)
+        if (stats.InventorySize is { } inventory && stats.Inventory is OpeningInventory.Long or OpeningInventory.Short)
         {
-            var size = stats.OpeningInventory == OpeningInventory.Long ? $"↑ +{FormatPrice(inventory)}" : $"↓ −{FormatPrice(-inventory)}";
+            var size = stats.Inventory == OpeningInventory.Long ? $"↑ +{FormatPrice(inventory)}" : $"↓ −{FormatPrice(-inventory)}";
             var state = stats.InventoryCorrected == true ? $" ✓{stats.InventoryCorrectedLetter}" : stats.IsComplete ? " ✗" : " …";
-            parts.Add($"Inw. {size}{state}");
+            parts.Add($"Inwentarz {size}{state}");
         }
 
         if (stats.Gap is { } gap && gap != 0)

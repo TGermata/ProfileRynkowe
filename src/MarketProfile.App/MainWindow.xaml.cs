@@ -25,7 +25,7 @@ public partial class MainWindow : Window
         Chart.SplitRequested += _viewModel.SplitProfile;
         Chart.MergeRequested += _viewModel.MergeProfile;
         Chart.SimulateBackToRequested += time => _ = _viewModel.SimulateBackToAsync(time);
-        _viewModel.FreezeViewRequested += Chart.FreezeView;
+        _viewModel.SimulationStartFocusRequested += () => Chart.FocusSimulationStart();
         Chart.ToggleExpandRequested += _viewModel.ToggleExpanded;
         Chart.ToggleLockRequested += _viewModel.ToggleLineLock;
         Chart.LockAllRequested += _viewModel.SetAllLinesLocked;
@@ -43,6 +43,8 @@ public partial class MainWindow : Window
         ToolPanel.PositionCommitted += _viewModel.SaveToolPanelPosition;
         DisplayPanel.MoveTo(_viewModel.Settings.DisplayPanelLeft, _viewModel.Settings.DisplayPanelTop);
         DisplayPanel.PositionCommitted += _viewModel.SaveDisplayPanelPosition;
+        OpeningPanel.MoveTo(_viewModel.Settings.OpeningPanelLeft, _viewModel.Settings.OpeningPanelTop);
+        OpeningPanel.PositionCommitted += _viewModel.SaveOpeningPanelPosition;
 
         // Zakładki w osobnych oknach (kilka monitorów): obsługa nagłówków i układ okien z ostatniego uruchomienia.
         InitializeDetachableTabs();
@@ -94,6 +96,22 @@ public partial class MainWindow : Window
     }
 
     private ProfileStatsWindow? _profileStatsWindow;
+
+    /// <summary>✕ na karcie „Otwarcie”.</summary>
+    private void OnCloseOpeningCardClick(object sender, RoutedEventArgs e) => _viewModel.CloseOpeningCard();
+
+    /// <summary>Pomoc – opis parametrów profili (EN wg Daltona i PL).</summary>
+    private void OnHelpClick(object sender, RoutedEventArgs e) => HelpWindow.ShowHelp(this);
+
+    /// <summary>F1 – pomoc.</summary>
+    private void OnWindowPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.F1)
+        {
+            HelpWindow.ShowHelp(this);
+            e.Handled = true;
+        }
+    }
 
     /// <summary>Otwiera (albo przywołuje) okno „Parametry profili” – okno niemodalne, wykres działa dalej.</summary>
     private void OnProfileStatsClick(object sender, RoutedEventArgs e)

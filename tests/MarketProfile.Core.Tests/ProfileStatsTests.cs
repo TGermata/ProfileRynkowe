@@ -51,7 +51,7 @@ public sealed class ProfileStatsTests
         Assert.Equal(100m, stats.IbLow);
         Assert.Equal(3m, stats.IbExtensionUp);
         Assert.Equal('C', stats.IbExtensionUpLetter);
-        Assert.Equal(RangeExtension.Up, stats.RangeExtension);
+        Assert.Equal(IbExtensionDirection.Up, stats.IbExtension);
         Assert.Equal(3, stats.Periods);
         Assert.Equal('C', stats.LastLetter);
         Assert.True(stats.TpoAbovePoc + stats.TpoBelowPoc < stats.TotalTpo); // reszta to wiersz POC
@@ -130,12 +130,12 @@ public sealed class ProfileStatsTests
         var stats = Stats(higher, previous);
 
         Assert.Equal(previous.TradingDate, stats.PreviousTradingDate);
-        Assert.Equal(OpenLocation.AboveValue, stats.OpenLocation);
+        Assert.Equal(ValueLocation.AboveValue, stats.OpenVsPreviousValue);
         Assert.Equal(ValueMigration.Higher, stats.ValueMigration);
         Assert.Equal(0, stats.ValueAreaOverlap);
 
         var overlapping = Stats(Profile(108, (104, 114, 108), (105, 114, 110), (105, 113, 109), (106, 114, 110)), previous);
-        Assert.Equal(OpenLocation.InValue, overlapping.OpenLocation);
+        Assert.Equal(ValueLocation.InValue, overlapping.OpenVsPreviousValue);
         Assert.Equal(ValueMigration.OverlappingHigher, overlapping.ValueMigration);
         Assert.InRange(overlapping.ValueAreaOverlap!.Value, 0.01, 0.99);
     }
@@ -202,7 +202,7 @@ public sealed class ProfileStatsTests
         Assert.False(stats.IsDaySession);
         Assert.Null(stats.PreviousTradingDate);
         Assert.Equal(ValueMigration.None, stats.ValueMigration);
-        Assert.Equal(OpenLocation.None, stats.OpenLocation);
+        Assert.Equal(ValueLocation.None, stats.OpenVsPreviousValue);
         Assert.Equal(OpenType.None, stats.OpenType);
         Assert.Empty(stats.NakedPocs);
         Assert.Null(stats.OvernightHigh);
@@ -222,10 +222,10 @@ public sealed class ProfileStatsTests
         Assert.Equal(121m, stats.OvernightHigh);
         Assert.Equal(110m, stats.OvernightLow);
         Assert.Equal(night.Poc, stats.OvernightPoc);
-        Assert.Equal(OvernightLocation.InRange, stats.OpenVsOvernight);
+        Assert.Equal(OvernightLocation.InOvernight, stats.OpenVsOvernight);
         Assert.Equal(previous.LastPrice, stats.PreviousClose);
         Assert.Equal(105m, stats.PreviousHalfback);
-        Assert.Equal(1, stats.OpenVsPreviousHalfback);
+        Assert.Equal(1, stats.OpenVsPreviousHb);
         Assert.Equal(1m, stats.Gap); // otwarcie 116 nad High poprzedniego dnia (115)
     }
 
@@ -340,9 +340,9 @@ public sealed class ProfileStatsTests
                 connection.Open();
                 using var command = connection.CreateCommand();
                 command.CommandText = """
-                    ALTER TABLE profile_stats DROP COLUMN halfback; ALTER TABLE profile_stats DROP COLUMN settle;
-                    ALTER TABLE profile_stats DROP COLUMN settle_source; ALTER TABLE profile_stats DROP COLUMN on_high;
-                    ALTER TABLE profile_stats DROP COLUMN on_poc; ALTER TABLE profile_stats DROP COLUMN open_vs_overnight;
+                    ALTER TABLE profile_stats DROP COLUMN hb; ALTER TABLE profile_stats DROP COLUMN settle;
+                    ALTER TABLE profile_stats DROP COLUMN settle_source; ALTER TABLE profile_stats DROP COLUMN onh;
+                    ALTER TABLE profile_stats DROP COLUMN onpoc; ALTER TABLE profile_stats DROP COLUMN open_vs_overnight;
                     """;
                 command.ExecuteNonQuery();
             }
@@ -363,16 +363,122 @@ public sealed class ProfileStatsTests
             Assert.Equal(stats.OvernightPoc, back.OvernightPoc);
             Assert.Equal(stats.OpenVsOvernight, back.OpenVsOvernight);
             Assert.Equal(stats.Gap, back.Gap);
-            Assert.Equal(stats.OpeningInventory, back.OpeningInventory);
+            Assert.Equal(stats.Inventory, back.Inventory);
             Assert.Equal(stats.InventorySize, back.InventorySize);
             Assert.Equal(stats.InventoryCorrected, back.InventoryCorrected);
             Assert.Equal(stats.InventoryCorrectedLetter, back.InventoryCorrectedLetter);
             Assert.Equal(stats.PreviousHalfback, back.PreviousHalfback);
             Assert.Equal(stats.TrendDirection, back.TrendDirection);
             Assert.Equal(stats.IsTrendDay, back.IsTrendDay);
-            Assert.Equal(stats.IntervalFrom, back.IntervalFrom);
-            Assert.Equal(stats.IntervalTo, back.IntervalTo);
-            Assert.Equal(stats.IntervalPeriods, back.IntervalPeriods);
+            Assert.Equal(stats.TrendFrom, back.TrendFrom);
+            Assert.Equal(stats.TrendTo, back.TrendTo);
+            Assert.Equal(stats.TrendPeriods, back.TrendPeriods);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach (var file in new[] { path, path + "-wal", path + "-shm" })
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    [Fact]
+    public void Baza_StareNazwyKolumnSaZmienianeBezUtratyDanych()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"mp-stats-rename-{Guid.NewGuid():N}.db");
+        try
+        {
+            var previous = PreviousDay();
+            var night = Profile(Night, NightStart, 112, (110, 121, 118), (112, 119, 117));
+            var stats = Stats(Profile(116, (111, 118, 115), (111, 118, 116)), previous, night) with
+            {
+                OpenVsOvernight = OvernightLocation.AboveOnh,
+                PullbackLow = 111.25m,
+                PullbackLetter = 'D',
+                TrendFrom = 'A',
+                TrendTo = 'C',
+                TrendPeriods = 3,
+            };
+            var store = new MarketProfile.DataFeed.Storage.MarketDataStore(path);
+            store.SaveProfileStats("ES", [stats]);
+
+            // Baza z poprzedniej wersji: stare nazwy kolumn i stara nazwa wartości położenia względem nocy.
+            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    ALTER TABLE profile_stats RENAME COLUMN prev_trading_date TO previous_trading_date;
+                    ALTER TABLE profile_stats RENAME COLUMN open_vs_prev_va TO open_location;
+                    ALTER TABLE profile_stats RENAME COLUMN ib_ext TO range_extension;
+                    ALTER TABLE profile_stats RENAME COLUMN hb TO halfback;
+                    ALTER TABLE profile_stats RENAME COLUMN prev_hb TO prev_halfback;
+                    ALTER TABLE profile_stats RENAME COLUMN open_vs_prev_hb TO open_vs_prev_halfback;
+                    ALTER TABLE profile_stats RENAME COLUMN onh TO on_high;
+                    ALTER TABLE profile_stats RENAME COLUMN onl TO on_low;
+                    ALTER TABLE profile_stats RENAME COLUMN onpoc TO on_poc;
+                    ALTER TABLE profile_stats RENAME COLUMN inventory TO opening_inventory;
+                    ALTER TABLE profile_stats RENAME COLUMN trend_from TO interval_from;
+                    ALTER TABLE profile_stats RENAME COLUMN trend_to TO interval_to;
+                    ALTER TABLE profile_stats RENAME COLUMN trend_periods TO interval_periods;
+                    ALTER TABLE profile_stats RENAME COLUMN pbl TO pullback_low;
+                    ALTER TABLE profile_stats RENAME COLUMN pbh TO pullback_high;
+                    ALTER TABLE profile_stats RENAME COLUMN pb_letter TO pullback_letter;
+                    ALTER TABLE profile_stats RENAME COLUMN IBH TO ib_high;
+                    ALTER TABLE profile_stats RENAME COLUMN IBL TO ib_low;
+                    ALTER TABLE profile_stats RENAME COLUMN POC TO poc;
+                    ALTER TABLE profile_stats RENAME COLUMN VAH TO vah;
+                    ALTER TABLE profile_stats RENAME COLUMN SETTLE TO settle;
+                    ALTER TABLE profile_stats RENAME COLUMN GAP TO gap;
+                    ALTER TABLE profile_stats RENAME COLUMN TPO_minutes TO tpo_minutes;
+                    ALTER TABLE profile_stats RENAME COLUMN naked_POCs TO naked_pocs;
+                    ALTER TABLE profile_stats RENAME COLUMN VA_width TO va_width;
+                    UPDATE profile_stats SET open_vs_overnight = 'AboveHigh';
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            store = new MarketProfile.DataFeed.Storage.MarketDataStore(path); // migracja: nowe nazwy kolumn i wartości
+            var back = Assert.Single(store.ReadProfileStats("ES"));
+
+            Assert.Equal(stats.PreviousTradingDate, back.PreviousTradingDate);
+            Assert.Equal(stats.OpenVsPreviousValue, back.OpenVsPreviousValue);
+            Assert.Equal(stats.IbExtension, back.IbExtension);
+            Assert.Equal(stats.Halfback, back.Halfback);
+            Assert.Equal(stats.PreviousHalfback, back.PreviousHalfback);
+            Assert.Equal(stats.OpenVsPreviousHb, back.OpenVsPreviousHb);
+            Assert.Equal(stats.OvernightHigh, back.OvernightHigh);
+            Assert.Equal(stats.OvernightLow, back.OvernightLow);
+            Assert.Equal(stats.OvernightPoc, back.OvernightPoc);
+            Assert.Equal(OvernightLocation.AboveOnh, back.OpenVsOvernight);
+            Assert.Equal(stats.Inventory, back.Inventory);
+            Assert.Equal('A', back.TrendFrom);
+            Assert.Equal('C', back.TrendTo);
+            Assert.Equal(3, back.TrendPeriods);
+            Assert.Equal(111.25m, back.PullbackLow);
+            Assert.Equal('D', back.PullbackLetter);
+            Assert.Equal(stats.IbHigh, back.IbHigh);
+            Assert.Equal(stats.Poc, back.Poc);
+            Assert.Equal(stats.ValueAreaWidth, back.ValueAreaWidth);
+
+            // Nazwy kolumn dokładnie jak w bieżącej wersji – skróty dużymi literami (np. POC, prev_HB, IBH).
+            using var check = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}");
+            check.Open();
+            using var info = check.CreateCommand();
+            info.CommandText = "PRAGMA table_info(profile_stats)";
+            var columns = new List<string>();
+            using (var reader = info.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    columns.Add(reader.GetString(1));
+                }
+            }
+
+            Assert.Equal(MarketProfile.DataFeed.Storage.MarketDataStore.ProfileStatsColumnNames.Order(StringComparer.Ordinal), columns.Order(StringComparer.Ordinal));
         }
         finally
         {
@@ -514,7 +620,7 @@ public sealed class ProfileStatsTests
 
         // Długi: otwarcie 108 nad SETTLE 105; C schodzi do 104 – wyrównany w C.
         var longCorrected = Stats(Profile(108, (107, 110, 109), (106, 109, 107), (104, 107, 105)), previous);
-        Assert.Equal(OpeningInventory.Long, longCorrected.OpeningInventory);
+        Assert.Equal(OpeningInventory.Long, longCorrected.Inventory);
         Assert.Equal(3m, longCorrected.InventorySize);
         Assert.True(longCorrected.InventoryCorrected);
         Assert.Equal('C', longCorrected.InventoryCorrectedLetter);
@@ -522,7 +628,7 @@ public sealed class ProfileStatsTests
         // Krótki: otwarcie 101 pod SETTLE 105; cena nie wraca – niewyrównany.
         var shortOpen = Profile(101, (99, 102, 100), (98, 101, 99));
         var shortStats = Stats(shortOpen, previous);
-        Assert.Equal(OpeningInventory.Short, shortStats.OpeningInventory);
+        Assert.Equal(OpeningInventory.Short, shortStats.Inventory);
         Assert.Equal(-4m, shortStats.InventorySize);
         Assert.False(shortStats.InventoryCorrected);
         Assert.Null(shortStats.InventoryCorrectedLetter);
@@ -534,7 +640,7 @@ public sealed class ProfileStatsTests
 
         // Otwarcie dokładnie na SETTLE – neutralny, bez wyrównania.
         var neutral = Stats(Profile(105, (104, 106, 105), (104, 107, 106)), previous);
-        Assert.Equal(OpeningInventory.Neutral, neutral.OpeningInventory);
+        Assert.Equal(OpeningInventory.Neutral, neutral.Inventory);
         Assert.Null(neutral.InventoryCorrected);
 
         // Wpis ręczny SETTLE poprzedniego dnia (100) zmienia inwentarz krótki na długi.
@@ -543,10 +649,10 @@ public sealed class ProfileStatsTests
             [previous.TradingDate] = new(previous.TradingDate, 100m, Settlement.SourceManual),
         };
         var manual = ProfileAnalyzer.Analyze(shortOpen, [previous], isComplete: true, tpoMinutes: 30, settlements: settlements);
-        Assert.Equal(OpeningInventory.Long, manual.OpeningInventory);
+        Assert.Equal(OpeningInventory.Long, manual.Inventory);
         Assert.True(manual.InventoryCorrected); // A schodzi do 99 ≤ 100
 
         // Noc – bez inwentarza.
-        Assert.Equal(OpeningInventory.None, Stats(Profile(Night, NightStart, 112, (110, 121, 118), (112, 119, 117)), previous).OpeningInventory);
+        Assert.Equal(OpeningInventory.None, Stats(Profile(Night, NightStart, 112, (110, 121, 118), (112, 119, 117)), previous).Inventory);
     }
 }

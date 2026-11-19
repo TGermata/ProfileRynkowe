@@ -4,7 +4,8 @@
         xmlns:controls="clr-namespace:MarketProfile.App.Controls"
         xmlns:vm="clr-namespace:MarketProfile.App.ViewModels"
         Title="Market Profile – TPO" Height="800" Width="1300"
-        Background="#14171C" WindowStartupLocation="CenterScreen" WindowState="Maximized">
+        Background="#14171C" WindowStartupLocation="CenterScreen" WindowState="Maximized"
+        PreviewKeyDown="OnWindowPreviewKeyDown">
 
     <Window.Resources>
         <controls:TempoBrushConverter x:Key="TempoBrush" />
@@ -155,7 +156,9 @@
                         Visibility="{Binding ShowStartStop, Converter={StaticResource BoolToVisibility}}" />
                 <Button Content="⚙ Ustawienia" Click="OnSettingsClick" Width="100" Margin="6,0,0,0" />
                 <Button Content="▤ Parametry profili" Click="OnProfileStatsClick" Padding="8,0" Margin="6,0,0,0"
-                        ToolTip="Tabela parametrów profili (kształt, otwarcie, migracja wartości, IB, ogony, nietknięte POC…) – zapisywanych w bazie dla algorytmów" />
+                        ToolTip="Tabela parametrów profili (kształt, otwarcie, migracja VA, IB, ogony, nietknięte POC…) – zapisywanych w bazie dla algorytmów" />
+                <Button Content="? Pomoc" Click="OnHelpClick" Padding="8,0" Margin="6,0,0,0"
+                        ToolTip="Opis parametrów profili po angielsku (wg J. Daltona) i po polsku (F1)" />
 
                 <!-- Elementy tylko dla zakładki „Profil TPO” (sesje, liczba profili, powiększenie, wolumen). -->
                 <StackPanel Orientation="Horizontal" Visibility="{Binding IsTpoTab, Converter={StaticResource BoolToVisibility}}">
@@ -370,6 +373,60 @@
                             </controls:FloatingToolPanel.Tools>
                         </controls:FloatingToolPanel>
 
+                        <!-- Karta „Otwarcie”: pojawia się, gdy zaczyna się nowy profil (symulacja: skok ⏭ / ⏮ albo odtwarzanie;
+                             na żywo: otwarcie sesji). Przesuwana za nagłówek, zwijana strzałką, ✕ zamyka do następnego profilu. -->
+                        <controls:FloatingToolPanel x:Name="OpeningPanel" Title="⠿ Otwarcie"
+                                                    Visibility="{Binding OpeningCardVisible, Converter={StaticResource BoolToVisibility}}">
+                            <controls:FloatingToolPanel.Tools>
+                                <StackPanel MaxWidth="560" Margin="2,0,2,2">
+                                    <DockPanel Margin="0,0,0,4">
+                                        <Button DockPanel.Dock="Right" Content="✕" Click="OnCloseOpeningCardClick" Focusable="False"
+                                                Padding="5,0" Margin="8,0,0,0" FontSize="10" Background="Transparent"
+                                                Foreground="#C8CDD4" BorderThickness="0" Cursor="Hand"
+                                                ToolTip="Zamknij kartę (pojawi się przy następnym profilu)" />
+                                        <TextBlock Text="{Binding OpeningCardTitle}" Foreground="#E8ECF0" FontWeight="SemiBold"
+                                                   FontSize="12" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <ItemsControl ItemsSource="{Binding OpeningCardLines}" Grid.IsSharedSizeScope="True">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,1,0,1">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" SharedSizeGroup="OpeningLabel" />
+                                                        <ColumnDefinition Width="Auto" SharedSizeGroup="OpeningAccent" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Label}" Foreground="#9AA2AE" FontSize="11" Margin="0,0,10,0"
+                                                               VerticalAlignment="Center" />
+                                                    <!-- Akcent: kierunek spodziewanej korekty inwentarza (↑ zielona / ↓ czerwona) albo ✓ -->
+                                                    <TextBlock Grid.Column="1" Text="{Binding Accent}" Foreground="{Binding AccentBrush}"
+                                                               FontSize="15" FontWeight="Bold" Margin="0,-3,6,0" VerticalAlignment="Center"
+                                                               Visibility="{Binding HasAccent, Converter={StaticResource BoolToVisibility}}" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding Value}" FontSize="11" TextWrapping="Wrap"
+                                                               VerticalAlignment="Center">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="#E0E4E8" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsDim}" Value="True">
+                                                                        <Setter Property="Foreground" Value="#7A828E" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <!-- Mini-wykres: w której części zakresu poprzedniego dnia jest otwarcie -->
+                                                    <controls:OpeningRangeGauge Grid.Column="3" Data="{Binding Gauge}" Margin="8,0,0,0"
+                                                                                Visibility="{Binding HasGauge, Converter={StaticResource BoolToVisibility}}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </controls:FloatingToolPanel.Tools>
+                        </controls:FloatingToolPanel>
+
                         <!-- Menu „Wyświetlanie”: co ma być na wykresie. Przesuwane za nagłówek, zwijane strzałką. -->
                         <controls:FloatingToolPanel x:Name="DisplayPanel" Title="⠿ Wyświetlanie" IsCollapsed="{Binding DisplayPanelCollapsed}">
                             <controls:FloatingToolPanel.Tools>
@@ -405,7 +462,7 @@
                                         <CheckBox Content="Dzienna" IsChecked="{Binding ShowDaySession}" />
 
                                         <TextBlock Text="Profil" Style="{StaticResource MenuGroup}" />
-                                        <CheckBox Content="Initial Balance (IB)" IsChecked="{Binding ShowInitialBalance}" />
+                                        <CheckBox Content="IB – Initial Balance" IsChecked="{Binding ShowInitialBalance}" />
                                         <CheckBox Content="Strzałka otwarcia" IsChecked="{Binding ShowOpenArrow}" />
                                         <CheckBox Content="Strzałka zamknięcia" IsChecked="{Binding ShowCloseArrow}" />
                                         <CheckBox Content="Wolumen bieżącego słupka" IsChecked="{Binding ShowPeriodVolume}" />
@@ -416,11 +473,13 @@
 
                                     <StackPanel Style="{StaticResource MenuColumn}">
                                         <TextBlock Text="Opisy dnia" Style="{StaticResource MenuGroup}" />
-                                        <CheckBox Content="HB – halfback" IsChecked="{Binding ShowHalfback}" />
-                                        <CheckBox Content="S – settle (Close / wpis)" IsChecked="{Binding ShowSettle}" />
+                                        <CheckBox Content="HB – halfback (połowa zakresu)" IsChecked="{Binding ShowHalfback}" />
+                                        <CheckBox Content="S – SETTLE (Close / wpis ręczny)" IsChecked="{Binding ShowSettle}" />
                                         <CheckBox Content="PBL / PBH – pullback" IsChecked="{Binding ShowPullback}" />
+                                        <CheckBox Content="Karta otwarcia" IsChecked="{Binding ShowOpeningCard}"
+                                                  ToolTip="Przy nowym profilu (symulacja i na żywo): otwarcie vs VA poprz. dnia, GAP, inwentarz, noc, HB, typ otwarcia" />
                                         <CheckBox Content="Opis pod profilem" IsChecked="{Binding ShowNoteText}"
-                                                  ToolTip="Relacja wartości do dnia poprzedniego (albo dzień trendowy), otwarcie względem nocy, luka (GAP) względem High / Low dnia poprzedniego" />
+                                                  ToolTip="Pod profilem dnia: migracja VA względem poprzedniego dnia (albo dzień trendowy), otwarcie względem nocy (ONH / ONL), inwentarz względem SETTLE poprzedniego dnia, GAP względem High / Low poprzedniego dnia" />
 
                                         <TextBlock Text="Poziomy nocy (ONH/ONL/ONPOC)" Style="{StaticResource MenuGroup}" TextWrapping="Wrap" />
                                         <RadioButton GroupName="OvernightLevels" Content="Ostatni dzień" IsChecked="{Binding OvernightLevelsLastDay}" />

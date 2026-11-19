@@ -13,50 +13,115 @@ public sealed partial class MarketDataStore
 {
     private const string ProfileStatsColumns = """
         symbol, session, trading_date, session_start, session_end, is_complete, updated_at, periods, last_letter,
-        row_height, tpo_minutes,
-        open, high, low, close, range, total_tpo, volume, poc, vpoc, vah, val, va_width, poc_position,
-        ib_high, ib_low, ib_width, ib_ext_up, ib_ext_up_letter, ib_ext_down, ib_ext_down_letter, range_extension,
-        shape, tpo_above_poc, tpo_below_poc, single_prints, excess_high, excess_low, poor_high, poor_low,
-        previous_trading_date, open_location, open_type, open_direction, value_migration, va_overlap,
-        naked_pocs, naked_vpocs,
-        halfback, settle, settle_source, prev_close, prev_settle, prev_halfback, gap, open_vs_prev_halfback,
-        on_high, on_low, on_poc, open_vs_overnight,
-        opening_inventory, inventory_size, inventory_corrected, inventory_corrected_letter,
-        trend_direction, is_trend_day, interval_from, interval_to, interval_periods, pullback_low, pullback_high, pullback_letter
+        row_height, TPO_minutes,
+        open, high, low, close, range, total_TPO, volume, POC, VPOC, VAH, VAL, VA_width, POC_position,
+        IBH, IBL, IB_width, IB_ext_up, IB_ext_up_letter, IB_ext_down, IB_ext_down_letter, IB_ext,
+        shape, TPO_above_POC, TPO_below_POC, single_prints, excess_high, excess_low, poor_high, poor_low,
+        prev_trading_date, open_vs_prev_VA, open_type, open_direction, value_migration, VA_overlap,
+        naked_POCs, naked_VPOCs,
+        HB, SETTLE, SETTLE_source, prev_close, prev_SETTLE, prev_HB, GAP, open_vs_prev_HB,
+        ONH, ONL, ONPOC, open_vs_overnight,
+        inventory, inventory_size, inventory_corrected, inventory_corrected_letter,
+        trend_direction, is_trend_day, trend_from, trend_to, trend_periods, PBL, PBH, PB_letter
         """;
 
     /// <summary>Kolumny dodane w późniejszych wersjach – w starych bazach dopisywane przez ALTER TABLE.</summary>
     private static readonly (string Name, string Type)[] ProfileStatsAddedColumns =
     [
-        ("halfback", "REAL"), ("settle", "REAL"), ("settle_source", "TEXT"), ("prev_close", "REAL"), ("prev_settle", "REAL"),
-        ("prev_halfback", "REAL"), ("gap", "REAL"), ("open_vs_prev_halfback", "INTEGER"),
-        ("on_high", "REAL"), ("on_low", "REAL"), ("on_poc", "REAL"), ("open_vs_overnight", "TEXT"),
-        ("opening_inventory", "TEXT"), ("inventory_size", "REAL"), ("inventory_corrected", "INTEGER"),
+        ("HB", "REAL"), ("SETTLE", "REAL"), ("SETTLE_source", "TEXT"), ("prev_close", "REAL"), ("prev_SETTLE", "REAL"),
+        ("prev_HB", "REAL"), ("GAP", "REAL"), ("open_vs_prev_HB", "INTEGER"),
+        ("ONH", "REAL"), ("ONL", "REAL"), ("ONPOC", "REAL"), ("open_vs_overnight", "TEXT"),
+        ("inventory", "TEXT"), ("inventory_size", "REAL"), ("inventory_corrected", "INTEGER"),
         ("inventory_corrected_letter", "TEXT"),
-        ("trend_direction", "INTEGER"), ("is_trend_day", "INTEGER"), ("interval_from", "TEXT"), ("interval_to", "TEXT"),
-        ("interval_periods", "INTEGER"), ("pullback_low", "REAL"), ("pullback_high", "REAL"), ("pullback_letter", "TEXT"),
+        ("trend_direction", "INTEGER"), ("is_trend_day", "INTEGER"), ("trend_from", "TEXT"), ("trend_to", "TEXT"),
+        ("trend_periods", "INTEGER"), ("PBL", "REAL"), ("PBH", "REAL"), ("PB_letter", "TEXT"),
     ];
+
+    /// <summary>
+    /// Kolumny, których nazwy ujednolicono ze skrótami z aplikacji (stara → nowa). W starych bazach zmieniane
+    /// przez ALTER TABLE … RENAME COLUMN – zapisane dane zostają. Kolumny różniące się tylko wielkością liter
+    /// (np. hb → HB) są poprawiane osobno, na podstawie <see cref="ProfileStatsColumns"/>.
+    /// </summary>
+    private static readonly (string Old, string New)[] ProfileStatsRenamedColumns =
+    [
+        ("previous_trading_date", "prev_trading_date"), ("open_location", "open_vs_prev_VA"), ("range_extension", "IB_ext"),
+        ("ib_high", "IBH"), ("ib_low", "IBL"),
+        ("halfback", "HB"), ("prev_halfback", "prev_HB"), ("open_vs_prev_halfback", "open_vs_prev_HB"),
+        ("on_high", "ONH"), ("on_low", "ONL"), ("on_poc", "ONPOC"), ("opening_inventory", "inventory"),
+        ("interval_from", "trend_from"), ("interval_to", "trend_to"), ("interval_periods", "trend_periods"),
+        ("pullback_low", "PBL"), ("pullback_high", "PBH"), ("pullback_letter", "PB_letter"),
+    ];
+
+    /// <summary>Wartości położenia otwarcia względem nocy zapisane w starszych wersjach (stara → nowa).</summary>
+    private static readonly (string Old, string New)[] OvernightLocationRenamedValues =
+    [
+        ("AboveHigh", nameof(OvernightLocation.AboveOnh)), ("InRange", nameof(OvernightLocation.InOvernight)),
+        ("BelowLow", nameof(OvernightLocation.BelowOnl)),
+    ];
+
+    /// <summary>Nazwy kolumn tabeli w docelowej postaci (ze skrótami dużymi literami).</summary>
+    public static IReadOnlyList<string> ProfileStatsColumnNames { get; } =
+        ProfileStatsColumns.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     private static void EnsureProfileStatsTable(SqliteConnection connection)
     {
         CreateProfileStatsTable(connection);
 
-        // Migracja: brakujące kolumny (bazy z wcześniejszych wersji).
-        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        using (var info = connection.CreateCommand())
+        // Migracja baz z wcześniejszych wersji. SQLite porównuje nazwy kolumn bez wielkości liter.
+        var existing = ExistingProfileStatsColumns(connection);
+        string? Find(string name) => existing.FirstOrDefault(e => string.Equals(e, name, StringComparison.OrdinalIgnoreCase));
+
+        void Rename(string from, string to)
         {
-            info.CommandText = "PRAGMA table_info(profile_stats)";
-            using var reader = info.ExecuteReader();
-            while (reader.Read())
+            Execute(connection, $"ALTER TABLE profile_stats RENAME COLUMN \"{from}\" TO \"{to}\"");
+            existing.Remove(from);
+            existing.Add(to);
+        }
+
+        // 1. Stare nazwy → nowe.
+        foreach (var (oldName, newName) in ProfileStatsRenamedColumns)
+        {
+            if (Find(oldName) is { } actual && Find(newName) is null)
             {
-                existing.Add(reader.GetString(1));
+                Rename(actual, newName);
             }
         }
 
-        foreach (var (name, type) in ProfileStatsAddedColumns.Where(c => !existing.Contains(c.Name)))
+        // 2. Ta sama nazwa, inna wielkość liter (np. hb → HB, prev_hb → prev_HB).
+        foreach (var name in ProfileStatsColumnNames)
+        {
+            if (Find(name) is { } actual && actual != name)
+            {
+                Rename(actual, name);
+            }
+        }
+
+        // 3. Brakujące kolumny.
+        foreach (var (name, type) in ProfileStatsAddedColumns.Where(c => Find(c.Name) is null))
         {
             Execute(connection, $"ALTER TABLE profile_stats ADD COLUMN {name} {type}");
+            existing.Add(name);
         }
+
+        // 4. Stare nazwy wartości.
+        foreach (var (oldValue, newValue) in OvernightLocationRenamedValues)
+        {
+            Execute(connection, $"UPDATE profile_stats SET open_vs_overnight = '{newValue}' WHERE open_vs_overnight = '{oldValue}'");
+        }
+    }
+
+    private static List<string> ExistingProfileStatsColumns(SqliteConnection connection)
+    {
+        var names = new List<string>();
+        using var info = connection.CreateCommand();
+        info.CommandText = "PRAGMA table_info(profile_stats)";
+        using var reader = info.ExecuteReader();
+        while (reader.Read())
+        {
+            names.Add(reader.GetString(1));
+        }
+
+        return names;
     }
 
     private static void CreateProfileStatsTable(SqliteConnection connection) => Execute(connection, """
@@ -71,45 +136,49 @@ public sealed partial class MarketDataStore
             periods               INTEGER NOT NULL,   -- liczba liter TPO
             last_letter           TEXT,
             row_height            REAL    NOT NULL,
-            tpo_minutes           INTEGER NOT NULL,
+            TPO_minutes           INTEGER NOT NULL,
             open REAL, high REAL, low REAL, close REAL, range REAL,
-            total_tpo             INTEGER,
+            total_TPO             INTEGER,
             volume                INTEGER,
-            poc REAL, vpoc REAL, vah REAL, val REAL, va_width REAL,
-            poc_position          REAL,               -- 0 = dół zakresu, 1 = góra
-            ib_high REAL, ib_low REAL, ib_width REAL,
-            ib_ext_up REAL, ib_ext_up_letter TEXT, ib_ext_down REAL, ib_ext_down_letter TEXT,
-            range_extension       TEXT,               -- None / Up / Down / Both
+            POC REAL, VPOC REAL, VAH REAL, VAL REAL,
+            VA_width              REAL,               -- VAH − VAL + wysokość wiersza
+            POC_position          REAL,               -- POC w zakresie: 0 = dół, 1 = góra
+            IBH REAL, IBL REAL, IB_width REAL, -- IBH, IBL, szerokość IB
+            IB_ext_up REAL, IB_ext_up_letter TEXT, IB_ext_down REAL, IB_ext_down_letter TEXT, -- wybicie z IB: o ile i pierwsza litera
+            IB_ext                TEXT,               -- kierunek wybicia z IB: None / Up / Down / Both
             shape                 TEXT,               -- D / P / b / B / Trend
-            tpo_above_poc INTEGER, tpo_below_poc INTEGER,
+            TPO_above_POC INTEGER, TPO_below_POC INTEGER,
             single_prints         TEXT,               -- "od-do;od-do"
-            excess_high INTEGER, excess_low INTEGER, poor_high INTEGER, poor_low INTEGER,
-            previous_trading_date TEXT,
-            open_location         TEXT,               -- AboveRange / AboveValue / InValue / BelowValue / BelowRange
+            excess_high INTEGER, excess_low INTEGER,  -- ogony: liczba wierszy z jedną literą na krańcu (0 = brak)
+            poor_high INTEGER, poor_low INTEGER,      -- 1 = płaski szczyt / dołek (bez ogona)
+            -- relacje z poprzednim dniem (tylko sesje dzienne)
+            prev_trading_date     TEXT,
+            open_vs_prev_VA       TEXT,               -- otwarcie vs VA poprz.: AboveRange / AboveValue / InValue / BelowValue / BelowRange
             open_type             TEXT,               -- OpenDrive / OpenTestDrive / OpenRejectionReverse / OpenAuction
             open_direction        INTEGER,            -- 1 w górę, -1 w dół, 0 brak
-            value_migration       TEXT,               -- Higher / OverlappingHigher / OverlappingLower / Lower / Inside / Outside
-            va_overlap            REAL,               -- 0–1
-            naked_pocs            TEXT,               -- "cena;cena"
-            naked_vpocs           TEXT,
-            halfback REAL,                            -- (High + Low) / 2
-            settle REAL,                              -- cena rozliczeniowa (sesja dzienna), NULL = brak
-            settle_source         TEXT,               -- CME / ręcznie
-            prev_close REAL, prev_settle REAL, prev_halfback REAL,
-            gap                   REAL,               -- luka: Open − High (nad) / Open − Low (pod) poprzedniego dnia; NULL = brak
-            open_vs_prev_halfback INTEGER,            -- 1 nad, -1 pod
-            on_high REAL, on_low REAL, on_poc REAL,   -- sesja nocna przed dniem
-            open_vs_overnight     TEXT,               -- AboveHigh / InRange / BelowLow
-            opening_inventory     TEXT,               -- Long / Short / Neutral – względem SETTLE poprzedniego dnia
+            value_migration       TEXT,               -- migracja VA: Higher / OverlappingHigher / OverlappingLower / Lower / Inside / Outside / TrendDay
+            VA_overlap            REAL,               -- nakładanie VA z poprzednią: 0–1
+            naked_POCs            TEXT,               -- nietknięte POC: "cena;cena"
+            naked_VPOCs           TEXT,               -- nietknięte VPOC
+            HB                    REAL,               -- HB (halfback): (High + Low) / 2
+            SETTLE                REAL,               -- SETTLE (sesja dzienna), NULL = brak
+            SETTLE_source         TEXT,               -- Close / ręcznie / CME
+            prev_close REAL, prev_SETTLE REAL, prev_HB REAL,
+            GAP                   REAL,               -- GAP: Open − High (nad) / Open − Low (pod) poprzedniego dnia; NULL = brak
+            open_vs_prev_HB       INTEGER,            -- otwarcie vs HB poprz.: 1 nad, -1 pod, 0 na poziomie
+            ONH REAL, ONL REAL, ONPOC REAL,           -- ONH / ONL / ONPOC – sesja nocna przed dniem
+            open_vs_overnight     TEXT,               -- otwarcie vs noc: AboveOnh / InOvernight / BelowOnl
+            inventory             TEXT,               -- inwentarz: Long / Short / Neutral – względem SETTLE poprzedniego dnia
             inventory_size        REAL,               -- Open − SETTLE poprzedniego dnia
             inventory_corrected   INTEGER,            -- 1 = cena wróciła do SETTLE, 0 = nie (jeszcze), NULL = brak inwentarza
             inventory_corrected_letter TEXT,
-            trend_direction       INTEGER,            -- interwałowanie: 1 w górę, -1 w dół, 0 brak
+            -- trend (interwałowanie)
+            trend_direction       INTEGER,            -- 1 w górę, -1 w dół, 0 brak
             is_trend_day          INTEGER,            -- 1 = dzień trendowy (interwałowanie przez większą część sesji)
-            interval_from TEXT, interval_to TEXT,     -- litery początku i końca interwałowania
-            interval_periods      INTEGER,
-            pullback_low REAL, pullback_high REAL,    -- PULLBACK LOW (trend w górę) / PULLBACK HIGH (w dół)
-            pullback_letter       TEXT,
+            trend_from TEXT, trend_to TEXT,           -- litery początku i końca serii
+            trend_periods         INTEGER,
+            PBL REAL, PBH REAL,                       -- PBL (trend w górę) / PBH (trend w dół)
+            PB_letter             TEXT,
             PRIMARY KEY (symbol, session, session_start)
         );
         CREATE INDEX IF NOT EXISTS ix_profile_stats_date ON profile_stats (symbol, trading_date);
@@ -121,7 +190,7 @@ public sealed partial class MarketDataStore
         using var connection = Open();
         using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
-        var names = ProfileStatsColumns.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var names = ProfileStatsColumnNames;
         command.CommandText = $"INSERT OR REPLACE INTO profile_stats ({string.Join(", ", names)}) " +
                               $"VALUES ({string.Join(", ", names.Select(n => "$" + n))})";
         var parameters = names.ToDictionary(n => n, n => command.Parameters.Add("$" + n, SqliteType.Text));
@@ -141,68 +210,68 @@ public sealed partial class MarketDataStore
             Set("periods", s.Periods);
             Set("last_letter", s.LastLetter?.ToString());
             Set("row_height", (double)s.RowHeight);
-            Set("tpo_minutes", s.TpoMinutes);
+            Set("TPO_minutes", s.TpoMinutes);
             Set("open", (double)s.Open);
             Set("high", (double)s.High);
             Set("low", (double)s.Low);
             Set("close", (double)s.Close);
             Set("range", (double)s.Range);
-            Set("total_tpo", s.TotalTpo);
+            Set("total_TPO", s.TotalTpo);
             Set("volume", s.Volume);
-            Set("poc", (double)s.Poc);
-            Set("vpoc", (double?)s.VolumePoc);
-            Set("vah", (double)s.ValueAreaHigh);
-            Set("val", (double)s.ValueAreaLow);
-            Set("va_width", (double)s.ValueAreaWidth);
-            Set("poc_position", s.PocPosition);
-            Set("ib_high", (double?)s.IbHigh);
-            Set("ib_low", (double?)s.IbLow);
-            Set("ib_width", (double?)s.IbWidth);
-            Set("ib_ext_up", (double)s.IbExtensionUp);
-            Set("ib_ext_up_letter", s.IbExtensionUpLetter?.ToString());
-            Set("ib_ext_down", (double)s.IbExtensionDown);
-            Set("ib_ext_down_letter", s.IbExtensionDownLetter?.ToString());
-            Set("range_extension", s.RangeExtension.ToString());
+            Set("POC", (double)s.Poc);
+            Set("VPOC", (double?)s.VolumePoc);
+            Set("VAH", (double)s.ValueAreaHigh);
+            Set("VAL", (double)s.ValueAreaLow);
+            Set("VA_width", (double)s.ValueAreaWidth);
+            Set("POC_position", s.PocPosition);
+            Set("IBH", (double?)s.IbHigh);
+            Set("IBL", (double?)s.IbLow);
+            Set("IB_width", (double?)s.IbWidth);
+            Set("IB_ext_up", (double)s.IbExtensionUp);
+            Set("IB_ext_up_letter", s.IbExtensionUpLetter?.ToString());
+            Set("IB_ext_down", (double)s.IbExtensionDown);
+            Set("IB_ext_down_letter", s.IbExtensionDownLetter?.ToString());
+            Set("IB_ext", s.IbExtension.ToString());
             Set("shape", s.ShapeCode);
-            Set("tpo_above_poc", s.TpoAbovePoc);
-            Set("tpo_below_poc", s.TpoBelowPoc);
+            Set("TPO_above_POC", s.TpoAbovePoc);
+            Set("TPO_below_POC", s.TpoBelowPoc);
             Set("single_prints", string.Join(";", s.SinglePrints.Select(r => $"{Price(r.Low)}-{Price(r.High)}")));
             Set("excess_high", s.ExcessHigh);
             Set("excess_low", s.ExcessLow);
             Set("poor_high", s.PoorHigh ? 1 : 0);
             Set("poor_low", s.PoorLow ? 1 : 0);
-            Set("previous_trading_date", s.PreviousTradingDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
-            Set("open_location", s.OpenLocation.ToString());
+            Set("prev_trading_date", s.PreviousTradingDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            Set("open_vs_prev_VA", s.OpenVsPreviousValue.ToString());
             Set("open_type", s.OpenType.ToString());
             Set("open_direction", s.OpenDirection);
             Set("value_migration", s.ValueMigration.ToString());
-            Set("va_overlap", s.ValueAreaOverlap);
-            Set("naked_pocs", string.Join(";", s.NakedPocs.Select(Price)));
-            Set("naked_vpocs", string.Join(";", s.NakedVolumePocs.Select(Price)));
-            Set("halfback", (double)s.Halfback);
-            Set("settle", (double?)s.Settle);
-            Set("settle_source", s.SettleSource);
+            Set("VA_overlap", s.ValueAreaOverlap);
+            Set("naked_POCs", string.Join(";", s.NakedPocs.Select(Price)));
+            Set("naked_VPOCs", string.Join(";", s.NakedVolumePocs.Select(Price)));
+            Set("HB", (double)s.Halfback);
+            Set("SETTLE", (double?)s.Settle);
+            Set("SETTLE_source", s.SettleSource);
             Set("prev_close", (double?)s.PreviousClose);
-            Set("prev_settle", (double?)s.PreviousSettle);
-            Set("prev_halfback", (double?)s.PreviousHalfback);
-            Set("gap", (double?)s.Gap);
-            Set("open_vs_prev_halfback", s.OpenVsPreviousHalfback);
-            Set("on_high", (double?)s.OvernightHigh);
-            Set("on_low", (double?)s.OvernightLow);
-            Set("on_poc", (double?)s.OvernightPoc);
+            Set("prev_SETTLE", (double?)s.PreviousSettle);
+            Set("prev_HB", (double?)s.PreviousHalfback);
+            Set("GAP", (double?)s.Gap);
+            Set("open_vs_prev_HB", s.OpenVsPreviousHb);
+            Set("ONH", (double?)s.OvernightHigh);
+            Set("ONL", (double?)s.OvernightLow);
+            Set("ONPOC", (double?)s.OvernightPoc);
             Set("open_vs_overnight", s.OpenVsOvernight.ToString());
-            Set("opening_inventory", s.OpeningInventory.ToString());
+            Set("inventory", s.Inventory.ToString());
             Set("inventory_size", (double?)s.InventorySize);
             Set("inventory_corrected", s.InventoryCorrected is { } corrected ? corrected ? 1 : 0 : null);
             Set("inventory_corrected_letter", s.InventoryCorrectedLetter?.ToString());
             Set("trend_direction", s.TrendDirection);
             Set("is_trend_day", s.IsTrendDay ? 1 : 0);
-            Set("interval_from", s.IntervalFrom?.ToString());
-            Set("interval_to", s.IntervalTo?.ToString());
-            Set("interval_periods", s.IntervalPeriods);
-            Set("pullback_low", (double?)s.PullbackLow);
-            Set("pullback_high", (double?)s.PullbackHigh);
-            Set("pullback_letter", s.PullbackLetter?.ToString());
+            Set("trend_from", s.TrendFrom?.ToString());
+            Set("trend_to", s.TrendTo?.ToString());
+            Set("trend_periods", s.TrendPeriods);
+            Set("PBL", (double?)s.PullbackLow);
+            Set("PBH", (double?)s.PullbackHigh);
+            Set("PB_letter", s.PullbackLetter?.ToString());
             command.ExecuteNonQuery();
         }
 
@@ -247,70 +316,70 @@ public sealed partial class MarketDataStore
                 Periods = N("periods"),
                 LastLetter = C("last_letter"),
                 RowHeight = D("row_height"),
-                TpoMinutes = N("tpo_minutes"),
+                TpoMinutes = N("TPO_minutes"),
                 Open = D("open"),
                 High = D("high"),
                 Low = D("low"),
                 Close = D("close"),
                 Range = D("range"),
-                TotalTpo = N("total_tpo"),
+                TotalTpo = N("total_TPO"),
                 Volume = reader.IsDBNull(i("volume")) ? 0 : reader.GetInt64(i("volume")),
-                Poc = D("poc"),
-                VolumePoc = Dn("vpoc"),
-                ValueAreaHigh = D("vah"),
-                ValueAreaLow = D("val"),
-                ValueAreaWidth = D("va_width"),
-                PocPosition = reader.GetDouble(i("poc_position")),
-                IbHigh = Dn("ib_high"),
-                IbLow = Dn("ib_low"),
-                IbWidth = Dn("ib_width"),
-                IbExtensionUp = D("ib_ext_up"),
-                IbExtensionUpLetter = C("ib_ext_up_letter"),
-                IbExtensionDown = D("ib_ext_down"),
-                IbExtensionDownLetter = C("ib_ext_down_letter"),
-                RangeExtension = E<RangeExtension>("range_extension"),
+                Poc = D("POC"),
+                VolumePoc = Dn("VPOC"),
+                ValueAreaHigh = D("VAH"),
+                ValueAreaLow = D("VAL"),
+                ValueAreaWidth = D("VA_width"),
+                PocPosition = reader.GetDouble(i("POC_position")),
+                IbHigh = Dn("IBH"),
+                IbLow = Dn("IBL"),
+                IbWidth = Dn("IB_width"),
+                IbExtensionUp = D("IB_ext_up"),
+                IbExtensionUpLetter = C("IB_ext_up_letter"),
+                IbExtensionDown = D("IB_ext_down"),
+                IbExtensionDownLetter = C("IB_ext_down_letter"),
+                IbExtension = E<IbExtensionDirection>("IB_ext"),
                 Shape = ShapeFromCode(T("shape")),
-                TpoAbovePoc = N("tpo_above_poc"),
-                TpoBelowPoc = N("tpo_below_poc"),
+                TpoAbovePoc = N("TPO_above_POC"),
+                TpoBelowPoc = N("TPO_below_POC"),
                 SinglePrints = ParseRanges(T("single_prints")),
                 ExcessHigh = N("excess_high"),
                 ExcessLow = N("excess_low"),
                 PoorHigh = N("poor_high") == 1,
                 PoorLow = N("poor_low") == 1,
-                PreviousTradingDate = T("previous_trading_date") is { } prev
+                PreviousTradingDate = T("prev_trading_date") is { } prev
                     ? DateOnly.ParseExact(prev, "yyyy-MM-dd", CultureInfo.InvariantCulture)
                     : null,
-                OpenLocation = E<OpenLocation>("open_location"),
+                OpenVsPreviousValue = E<ValueLocation>("open_vs_prev_VA"),
                 OpenType = E<OpenType>("open_type"),
                 OpenDirection = N("open_direction"),
                 ValueMigration = E<ValueMigration>("value_migration"),
-                ValueAreaOverlap = reader.IsDBNull(i("va_overlap")) ? null : reader.GetDouble(i("va_overlap")),
-                NakedPocs = ParsePrices(T("naked_pocs")),
-                NakedVolumePocs = ParsePrices(T("naked_vpocs")),
-                Halfback = Dn("halfback") ?? 0,
-                Settle = Dn("settle"),
-                SettleSource = T("settle_source"),
+                ValueAreaOverlap = reader.IsDBNull(i("VA_overlap")) ? null : reader.GetDouble(i("VA_overlap")),
+                NakedPocs = ParsePrices(T("naked_POCs")),
+                NakedVolumePocs = ParsePrices(T("naked_VPOCs")),
+                Halfback = Dn("HB") ?? 0,
+                Settle = Dn("SETTLE"),
+                SettleSource = T("SETTLE_source"),
                 PreviousClose = Dn("prev_close"),
-                PreviousSettle = Dn("prev_settle"),
-                PreviousHalfback = Dn("prev_halfback"),
-                Gap = Dn("gap"),
-                OpenVsPreviousHalfback = N("open_vs_prev_halfback"),
-                OvernightHigh = Dn("on_high"),
-                OvernightLow = Dn("on_low"),
-                OvernightPoc = Dn("on_poc"),
+                PreviousSettle = Dn("prev_SETTLE"),
+                PreviousHalfback = Dn("prev_HB"),
+                Gap = Dn("GAP"),
+                OpenVsPreviousHb = N("open_vs_prev_HB"),
+                OvernightHigh = Dn("ONH"),
+                OvernightLow = Dn("ONL"),
+                OvernightPoc = Dn("ONPOC"),
                 OpenVsOvernight = E<OvernightLocation>("open_vs_overnight"),
-                OpeningInventory = E<OpeningInventory>("opening_inventory"),
+                Inventory = E<OpeningInventory>("inventory"),
                 InventorySize = Dn("inventory_size"),
                 InventoryCorrected = reader.IsDBNull(i("inventory_corrected")) ? null : N("inventory_corrected") == 1,
                 InventoryCorrectedLetter = C("inventory_corrected_letter"),
                 TrendDirection = N("trend_direction"),
                 IsTrendDay = N("is_trend_day") == 1,
-                IntervalFrom = C("interval_from"),
-                IntervalTo = C("interval_to"),
-                IntervalPeriods = N("interval_periods"),
-                PullbackLow = Dn("pullback_low"),
-                PullbackHigh = Dn("pullback_high"),
-                PullbackLetter = C("pullback_letter"),
+                TrendFrom = C("trend_from"),
+                TrendTo = C("trend_to"),
+                TrendPeriods = N("trend_periods"),
+                PullbackLow = Dn("PBL"),
+                PullbackHigh = Dn("PBH"),
+                PullbackLetter = C("PB_letter"),
             });
         }
 

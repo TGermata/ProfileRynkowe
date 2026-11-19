@@ -665,13 +665,16 @@ public sealed partial class MainViewModel
         SaveSimSettings();
     }
 
-    /// <summary>Prośba do widoku: zamroź bieżący widok wykresu (bez dopasowania i przesuwania).</summary>
-    public event Action? FreezeViewRequested;
+    /// <summary>
+    /// Prośba do widoku: bez zmiany skali przesuń wykres tak, żeby miejsce startu symulacji było 1/3 szerokości
+    /// od lewej, a cena startu na środku wysokości.
+    /// </summary>
+    public event Action? SimulationStartFocusRequested;
 
     /// <summary>
-    /// Menu podręczne: „Symulacja od początku profilu / od słupka” – tylko cofnięcie czasu symulacji do tego momentu, bez ruszania
-    /// wykresu (widok zamrożony: ta sama skala, położenie i środek ceny; znikają tylko dane po tym momencie).
-    /// Symulacja wstrzymana; ▶ rysuje dalej od słupka, ⏹ wraca do niego.
+    /// Menu podręczne: „Symulacja od początku profilu / od słupka” – cofnięcie czasu symulacji do tego momentu.
+    /// Skala wykresu bez zmian; wykres przesunięty tak, że miejsce startu jest 1/3 szerokości od lewej, a cena startu
+    /// na środku wysokości. Symulacja wstrzymana; ▶ rysuje dalej od słupka, ⏹ wraca do niego.
     /// </summary>
     public async Task SimulateBackToAsync(DateTime localTime)
     {
@@ -688,7 +691,6 @@ public sealed partial class MainViewModel
             return;
         }
 
-        FreezeViewRequested?.Invoke();
         _simNavigating = true;
         try
         {
@@ -697,6 +699,7 @@ public sealed partial class MainViewModel
 
             // Od razu chowamy wszystko po tym momencie, potem dokładny stan (ticki do tej chwili) bez czyszczenia wykresu.
             SetViewCutoff(target);
+            SimulationStartFocusRequested?.Invoke();
             ShowSimTime(target);
             await LoadSimulationAsync(target, paused: true, keepView: true);
         }
@@ -1012,7 +1015,7 @@ public sealed partial class MainViewModel
     // =====================================================================
 
     /// <summary>
-    /// ⏩ Profil w przód – płynne przejście do początku następnego profilu, w którym są dane.
+    /// ⏩ Profil w przód – płynne przejście do pierwszej transakcji następnego profilu, w którym są dane (od razu widać otwarcie).
     /// Noce bez danych i weekendy są pomijane. Działa w pauzie i w trakcie odtwarzania.
     /// </summary>
     private async Task NextProfileAsync()
@@ -1042,7 +1045,7 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>
-    /// ⏮ Profil wstecz – powrót do początku bieżącego profilu, a jeśli jesteśmy już na jego początku –
+    /// ⏮ Profil wstecz – powrót do pierwszej transakcji bieżącego profilu, a jeśli już na niej jesteśmy –
     /// do początku poprzedniego. Stan Play/Pauza zostaje zachowany.
     /// </summary>
     private async Task PrevProfileAsync()
@@ -1072,8 +1075,8 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>
-    /// Szuka początku profilu z danymi: w przód – pierwszy początek sesji po <paramref name="from"/>;
-    /// wstecz – ostatni początek sesji przed <paramref name="from"/> (z marginesem 1 s, żeby z samego początku
+    /// Szuka pierwszej transakcji profilu z danymi: w przód – w pierwszej sesji po <paramref name="from"/>;
+    /// wstecz – w ostatniej sesji, której pierwsza transakcja jest przed <paramref name="from"/> (żeby z samego otwarcia
     /// profilu cofnąć się do poprzedniego). Profile bez danych są pomijane; <paramref name="limit"/> to koniec
     /// (w przód) lub początek (wstecz) danych w bazie.
     /// </summary>
@@ -1102,10 +1105,15 @@ public sealed partial class MainViewModel
                 return null; // poza zakresem danych
             }
 
-            if (store.HasData(symbol, s, end, source))
+            // Wstecz nie schodzimy przed początek danych (pierwszy profil może zaczynać się w środku sesji).
+            var from2 = !forward && s < limit ? limit : s;
+            if (store.HasData(symbol, from2, end, source) &&
+                BarAggregator.Replay(store, symbol, from2, end, source).Select(i => (DateTimeOffset?)i.Time).FirstOrDefault() is { } firstTrade &&
+                (forward || firstTrade < from))
             {
-                // Wstecz nie schodzimy przed początek danych (pierwszy profil może zaczynać się w środku sesji).
-                return !forward && s < limit ? limit : s;
+                // Pierwsza transakcja profilu – od razu jest cena otwarcia (litera A), inwentarz, GAP itd.
+                // Wstecz: jeśli stoimy na pierwszej transakcji tego profilu (albo przed nią), szukamy wcześniejszego.
+                return firstTrade;
             }
 
             cursor = forward ? s : s.AddSeconds(-1);

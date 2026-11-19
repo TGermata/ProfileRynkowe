@@ -146,7 +146,7 @@
                         <StackPanel Orientation="Horizontal">
                             <Button Content="Dodaj" Click="OnAddInstrumentClick" />
                             <Button Content="Usuń" Click="OnRemoveInstrumentClick" />
-                            <Button Content="Sprawdź w IB" Click="OnLookupInstrumentClick"
+                            <Button Content="Sprawdź w IBKR" Click="OnLookupInstrumentClick"
                                     IsEnabled="{Binding CanLookupInstrument}"
                                     ToolTip="Wyszukuje instrument w Interactive Brokers (TWS musi być uruchomiony) i uzupełnia giełdę, walutę, tick, strefę czasową i godziny sesji" />
                             <Button Content="Przywróć wbudowane" Click="OnRestoreInstrumentsClick"
@@ -196,7 +196,7 @@
                                         <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
                                     </Grid.RowDefinitions>
 
-                                    <TextBlock Grid.Row="0" Text="Symbol w IB / klasa" />
+                                    <TextBlock Grid.Row="0" Text="Symbol w IBKR / klasa" />
                                     <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
                                         <TextBox Text="{Binding IbSymbol}" ToolTip="Puste = taki sam jak symbol (np. FDAX → DAX, 6E → EUR)" />
                                         <TextBox Text="{Binding TradingClass}" ToolTip="Klasa kontraktu futures (np. FDAX, 6E) – puste = dowolna" />
@@ -373,7 +373,7 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Grid.RowDefinitions>
-                                            <RowDefinition /><RowDefinition />
+                                            <RowDefinition /><RowDefinition /><RowDefinition />
                                         </Grid.RowDefinitions>
 
                                         <TextBlock Grid.Row="0" Text="Initial Balance" />
@@ -388,6 +388,14 @@
                                         <CheckBox Grid.Row="1" Grid.Column="1"
                                                   Content="Pokazuj (ramka wiersza, wyróżnione litery, wartość w nagłówku)"
                                                   IsChecked="{Binding ShowPoc}" />
+
+                                        <TextBlock Grid.Row="2" Text="Inwentarz" />
+                                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                                            <TextBlock Text="karta „Otwarcie”: istotny od" Margin="0,4,4,4" />
+                                            <TextBox Text="{Binding InventorySignificantPercent}" Width="45"
+                                                     ToolTip="Inwentarz jest istotny (strzałka kierunku korekty do SETTLE), gdy |Open − SETTLE poprzedniego dnia| wynosi co najmniej tyle procent zakresu (High − Low) poprzedniego dnia" />
+                                            <TextBlock Text="% zakresu poprzedniego dnia" Margin="4,4,4,4" />
+                                        </StackPanel>
                                     </Grid>
                                 </GroupBox>
 
@@ -769,12 +777,12 @@
                                     </StackPanel>
                                 </Grid>
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="Odświeżanie z IB co (min)" Width="140" />
+                                    <TextBlock Text="Odświeżanie z IBKR co (min)" Width="140" />
                                     <TextBox Text="{Binding CandleIbRefreshMinutes}" Width="45"
-                                             ToolTip="Przy połączeniu z IB (tryb „Na żywo”) świece D/W/M instrumentu i rynku szerokiego są co tyle minut pobierane z IB i zapisywane w bazie. Ostatnia świeca instrumentu zmienia się na żywo z każdą transakcją." />
+                                             ToolTip="Przy połączeniu z IBKR (tryb „Na żywo”) świece D/W/M instrumentu i rynku szerokiego są co tyle minut pobierane z IBKR i zapisywane w bazie. Ostatnia świeca instrumentu zmienia się na żywo z każdą transakcją." />
                                 </StackPanel>
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="Świece / słupki OHLC przełączysz też na pasku zakładki „Wykres D/W/M”. Świeca jest wzrostowa, gdy zamknięcie ≥ otwarcie. Przy połączeniu z IB wykres jest na żywo: ostatnia świeca instrumentu zmienia się z każdą transakcją, a świece z IB (także rynku szerokiego) są odświeżane co podaną liczbę minut." />
+                                           Text="Świece / słupki OHLC przełączysz też na pasku zakładki „Wykres D/W/M”. Świeca jest wzrostowa, gdy zamknięcie ≥ otwarcie. Przy połączeniu z IBKR wykres jest na żywo: ostatnia świeca instrumentu zmienia się z każdą transakcją, a świece z IBKR (także rynku szerokiego) są odświeżane co podaną liczbę minut." />
                             </StackPanel>
                         </GroupBox>
 
@@ -1017,7 +1025,7 @@
                                                   SelectedValue="{Binding IbDataType}" />
 
                                         <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource Hint}"
-                                                   Text="Symbol w IB, giełdę i miesiąc kontraktu futures ustawiasz przy instrumencie (zakładka „Instrumenty”)." />
+                                                   Text="Symbol w IBKR, giełdę i miesiąc kontraktu futures ustawiasz przy instrumencie (zakładka „Instrumenty”)." />
                                     </Grid>
                                 </GroupBox>
 
@@ -1078,7 +1086,7 @@
                                         <CheckBox Content="Pokazuj postęp pobierania w tle w polu informacji (doba, procent, komplet dni ticków) – błąd pobierania widać zawsze"
                                                   IsChecked="{Binding ShowDownloadProgress}" Margin="4,8,4,4" />
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="Po połączeniu z brokerem brakujące dni świec 1-min, a potem ticków są pobierane w tle (osobne połączenie, Client ID + 1) – od najnowszych dni, z kontynuacją po ponownym uruchomieniu. Ticki pobierają się powoli (limit IB 60 zapytań / 10 min, ok. 40 min na dzień ES); przycisk „Sprawdź historię ticków” (Źródło i połączenie) pokazuje szacunek." />
+                                                   Text="Po połączeniu z brokerem brakujące dni świec 1-min, a potem ticków są pobierane w tle (osobne połączenie, Client ID + 1) – od najnowszych dni, z kontynuacją po ponownym uruchomieniu. Ticki pobierają się powoli (limit IBKR 60 zapytań / 10 min, ok. 40 min na dzień ES); przycisk „Sprawdź historię ticków” (Źródło i połączenie) pokazuje szacunek." />
                                     </StackPanel>
                                 </GroupBox>
 

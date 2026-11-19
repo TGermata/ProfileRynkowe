@@ -27,6 +27,19 @@ public partial class ProfileStatsWindow : Window
     /// <param name="viewModel">Model widoku okna głównego (źródło parametrów).</param>
     /// <param name="showProfile">Pokazuje i podświetla profil (sesja, początek sesji) na wykresie; false = profilu nie ma na wykresie.</param>
     /// <param name="clearHighlight">Usuwa podświetlenie profilu (po zamknięciu okna).</param>
+    /// <summary>Pomoc – opis parametrów (EN wg Daltona i PL).</summary>
+    private void OnHelpClick(object sender, RoutedEventArgs e) => HelpWindow.ShowHelp(this);
+
+    /// <summary>F1 – pomoc.</summary>
+    private void OnWindowPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.F1)
+        {
+            HelpWindow.ShowHelp(this);
+            e.Handled = true;
+        }
+    }
+
     public ProfileStatsWindow(MainViewModel viewModel, Func<string, DateTime, bool> showProfile, Action clearHighlight)
     {
         InitializeComponent();
@@ -118,7 +131,7 @@ public partial class ProfileStatsWindow : Window
         SymbolText.Text = $"Instrument: {_viewModel.ProfileStatsSymbol}";
         FooterText.Text = $"Profili: {rows.Count}. {InventorySummary(rows)}Zakończone sesje są zapisywane w bazie (tabela profile_stats w pliku data\\marketdata.db) – " +
                           "algorytm może je czytać bezpośrednio z bazy albo z eksportu CSV. Bieżąca sesja na żywo jest zapisywana po każdej literze. " +
-                          "Kliknięcie wiersza – pokaż i podświetl profil na wykresie (kolor i krycie: Ustawienia → Profile → Linie i znaczniki).";
+                          "Najedź na nagłówek kolumny – krótki opis parametru; pełny opis (EN wg Daltona i PL) – „? Pomoc” albo F1. Kliknięcie wiersza – pokaż i podświetl profil na wykresie (kolor i krycie: Ustawienia → Profile → Linie i znaczniki).";
     }
 
     /// <summary>
@@ -136,7 +149,7 @@ public partial class ProfileStatsWindow : Window
         }
 
         string Part(OpeningInventory kind) =>
-            $"{days.Count(s => s.OpeningInventory == kind && s.InventoryCorrected == true)}/{days.Count(s => s.OpeningInventory == kind)}";
+            $"{days.Count(s => s.Inventory == kind && s.InventoryCorrected == true)}/{days.Count(s => s.Inventory == kind)}";
 
         var corrected = days.Count(s => s.InventoryCorrected == true);
         return $"Inwentarz wyrównany: {corrected} z {days.Count} dni ({(double)corrected / days.Count:P0}) – " +
@@ -243,16 +256,16 @@ public partial class ProfileStatsWindow : Window
         var csv = new StringBuilder();
         csv.AppendLine(string.Join(";",
             "symbol", "session", "trading_date", "session_start", "is_complete", "periods", "last_letter",
-            "open", "high", "low", "close", "range", "total_tpo", "volume", "poc", "vpoc", "vah", "val", "va_width", "poc_position",
-            "ib_high", "ib_low", "ib_width", "ib_ext_up", "ib_ext_up_letter", "ib_ext_down", "ib_ext_down_letter", "range_extension",
-            "shape", "tpo_above_poc", "tpo_below_poc", "single_prints", "excess_high", "excess_low", "poor_high", "poor_low",
-            "previous_trading_date", "open_location", "open_type", "open_direction", "value_migration", "va_overlap",
-            "naked_pocs", "naked_vpocs",
-            "halfback", "settle", "settle_source", "prev_close", "prev_settle", "prev_halfback", "gap",
-            "open_vs_prev_halfback", "on_high", "on_low", "on_poc", "open_vs_overnight",
-            "opening_inventory", "inventory_size", "inventory_corrected", "inventory_corrected_letter",
-            "trend_direction", "is_trend_day", "interval_from", "interval_to", "interval_periods",
-            "pullback_low", "pullback_high", "pullback_letter"));
+            "open", "high", "low", "close", "range", "total_TPO", "volume", "POC", "VPOC", "VAH", "VAL", "VA_width", "POC_position",
+            "IBH", "IBL", "IB_width", "IB_ext_up", "IB_ext_up_letter", "IB_ext_down", "IB_ext_down_letter", "IB_ext",
+            "shape", "TPO_above_POC", "TPO_below_POC", "single_prints", "excess_high", "excess_low", "poor_high", "poor_low",
+            "prev_trading_date", "open_vs_prev_VA", "open_type", "open_direction", "value_migration", "VA_overlap",
+            "naked_POCs", "naked_VPOCs",
+            "HB", "SETTLE", "SETTLE_source", "prev_close", "prev_SETTLE", "prev_HB", "GAP",
+            "open_vs_prev_HB", "ONH", "ONL", "ONPOC", "open_vs_overnight",
+            "inventory", "inventory_size", "inventory_corrected", "inventory_corrected_letter",
+            "trend_direction", "is_trend_day", "trend_from", "trend_to", "trend_periods",
+            "PBL", "PBH", "PB_letter"));
 
         foreach (var s in stats)
         {
@@ -264,23 +277,23 @@ public partial class ProfileStatsWindow : Window
                 s.Volume.ToString(CultureInfo.InvariantCulture), N(s.Poc), N(s.VolumePoc), N(s.ValueAreaHigh), N(s.ValueAreaLow),
                 N(s.ValueAreaWidth), D(s.PocPosition), N(s.IbHigh), N(s.IbLow), N(s.IbWidth),
                 N(s.IbExtensionUp), s.IbExtensionUpLetter?.ToString() ?? string.Empty,
-                N(s.IbExtensionDown), s.IbExtensionDownLetter?.ToString() ?? string.Empty, s.RangeExtension.ToString(),
+                N(s.IbExtensionDown), s.IbExtensionDownLetter?.ToString() ?? string.Empty, s.IbExtension.ToString(),
                 s.ShapeCode, s.TpoAbovePoc.ToString(CultureInfo.InvariantCulture), s.TpoBelowPoc.ToString(CultureInfo.InvariantCulture),
                 string.Join("|", s.SinglePrints.Select(r => $"{N(r.Low)}-{N(r.High)}")),
                 s.ExcessHigh.ToString(CultureInfo.InvariantCulture), s.ExcessLow.ToString(CultureInfo.InvariantCulture),
                 s.PoorHigh ? "1" : "0", s.PoorLow ? "1" : "0",
                 s.PreviousTradingDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
-                s.OpenLocation.ToString(), s.OpenType.ToString(), s.OpenDirection.ToString(CultureInfo.InvariantCulture),
+                s.OpenVsPreviousValue.ToString(), s.OpenType.ToString(), s.OpenDirection.ToString(CultureInfo.InvariantCulture),
                 s.ValueMigration.ToString(), D(s.ValueAreaOverlap), L(s.NakedPocs), L(s.NakedVolumePocs),
                 N(s.Halfback), N(s.Settle), s.SettleSource ?? string.Empty, N(s.PreviousClose), N(s.PreviousSettle),
-                N(s.PreviousHalfback), N(s.Gap), s.OpenVsPreviousHalfback.ToString(CultureInfo.InvariantCulture),
+                N(s.PreviousHalfback), N(s.Gap), s.OpenVsPreviousHb.ToString(CultureInfo.InvariantCulture),
                 N(s.OvernightHigh), N(s.OvernightLow), N(s.OvernightPoc), s.OpenVsOvernight.ToString(),
-                s.OpeningInventory.ToString(), N(s.InventorySize),
+                s.Inventory.ToString(), N(s.InventorySize),
                 s.InventoryCorrected is { } corrected ? corrected ? "1" : "0" : string.Empty,
                 s.InventoryCorrectedLetter?.ToString() ?? string.Empty,
                 s.TrendDirection.ToString(CultureInfo.InvariantCulture), s.IsTrendDay ? "1" : "0",
-                s.IntervalFrom?.ToString() ?? string.Empty, s.IntervalTo?.ToString() ?? string.Empty,
-                s.IntervalPeriods.ToString(CultureInfo.InvariantCulture), N(s.PullbackLow), N(s.PullbackHigh),
+                s.TrendFrom?.ToString() ?? string.Empty, s.TrendTo?.ToString() ?? string.Empty,
+                s.TrendPeriods.ToString(CultureInfo.InvariantCulture), N(s.PullbackLow), N(s.PullbackHigh),
                 s.PullbackLetter?.ToString() ?? string.Empty));
         }
 

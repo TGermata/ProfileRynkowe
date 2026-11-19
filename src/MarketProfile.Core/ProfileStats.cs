@@ -1,5 +1,11 @@
 namespace MarketProfile.Core;
 
+// Słownik skrótów używanych w całej aplikacji (tabela, wykres, menu, baza, CSV):
+// POC / VPOC – poziom z największą liczbą TPO / największym wolumenem; VAH / VAL – górna / dolna granica obszaru wartości (VA);
+// IBH / IBL – górna / dolna granica Initial Balance (IB); ONH / ONL / ONPOC – High / Low / POC sesji nocnej przed dniem;
+// HB – halfback ((High + Low) / 2); SETTLE – cena rozliczeniowa dnia; PBL / PBH – pullback low / high dnia trendowego;
+// GAP – luka otwarcia względem zakresu poprzedniego dnia.
+
 /// <summary>Kształt profilu.</summary>
 public enum ProfileShape
 {
@@ -18,22 +24,32 @@ public enum ProfileShape
     /// <summary>„B” – podwójny rozkład: dwa skupiska TPO rozdzielone przewężeniem.</summary>
     DoubleB,
 
-    /// <summary>Trend – profil wąski i wydłużony (mało TPO na poziom ceny).</summary>
+    /// <summary>Trend – dzień trendowy wg interwałowania (seria coraz wyższych / niższych otwarć liter przez większą część sesji).</summary>
     Trend,
 }
 
-/// <summary>Gdzie otworzyła się sesja względem poprzedniego profilu tego samego typu.</summary>
-public enum OpenLocation
+/// <summary>Otwarcie dnia względem obszaru wartości (VA) i zakresu poprzedniego dnia.</summary>
+public enum ValueLocation
 {
     None,
+
+    /// <summary>Nad High poprzedniego dnia.</summary>
     AboveRange,
+
+    /// <summary>Nad VAH poprzedniego dnia (ale w jego zakresie).</summary>
     AboveValue,
+
+    /// <summary>W VA poprzedniego dnia.</summary>
     InValue,
+
+    /// <summary>Pod VAL poprzedniego dnia (ale w jego zakresie).</summary>
     BelowValue,
+
+    /// <summary>Pod Low poprzedniego dnia.</summary>
     BelowRange,
 }
 
-/// <summary>Typ otwarcia (wg Dalton – na podstawie dwóch pierwszych liter).</summary>
+/// <summary>Typ otwarcia (wg Daltona – na podstawie dwóch pierwszych liter, A i B).</summary>
 public enum OpenType
 {
     /// <summary>Jeszcze nie wiadomo (mniej niż dwie litery).</summary>
@@ -52,17 +68,27 @@ public enum OpenType
     OpenAuction,
 }
 
-/// <summary>Migracja obszaru wartości względem poprzedniego profilu tego samego typu.</summary>
+/// <summary>Migracja obszaru wartości (VA) dnia względem VA poprzedniego dnia.</summary>
 public enum ValueMigration
 {
     None,
+
+    /// <summary>VA w całości nad VA poprzedniego dnia.</summary>
     Higher,
+
+    /// <summary>VA zachodzi na poprzednią, przesunięta w górę.</summary>
     OverlappingHigher,
+
+    /// <summary>VA zachodzi na poprzednią, przesunięta w dół.</summary>
     OverlappingLower,
+
+    /// <summary>VA w całości pod VA poprzedniego dnia.</summary>
     Lower,
+
+    /// <summary>VA węższa – w całości wewnątrz VA poprzedniego dnia.</summary>
     Inside,
 
-    /// <summary>Wartość szersza – obejmuje całą wartość dnia poprzedniego (pokrywająca).</summary>
+    /// <summary>VA szersza – obejmuje całą VA poprzedniego dnia.</summary>
     Outside,
 
     /// <summary>Dzień trendowy – wartości nie bierze się pod uwagę.</summary>
@@ -85,17 +111,23 @@ public enum OpeningInventory
     Neutral,
 }
 
-/// <summary>Otwarcie sesji dziennej względem zakresu poprzedzającej ją sesji nocnej.</summary>
+/// <summary>Otwarcie sesji dziennej względem zakresu poprzedzającej ją sesji nocnej (ONH / ONL).</summary>
 public enum OvernightLocation
 {
     None,
-    AboveHigh,
-    InRange,
-    BelowLow,
+
+    /// <summary>Otwarcie nad ONH.</summary>
+    AboveOnh,
+
+    /// <summary>Otwarcie w zakresie nocy (ONL–ONH).</summary>
+    InOvernight,
+
+    /// <summary>Otwarcie pod ONL.</summary>
+    BelowOnl,
 }
 
-/// <summary>Wybicie z Initial Balance.</summary>
-public enum RangeExtension
+/// <summary>Kierunek wybicia z Initial Balance (cena wyszła ponad IBH / poniżej IBL).</summary>
+public enum IbExtensionDirection
 {
     None,
     Up,
@@ -178,15 +210,16 @@ public sealed record ProfileStats
     public decimal IbExtensionDown { get; init; }
     public char? IbExtensionDownLetter { get; init; }
 
-    public RangeExtension RangeExtension { get; init; }
+    /// <summary>Kierunek wybicia z IB (w górę / w dół / w obie strony).</summary>
+    public IbExtensionDirection IbExtension { get; init; }
 
-    /// <summary>Halfback – połowa zakresu profilu ((High + Low) / 2, zaokrąglona do ticka).</summary>
+    /// <summary>HB (halfback) – połowa zakresu profilu ((High + Low) / 2, zaokrąglona do ticka).</summary>
     public decimal Halfback { get; init; }
 
     /// <summary>Cena rozliczeniowa (SETTLE) sesji dziennej; null = jeszcze brak (lub sesja nocna).</summary>
     public decimal? Settle { get; init; }
 
-    /// <summary>Źródło ceny rozliczeniowej: "CME" / "ręcznie" (null = brak).</summary>
+    /// <summary>Źródło SETTLE: "Close" (brak wpisu – cena zamknięcia), "ręcznie" albo "CME" (null = brak).</summary>
     public string? SettleSource { get; init; }
 
     /// <summary>Czy to sesja dzienna (tylko ona bierze udział w relacjach między profilami).</summary>
@@ -220,17 +253,20 @@ public sealed record ProfileStats
     public bool PoorHigh { get; init; }
     public bool PoorLow { get; init; }
 
-    // --- 3. Relacje z poprzednim profilem tego samego typu ---
+    // --- 3. Relacje z poprzednim dniem (tylko sesje dzienne) ---
     public DateOnly? PreviousTradingDate { get; init; }
-    public OpenLocation OpenLocation { get; init; }
+
+    /// <summary>Otwarcie względem VA i zakresu poprzedniego dnia.</summary>
+    public ValueLocation OpenVsPreviousValue { get; init; }
     public OpenType OpenType { get; init; }
 
     /// <summary>Kierunek otwarcia dla OpenDrive / OpenTestDrive / OpenRejectionReverse: 1 = w górę, −1 = w dół, 0 = brak.</summary>
     public int OpenDirection { get; init; }
 
+    /// <summary>Migracja VA względem VA poprzedniego dnia.</summary>
     public ValueMigration ValueMigration { get; init; }
 
-    /// <summary>Punkty charakterystyczne poprzedniej sesji dziennej.</summary>
+    /// <summary>Close, SETTLE i HB poprzedniego dnia.</summary>
     public decimal? PreviousClose { get; init; }
     public decimal? PreviousSettle { get; init; }
     public decimal? PreviousHalfback { get; init; }
@@ -241,11 +277,11 @@ public sealed record ProfileStats
     /// </summary>
     public decimal? Gap { get; init; }
 
-    /// <summary>Otwarcie względem halfback poprzedniego dnia: 1 = nad, −1 = pod, 0 = na poziomie / brak.</summary>
-    public int OpenVsPreviousHalfback { get; init; }
+    /// <summary>Otwarcie względem HB poprzedniego dnia: 1 = nad, −1 = pod, 0 = na poziomie / brak.</summary>
+    public int OpenVsPreviousHb { get; init; }
 
     /// <summary>Inwentarz na otwarciu: długi (otwarcie nad SETTLE poprzedniego dnia) / krótki (pod) / neutralny.</summary>
-    public OpeningInventory OpeningInventory { get; init; }
+    public OpeningInventory Inventory { get; init; }
 
     /// <summary>Wielkość inwentarza: Open − SETTLE poprzedniego dnia (dodatnia = długi, ujemna = krótki).</summary>
     public decimal? InventorySize { get; init; }
@@ -259,12 +295,12 @@ public sealed record ProfileStats
     /// <summary>Litera okresu, w którym inwentarz został wyrównany.</summary>
     public char? InventoryCorrectedLetter { get; init; }
 
-    /// <summary>Sesja nocna bezpośrednio przed tym dniem – jej High, Low i POC (null = brak nocy).</summary>
+    /// <summary>ONH, ONL, ONPOC – High, Low i POC sesji nocnej bezpośrednio przed tym dniem (null = brak nocy).</summary>
     public decimal? OvernightHigh { get; init; }
     public decimal? OvernightLow { get; init; }
     public decimal? OvernightPoc { get; init; }
 
-    /// <summary>Otwarcie dnia względem zakresu nocy.</summary>
+    /// <summary>Otwarcie dnia względem zakresu nocy (ONH / ONL).</summary>
     public OvernightLocation OpenVsOvernight { get; init; }
 
     // --- 4. Trend (interwałowanie) ---
@@ -275,26 +311,26 @@ public sealed record ProfileStats
     /// <summary>Dzień trendowy – interwałowanie przez większą część sesji (wtedy wartości nie bierze się pod uwagę).</summary>
     public bool IsTrendDay { get; init; }
 
-    /// <summary>Litery początku i końca najdłuższego interwałowania oraz liczba jego okresów.</summary>
-    public char? IntervalFrom { get; init; }
-    public char? IntervalTo { get; init; }
-    public int IntervalPeriods { get; init; }
+    /// <summary>Trend (interwałowanie): litery początku i końca najdłuższej serii oraz liczba jej okresów.</summary>
+    public char? TrendFrom { get; init; }
+    public char? TrendTo { get; init; }
+    public int TrendPeriods { get; init; }
 
-    /// <summary>PULLBACK LOW (dzień trendowy w górę) – wybicie w drugą stronę po końcu interwałowania.</summary>
+    /// <summary>PBL – pullback low: w dniu trendowym w górę najniższy Low liter po końcu serii (null = brak).</summary>
     public decimal? PullbackLow { get; init; }
 
-    /// <summary>PULLBACK HIGH (dzień trendowy w dół).</summary>
+    /// <summary>PBH – pullback high: w dniu trendowym w dół najwyższy High liter po końcu serii (null = brak).</summary>
     public decimal? PullbackHigh { get; init; }
 
-    /// <summary>Litera okresu pullbacku.</summary>
+    /// <summary>Litera okresu, w którym wypadł PBL / PBH.</summary>
     public char? PullbackLetter { get; init; }
 
-    /// <summary>Jaka część obszaru wartości tej sesji pokrywa się z poprzednim (0–1; null = brak poprzedniego).</summary>
+    /// <summary>Nakładanie VA: jaka część VA dnia pokrywa się z VA poprzedniego dnia (0–1; null = brak poprzedniego / dzień trendowy).</summary>
     public double? ValueAreaOverlap { get; init; }
 
     /// <summary>
-    /// Nietknięte (naked) POC i VPOC poprzednich sesji tego samego typu – poziomy, do których cena (w żadnej
-    /// późniejszej sesji, łącznie z tą) jeszcze nie wróciła. Najnowsze na końcu.
+    /// Nietknięte (naked) POC i VPOC poprzednich dni – poziomy, do których cena (w żadnej
+    /// późniejszej sesji, dziennej ani nocnej, łącznie z tą) jeszcze nie wróciła. Najnowsze na końcu.
     /// </summary>
     public IReadOnlyList<decimal> NakedPocs { get; init; } = [];
     public IReadOnlyList<decimal> NakedVolumePocs { get; init; } = [];
@@ -303,7 +339,7 @@ public sealed record ProfileStats
 /// <summary>Progi analizy profili.</summary>
 public sealed record ProfileAnalysisOptions
 {
-    /// <summary>Ile poprzednich sesji przeszukiwać przy nietkniętych POC.</summary>
+    /// <summary>Ile poprzednich dni przeszukiwać przy nietkniętych POC.</summary>
     public int NakedPocLookback { get; init; } = 20;
 
     /// <summary>Dzień trendowy: interwałowanie obejmuje co najmniej taką część okresów sesji.</summary>
@@ -390,9 +426,9 @@ public static class ProfileAnalyzer
             SettleSource = settle?.Source,
             TrendDirection = trend.Direction,
             IsTrendDay = trend.IsTrendDay,
-            IntervalFrom = trend.From,
-            IntervalTo = trend.To,
-            IntervalPeriods = trend.Periods,
+            TrendFrom = trend.From,
+            TrendTo = trend.To,
+            TrendPeriods = trend.Periods,
             PullbackLow = trend.Direction > 0 ? trend.PullbackPrice : null,
             PullbackHigh = trend.Direction < 0 ? trend.PullbackPrice : null,
             PullbackLetter = trend.PullbackLetter,
@@ -440,7 +476,7 @@ public static class ProfileAnalyzer
 
         return stats with
         {
-            OpeningInventory = inventory,
+            Inventory = inventory,
             InventorySize = profile.Open - previousSettle,
             InventoryCorrected = inventory == OpeningInventory.Neutral ? null : correctedIn is not null,
             InventoryCorrectedLetter = correctedIn?.Letter,
@@ -450,7 +486,7 @@ public static class ProfileAnalyzer
             Gap = profile.Open > previous.High ? profile.Open - previous.High
                 : profile.Open < previous.Low ? profile.Open - previous.Low
                 : null,
-            OpenVsPreviousHalfback = Math.Sign(profile.Open - previousHalfback),
+            OpenVsPreviousHb = Math.Sign(profile.Open - previousHalfback),
         };
     }
 
@@ -472,9 +508,9 @@ public static class ProfileAnalyzer
             OvernightHigh = night.High,
             OvernightLow = night.Low,
             OvernightPoc = night.Poc,
-            OpenVsOvernight = o > night.High ? OvernightLocation.AboveHigh
-                : o < night.Low ? OvernightLocation.BelowLow
-                : OvernightLocation.InRange,
+            OpenVsOvernight = o > night.High ? OvernightLocation.AboveOnh
+                : o < night.Low ? OvernightLocation.BelowOnl
+                : OvernightLocation.InOvernight,
         };
     }
 
@@ -507,12 +543,12 @@ public static class ProfileAnalyzer
             IbExtensionUpLetter = profile.Periods.FirstOrDefault(p => p.High > ibh)?.Letter,
             IbExtensionDown = down,
             IbExtensionDownLetter = profile.Periods.FirstOrDefault(p => p.Low < ibl)?.Letter,
-            RangeExtension = (up > 0, down > 0) switch
+            IbExtension = (up > 0, down > 0) switch
             {
-                (true, true) => RangeExtension.Both,
-                (true, false) => RangeExtension.Up,
-                (false, true) => RangeExtension.Down,
-                _ => RangeExtension.None,
+                (true, true) => IbExtensionDirection.Both,
+                (true, false) => IbExtensionDirection.Up,
+                (false, true) => IbExtensionDirection.Down,
+                _ => IbExtensionDirection.None,
             },
         };
     }
@@ -718,31 +754,35 @@ public static class ProfileAnalyzer
     }
 
     /// <summary>
-    /// Otwarcie względem poprzedniego profilu i typ otwarcia (A = pierwsza litera, B = druga, O = cena otwarcia):
+    /// Otwarcie względem VA poprzedniego dnia i typ otwarcia (A = pierwsza litera, B = druga, O = cena otwarcia):
     ///  - Open-Drive: O przy skraju A (≤ 15% zakresu A), A zamyka się po drugiej stronie, B nie wraca do O;
     ///  - Open-Test-Drive: A testuje stronę przeciwną (15–50% zakresu A), zamyka się po stronie ruchu,
     ///    a B rozszerza zakres w kierunku ruchu (wyższe High i Low przy ruchu w górę);
-    ///  - Open-Rejection-Reverse: A jednostronna (ruch od O ≥ 40% zakresu IB i ≥ 2× ruchu w drugą stronę),
+    ///  - Open-Rejection-Reverse: A jednostronna (ruch od O ≥ 40% zakresu liter A+B i ≥ 2× ruchu w drugą stronę),
     ///    a B zamyka się po drugiej stronie O;
     ///  - Open-Auction: pozostałe przypadki.
     /// </summary>
     private static ProfileStats WithOpen(ProfileStats stats, ProfileSnapshot profile, ProfileSnapshot? previous)
     {
-        var o = profile.Open;
-        var location = OpenLocation.None;
-        if (previous is not null && !profile.IsEmpty)
-        {
-            var vahTop = previous.ValueAreaHigh + previous.RowHeight;
-            location = o > previous.High ? OpenLocation.AboveRange
-                : o >= vahTop ? OpenLocation.AboveValue
-                : o >= previous.ValueAreaLow ? OpenLocation.InValue
-                : o >= previous.Low ? OpenLocation.BelowValue
-                : OpenLocation.BelowRange;
-        }
+        var location = previous is not null && !profile.IsEmpty
+            ? LocateOpen(profile.Open, previous.High, previous.Low, previous.ValueAreaHigh, previous.ValueAreaLow, previous.RowHeight)
+            : ValueLocation.None;
 
         var (type, direction) = OpenTypeOf(profile);
-        return stats with { OpenLocation = location, OpenType = type, OpenDirection = direction };
+        return stats with { OpenVsPreviousValue = location, OpenType = type, OpenDirection = direction };
     }
+
+    /// <summary>
+    /// Położenie ceny otwarcia względem VA i zakresu poprzedniego dnia (VAH to dolna granica wiersza – wartość obejmuje
+    /// cały wiersz VAH, stąd + wysokość wiersza).
+    /// </summary>
+    public static ValueLocation LocateOpen(decimal open, decimal previousHigh, decimal previousLow,
+        decimal previousVah, decimal previousVal, decimal previousRowHeight) =>
+        open > previousHigh ? ValueLocation.AboveRange
+        : open >= previousVah + previousRowHeight ? ValueLocation.AboveValue
+        : open >= previousVal ? ValueLocation.InValue
+        : open >= previousLow ? ValueLocation.BelowValue
+        : ValueLocation.BelowRange;
 
     internal static (OpenType Type, int Direction) OpenTypeOf(ProfileSnapshot profile)
     {
@@ -802,7 +842,7 @@ public static class ProfileAnalyzer
         return (OpenType.OpenAuction, 0);
     }
 
-    /// <summary>Migracja obszaru wartości i jego nakładanie się z poprzednim profilem tego samego typu.</summary>
+    /// <summary>Migracja VA i jej nakładanie się z VA poprzedniego dnia.</summary>
     private static ProfileStats WithValueMigration(ProfileStats stats, ProfileSnapshot profile, ProfileSnapshot? previous)
     {
         if (previous is null || profile.IsEmpty)
@@ -837,7 +877,7 @@ public static class ProfileAnalyzer
     }
 
     /// <summary>
-    /// Nietknięte POC/VPOC: poziomy z ostatnich sesji tego samego typu, których wiersza nie dotknęła cena
+    /// Nietknięte POC/VPOC: poziomy z ostatnich dni, których wiersza nie dotknęła cena
     /// w żadnym późniejszym profilu (dowolnego typu sesji), łącznie z bieżącym.
     /// </summary>
     private static ProfileStats WithNakedPocs(ProfileStats stats, ProfileSnapshot profile, IReadOnlyList<ProfileSnapshot> history,

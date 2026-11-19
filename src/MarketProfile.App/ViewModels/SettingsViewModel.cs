@@ -98,6 +98,7 @@ public sealed class SettingsViewModel : ObservableObject
         ShowInitialBalance = settings.ShowInitialBalance;
         ShowPoc = settings.ShowPoc;
         InitialBalancePeriods = ToText(settings.InitialBalancePeriods);
+        InventorySignificantPercent = ToText(settings.InventorySignificantPercent);
         LoadArrows(settings.Arrows);
 
         // Wykres D/W/M.
@@ -252,7 +253,7 @@ public sealed class SettingsViewModel : ObservableObject
 
         if (!TryParseInt(CandleIbRefreshMinutes, 1, 60, out var ibRefreshMinutes))
         {
-            error = "Wykres D/W/M: odświeżanie z IB podaj w minutach od 1 do 60.";
+            error = "Wykres D/W/M: odświeżanie z IBKR podaj w minutach od 1 do 60.";
             return null;
         }
 
@@ -282,6 +283,9 @@ public sealed class SettingsViewModel : ObservableObject
 
     /// <summary>Liczba okresów TPO tworzących Initial Balance.</summary>
     public string InitialBalancePeriods { get; set; } = string.Empty;
+
+    /// <summary>Karta „Otwarcie”: inwentarz istotny od tylu % zakresu poprzedniego dnia.</summary>
+    public string InventorySignificantPercent { get; set; } = string.Empty;
 
     // --- Strzałki otwarcia i zamknięcia profilu ---
     public bool ArrowShowOpen { get; set; }
@@ -489,7 +493,7 @@ public sealed class SettingsViewModel : ObservableObject
         });
         InstrumentEditors.Add(editor);
         SelectedInstrumentEditor = editor;
-        InstrumentLookupResult = "Wpisz symbol (np. MSFT, CL), wybierz rodzaj i giełdę, a potem kliknij „Sprawdź w IB”.";
+        InstrumentLookupResult = "Wpisz symbol (np. MSFT, CL), wybierz rodzaj i giełdę, a potem kliknij „Sprawdź w IBKR”.";
     }
 
     /// <summary>Usuwa zaznaczony instrument (musi zostać co najmniej jeden).</summary>
@@ -558,7 +562,7 @@ public sealed class SettingsViewModel : ObservableObject
 
         _isLookingUp = true;
         OnPropertyChanged(nameof(CanLookupInstrument));
-        InstrumentLookupResult = $"Wyszukiwanie {instrument!.BrokerSymbol} w IB...";
+        InstrumentLookupResult = $"Wyszukiwanie {instrument!.BrokerSymbol} w IBKR...";
 
         try
         {
@@ -568,15 +572,15 @@ public sealed class SettingsViewModel : ObservableObject
 
             var expiry = string.IsNullOrWhiteSpace(info.Expiry) ? string.Empty : $", wygasa {info.Expiry}";
             var sessions = info.Sessions is { } s
-                ? $"Sesja główna wg IB: {s.DayStart:HH\\:mm}–{s.DayEnd:HH\\:mm}" + (s.HasNight ? $", poza nią: {s.NightStart:HH\\:mm}–{s.NightEnd:HH\\:mm}" : ", bez handlu poza nią")
-                : "IB nie podał godzin handlu.";
+                ? $"Sesja główna wg IBKR: {s.DayStart:HH\\:mm}–{s.DayEnd:HH\\:mm}" + (s.HasNight ? $", poza nią: {s.NightStart:HH\\:mm}–{s.NightEnd:HH\\:mm}" : ", bez handlu poza nią")
+                : "IBKR nie podał godzin handlu.";
             InstrumentLookupResult =
                 $"Znaleziono: {info.LocalSymbol} – {info.LongName} ({info.Exchange}, {info.Currency}, tick {info.MinTick.ToString(CultureInfo.InvariantCulture)}{expiry}). " +
                 $"Strefa czasowa: {info.TimeZoneId}. {sessions}. Sprawdź godziny sesji i kliknij „Zapisz”.";
         }
         catch (Exception ex)
         {
-            InstrumentLookupResult = $"Nie znaleziono w IB: {ex.Message}";
+            InstrumentLookupResult = $"Nie znaleziono w IBKR: {ex.Message}";
         }
         finally
         {
@@ -694,7 +698,7 @@ public sealed class SettingsViewModel : ObservableObject
     {
         if (r.MaxDaysBack is not { } maxDays)
         {
-            return $"{r.ContractName}: IB nie zwrócił żadnych ticków historycznych." +
+            return $"{r.ContractName}: IBKR nie zwrócił żadnych ticków historycznych." +
                    (r.LastError is { } e ? $" {e}" : " (Możliwy brak uprawnień do danych tej giełdy.)");
         }
 
@@ -708,7 +712,7 @@ public sealed class SettingsViewModel : ObservableObject
             var hours = instrument.Sessions.Sum(s => s.Duration.TotalHours);
             var tradingDays = Math.Max(1, (int)Math.Round(backgroundDays * 5 / 7.0));
             text += $"\nGęstość (próbka sprzed ok. 1 dnia): ok. {d.TicksPerDay(hours):N0} ticków na dzień handlowy " +
-                    $"= ok. {d.RequestsPerDay(hours):N0} zapytań po 1000 ticków. Przy limicie IB (60 zapytań / 10 min) " +
+                    $"= ok. {d.RequestsPerDay(hours):N0} zapytań po 1000 ticków. Przy limicie IBKR (60 zapytań / 10 min) " +
                     $"pobranie 1 dnia trwa ok. {FormatDuration(d.DownloadTime(hours, 1))}, " +
                     $"{backgroundDays} dni (ok. {tradingDays} handlowych) – ok. {FormatDuration(d.DownloadTime(hours, tradingDays))}.";
         }
@@ -1183,6 +1187,11 @@ public sealed class SettingsViewModel : ObservableObject
             return Fail("Initial Balance: podaj liczbę okresów TPO od 1 do 20.");
         }
 
+        if (!TryParseInt(InventorySignificantPercent, 1, 100, out var inventoryPercent))
+        {
+            return Fail("Inwentarz: próg istotności podaj w procentach zakresu poprzedniego dnia, od 1 do 100.");
+        }
+
         if (!ColorUtil.TryParse(ArrowOpenColor, out _) || !ColorUtil.TryParse(ArrowCloseColor, out _))
         {
             return Fail("Strzałki: kolory podaj w formacie #RRGGBB.");
@@ -1351,6 +1360,7 @@ public sealed class SettingsViewModel : ObservableObject
             ShowInitialBalance = ShowInitialBalance,
             ShowPoc = ShowPoc,
             InitialBalancePeriods = ibPeriods,
+            InventorySignificantPercent = inventoryPercent,
             Arrows = new ProfileArrowsStyle
             {
                 ShowOpen = ArrowShowOpen,

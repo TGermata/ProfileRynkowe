@@ -292,7 +292,7 @@ public sealed class BackgroundHistoryDownloader
         {
             // Broker nie ma ticków z tak dawna – starszych dób w tym uruchomieniu już nie pobieramy.
             _tickFloor[symbol] = chunk.To;
-            Progress?.Invoke(this, $"{prefix} – IB nie ma ticków z {day} i wcześniej (zostają świece 1-min)");
+            Progress?.Invoke(this, $"{prefix} – IBKR nie ma ticków z {day} i wcześniej (zostają świece 1-min)");
             return new PassResult(savedBars, result.Saved, false);
         }
 

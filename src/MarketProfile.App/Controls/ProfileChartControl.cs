@@ -312,6 +312,7 @@ public sealed partial class ProfileChartControl : FrameworkElement
     private double? _pinFraction;     // przypięcie profilu: jego lewa krawędź w tym ułamku szerokości wykresu (null = brak)
     private string? _pinKey;          // klucz przypiętego profilu (null przy _pinFraction = przypnij najnowszy przy rysowaniu)
     private bool _pinAnywhere;        // przypięcie wybranego profilu (z tabeli parametrów) – także daleko w historii
+    private double? _pinStartFraction; // jednorazowo: prawa krawędź najnowszej kolumny w tym ułamku szerokości (start symulacji)
     private (string Session, DateTime Start)? _highlight; // profil podświetlony (wybrany w tabeli parametrów)
     private decimal? _manualCenter;   // cena na środku ekranu ustawiona ręcznie (null = śledzenie ceny)
     private decimal? _autoCenter;     // cena na środku ekranu w trybie śledzenia
@@ -388,6 +389,17 @@ public sealed partial class ProfileChartControl : FrameworkElement
                 _panX = ChartZoom.PanForAnchor(_panX, anchor.CursorX, hit.X, hit.Width, anchor.Fraction);
                 layout = ComputeLayout(profiles, chartRight);
             }
+        }
+
+        // Start symulacji z menu: prawa krawędź najnowszej (uciętej) kolumny w ustalonym miejscu – zamieniamy to na zwykłe
+        // przypięcie lewej krawędzi tej kolumny, żeby przy dorysowywaniu w prawo obraz nie skakał.
+        if (_pinStartFraction is { } startFraction && layout.Count > 0 && chartRight > 0)
+        {
+            var startColumn = layout[^1];
+            _pinKey = ProfileKey(startColumn.View.Snapshot);
+            _pinFraction = startFraction - startColumn.Width / chartRight;
+            _pinAnywhere = false;
+            _pinStartFraction = null;
         }
 
         // Przypięty profil (np. po cofnięciu czasu symulacji) – jego lewa krawędź w ustalonym miejscu ekranu.
@@ -1692,22 +1704,27 @@ public sealed partial class ProfileChartControl : FrameworkElement
     public const double LatestPinFraction = 0.3;
 
     /// <summary>
-    /// „Dopasuj” (przycisk, klawisz 0, podwójne kliknięcie) – tak samo na żywo i w symulacji: ostatnie N profili
-    /// w skali ekranu, bieżący profil od 0,3 szerokości wykresu, po prawej miejsce na dalsze rysowanie.
-    /// </summary>
-    /// <summary>
-    /// Zamraża bieżący widok: obecna szerokość liter, wysokość wierszy, środek ceny i przesunięcie zostają jak są
-    /// (bez dopasowania i śledzenia ceny) – np. przy cofnięciu symulacji do słupka wykres się nie przesuwa.
+    /// Start symulacji z menu podręcznego (od początku profilu / od słupka): skala bez zmian (bez dopasowania),
+    /// wykres tylko przesunięty – miejsce startu (prawa krawędź ostatniej widocznej kolumny) w <paramref name="fraction"/>
+    /// szerokości od lewej, a cena startu na środku wysokości (dalej zwykłe śledzenie ceny).
     /// „Dopasuj” albo podwójne kliknięcie przywraca dopasowanie.
     /// </summary>
-    public void FreezeView()
+    public void FocusSimulationStart(double fraction = 1.0 / 3)
     {
         _manualLetterWidth = true;
         _manualRowHeight = true;
-        _manualCenter = _lastCenter;
+        _manualCenter = null;
+        _autoCenter = null;
+        _panX = 0;
         ClearPin();
+        _pinStartFraction = fraction;
+        InvalidateVisual();
     }
 
+    /// <summary>
+    /// „Dopasuj” (przycisk, klawisz 0, podwójne kliknięcie) – tak samo na żywo i w symulacji: ostatnie N profili
+    /// w skali ekranu, bieżący profil od 0,3 szerokości wykresu, po prawej miejsce na dalsze rysowanie.
+    /// </summary>
     public void FitAndPinLatest()
     {
         FitToScreen();
@@ -1719,6 +1736,7 @@ public sealed partial class ProfileChartControl : FrameworkElement
         _pinFraction = null;
         _pinKey = null;
         _pinAnywhere = false;
+        _pinStartFraction = null;
     }
 
     /// <summary>Usuwa podświetlenie profilu wybranego w tabeli parametrów (np. po zamknięciu tabeli).</summary>

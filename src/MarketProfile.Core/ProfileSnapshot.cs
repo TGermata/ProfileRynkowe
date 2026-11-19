@@ -126,7 +126,6 @@ public sealed record ProfileSnapshot
     /// <summary>Numer wersji profilu – rośnie przy każdej zmianie danych (pozwala wykryć, czy trzeba odświeżyć widok).</summary>
     public long Version { get; init; }
 
-    /// <summary>Czy profil nie zawiera jeszcze żadnych danych.</summary>
     /// <summary>Numer ostatniego (bieżącego) okresu TPO w tej migawce (-1 = brak okresów).</summary>
     public int CurrentPeriodIndex { get; init; } = -1;
 
@@ -142,5 +141,6 @@ public sealed record ProfileSnapshot
     /// <summary>Największy wolumen wiersza w bieżącym okresie (0 = brak wolumenu).</summary>
     public long MaxCurrentPeriodVolume => CurrentPeriodVolume.Count > 0 ? CurrentPeriodVolume.Values.Max() : 0;
 
+    /// <summary>Czy profil nie zawiera jeszcze żadnych danych.</summary>
     public bool IsEmpty => Levels.Count == 0;
 }

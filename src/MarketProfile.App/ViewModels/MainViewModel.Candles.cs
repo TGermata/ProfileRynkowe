@@ -319,7 +319,7 @@ public sealed partial class MainViewModel
 
     /// <summary>
     /// Świece D/W/M z IB do bazy – instrument bazowy i rynek szeroki (np. SPX, bez strumienia cen w aplikacji):
-    /// zaraz po połączeniu, potem co <see cref="CandleChartStyle.IbRefreshMinutes"/> minut. Tylko przy połączeniu z IB.
+    /// zaraz po połączeniu, potem co <see cref="CandleChartStyle.IbRefreshMinutes"/> minut. Tylko przy połączeniu z IBKR.
     /// </summary>
     private void RefreshCandlesFromIbIfDue()
     {
@@ -394,15 +394,15 @@ public sealed partial class MainViewModel
 
         CandleInfo = text;
         CandleEmptyText = _candleIbNotes.TryGetValue(instrument.Symbol, out var pending) && pending.StartsWith("pobieranie", StringComparison.Ordinal)
-            ? "Pobieranie świec z IB..."
-            : "Brak świec w bazie – zostaną pobrane z IB po połączeniu z TWS (tryb „Na żywo”)";
+            ? "Pobieranie świec z IBKR..."
+            : "Brak świec w bazie – zostaną pobrane z IBKR po połączeniu z TWS (tryb „Na żywo”)";
     }
 
     /// <summary>Pobiera świece D/W/M instrumentu z IB (własne połączenie), zapisuje w bazie i wczytuje ponownie.</summary>
     private async Task RefreshCandlesAsync(Instrument instrument)
     {
         var symbol = instrument.Symbol;
-        _candleIbNotes[symbol] = "pobieranie z IB...";
+        _candleIbNotes[symbol] = "pobieranie z IBKR...";
         UpdateCandleInfo();
 
         try
@@ -413,12 +413,12 @@ public sealed partial class MainViewModel
             var results = await Task.Run(() => OhlcBarUpdater.ConnectAndUpdateAsync(instrument, connection, store, CancellationToken.None));
 
             _candleIbNotes[symbol] = OhlcBarUpdater.Errors(results) is { } error
-                ? $"IB {DateTime.Now:HH:mm}: {error}"
-                : $"z IB {DateTime.Now:HH:mm}";
+                ? $"IBKR {DateTime.Now:HH:mm}: {error}"
+                : $"z IBKR {DateTime.Now:HH:mm}";
         }
         catch (Exception ex)
         {
-            _candleIbNotes[symbol] = $"nie udało się pobrać z IB: {ex.Message}";
+            _candleIbNotes[symbol] = $"nie udało się pobrać z IBKR: {ex.Message}";
         }
 
         if (symbol == _settings.InstrumentSymbol)

@@ -38,19 +38,22 @@ public sealed class ProfileStatsRow
     public string Low => P(Stats.Low);
     public string Close => P(Stats.Close);
     public string Range => P(Stats.Range);
+    public string TotalTpo => Stats.TotalTpo.ToString("N0", CultureInfo.CurrentCulture);
     public string Poc => P(Stats.Poc);
     public string VolumePoc => P(Stats.VolumePoc);
     public string ValueAreaHigh => P(Stats.ValueAreaHigh);
     public string ValueAreaLow => P(Stats.ValueAreaLow);
+    public string ValueAreaWidth => P(Stats.ValueAreaWidth);
     public string PocPosition => Stats.PocPosition.ToString("0.00", CultureInfo.CurrentCulture);
     public string IbHigh => P(Stats.IbHigh);
     public string IbLow => P(Stats.IbLow);
+    public string IbWidth => P(Stats.IbWidth);
 
-    public string IbExtension => Stats.RangeExtension switch
+    public string IbExtension => Stats.IbExtension switch
     {
-        RangeExtension.Up => $"↑ +{P(Stats.IbExtensionUp)} ({Stats.IbExtensionUpLetter})",
-        RangeExtension.Down => $"↓ −{P(Stats.IbExtensionDown)} ({Stats.IbExtensionDownLetter})",
-        RangeExtension.Both => $"↑ +{P(Stats.IbExtensionUp)} ({Stats.IbExtensionUpLetter})  ↓ −{P(Stats.IbExtensionDown)} ({Stats.IbExtensionDownLetter})",
+        IbExtensionDirection.Up => $"↑ +{P(Stats.IbExtensionUp)} ({Stats.IbExtensionUpLetter})",
+        IbExtensionDirection.Down => $"↓ −{P(Stats.IbExtensionDown)} ({Stats.IbExtensionDownLetter})",
+        IbExtensionDirection.Both => $"↑ +{P(Stats.IbExtensionUp)} ({Stats.IbExtensionUpLetter})  ↓ −{P(Stats.IbExtensionDown)} ({Stats.IbExtensionDownLetter})",
         _ => "–",
     };
 
@@ -63,7 +66,7 @@ public sealed class ProfileStatsRow
             var parts = new List<string>();
             if (Stats.ExcessHigh > 0)
             {
-                parts.Add($"excess ↑ {P(Stats.ExcessHigh * Stats.RowHeight)}");
+                parts.Add($"ogon ↑ {P(Stats.ExcessHigh * Stats.RowHeight)}");
             }
 
             if (Stats.PoorHigh)
@@ -73,7 +76,7 @@ public sealed class ProfileStatsRow
 
             if (Stats.ExcessLow > 0)
             {
-                parts.Add($"excess ↓ {P(Stats.ExcessLow * Stats.RowHeight)}");
+                parts.Add($"ogon ↓ {P(Stats.ExcessLow * Stats.RowHeight)}");
             }
 
             if (Stats.PoorLow)
@@ -89,13 +92,13 @@ public sealed class ProfileStatsRow
         ? string.Join("; ", Stats.SinglePrints.Select(r => $"{P(r.Low)}–{P(r.High)}"))
         : "–";
 
-    public string OpenLocation => Stats.OpenLocation switch
+    public string OpenVsPreviousValue => Stats.OpenVsPreviousValue switch
     {
-        Core.OpenLocation.AboveRange => "nad zakresem",
-        Core.OpenLocation.AboveValue => "nad wartością",
-        Core.OpenLocation.InValue => "w wartości",
-        Core.OpenLocation.BelowValue => "pod wartością",
-        Core.OpenLocation.BelowRange => "pod zakresem",
+        Core.ValueLocation.AboveRange => "nad High (nad zakresem)",
+        Core.ValueLocation.AboveValue => "nad VA",
+        Core.ValueLocation.InValue => "w VA",
+        Core.ValueLocation.BelowValue => "pod VA",
+        Core.ValueLocation.BelowRange => "pod Low (pod zakresem)",
         _ => "–",
     };
 
@@ -121,8 +124,8 @@ public sealed class ProfileStatsRow
         Core.ValueMigration.OverlappingHigher => "pokrywająca wyżej",
         Core.ValueMigration.OverlappingLower => "pokrywająca niżej",
         Core.ValueMigration.Lower => "niżej",
-        Core.ValueMigration.Inside => "wewnątrz",
-        Core.ValueMigration.Outside => "pokrywająca, obejmuje",
+        Core.ValueMigration.Inside => "węższa (wewnątrz)",
+        Core.ValueMigration.Outside => "szersza (obejmuje)",
         Core.ValueMigration.TrendDay => "dzień trendowy",
         _ => "–",
     };
@@ -134,13 +137,15 @@ public sealed class ProfileStatsRow
         Core.ValueMigration.OverlappingHigher => "VA ↗ pokr. wyżej",
         Core.ValueMigration.OverlappingLower => "VA ↘ pokr. niżej",
         Core.ValueMigration.Lower => "VA ↓ niżej",
-        Core.ValueMigration.Inside => "VA ↔ wewnątrz",
-        Core.ValueMigration.Outside => "VA ⇕ obejmuje",
+        Core.ValueMigration.Inside => "VA ↔ węższa",
+        Core.ValueMigration.Outside => "VA ⇕ szersza",
         Core.ValueMigration.TrendDay => "Trend – VA pominięta",
         _ => string.Empty,
     };
 
     public string Halfback => P(Stats.Halfback);
+    public string PreviousClose => P(Stats.PreviousClose);
+    public string PreviousSettle => P(Stats.PreviousSettle);
 
     public string Settle => Stats.Settle is { } settle
         ? Stats.SettleSource == Settlement.SourceManual ? $"{P(settle)} ✎" : P(settle)
@@ -149,14 +154,14 @@ public sealed class ProfileStatsRow
     public string SettleToolTip => Stats.Settle is null
         ? "Sesja w toku albo sesja nocna – bez SETTLE"
         : Stats.SettleSource == Settlement.SourceManual
-            ? "Wpis ręczny (prawy klik – zmień albo usuń, wtedy SETTLE = Close)"
-            : "Close sesji (prawy klik – wpisz SETTLE ręcznie)";
+            ? "SETTLE – wpis ręczny (prawy klik – zmień albo usuń, wtedy SETTLE = Close)"
+            : "SETTLE = Close sesji (prawy klik – wpisz SETTLE ręcznie)";
 
     /// <summary>Interwałowanie, np. „↑ trend B–K (10)” (dzień trendowy) albo „↓ B–E (4)”.</summary>
-    public string Trend => Stats.TrendDirection == 0 || Stats.IntervalFrom is null
+    public string Trend => Stats.TrendDirection == 0 || Stats.TrendFrom is null
         ? "–"
         : $"{(Stats.TrendDirection > 0 ? "↑" : "↓")} {(Stats.IsTrendDay ? "trend " : string.Empty)}" +
-          $"{Stats.IntervalFrom}–{Stats.IntervalTo} ({Stats.IntervalPeriods})";
+          $"{Stats.TrendFrom}–{Stats.TrendTo} ({Stats.TrendPeriods})";
 
     /// <summary>PULLBACK LOW / HIGH dnia trendowego, np. „PBL 6850.25 (M)”.</summary>
     public string Pullback => Stats.PullbackLow is { } low
@@ -171,9 +176,9 @@ public sealed class ProfileStatsRow
 
     public string OpenVsOvernight => Stats.OpenVsOvernight switch
     {
-        OvernightLocation.AboveHigh => "nad ONH",
-        OvernightLocation.InRange => "w zakresie nocy",
-        OvernightLocation.BelowLow => "pod ONL",
+        OvernightLocation.AboveOnh => "nad ONH",
+        OvernightLocation.InOvernight => "w nocy (ONL–ONH)",
+        OvernightLocation.BelowOnl => "pod ONL",
         _ => "–",
     };
 
@@ -187,7 +192,7 @@ public sealed class ProfileStatsRow
                 return "–";
             }
 
-            var kind = Stats.OpeningInventory switch
+            var kind = Stats.Inventory switch
             {
                 OpeningInventory.Long => $"długi +{P(size)}",
                 OpeningInventory.Short => $"krótki −{P(-size)}",
@@ -207,9 +212,9 @@ public sealed class ProfileStatsRow
         ? gap > 0 ? $"↑ +{P(gap)} (nad High)" : $"↓ −{P(-gap)} (pod Low)"
         : "–";
 
-    public string OpenVsPreviousHalfback => Stats.PreviousHalfback is null
+    public string OpenVsPreviousHb => Stats.PreviousHalfback is null
         ? "–"
-        : Stats.OpenVsPreviousHalfback switch
+        : Stats.OpenVsPreviousHb switch
         {
             > 0 => $"nad ({P(Stats.PreviousHalfback)})",
             < 0 => $"pod ({P(Stats.PreviousHalfback)})",

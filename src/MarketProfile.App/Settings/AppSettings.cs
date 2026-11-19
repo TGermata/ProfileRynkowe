@@ -179,6 +179,21 @@ public sealed record AppSettings
     /// <summary>Tabela „Parametry profili”: pokazuj tylko profile sesji dziennych (najważniejsze w analizie).</summary>
     public bool ProfileStatsDayOnly { get; init; } = true;
 
+    /// <summary>Symulacja: karta „Otwarcie” przy nowym profilu (inwentarz, położenie otwarcia, GAP…).</summary>
+    public bool ShowOpeningCard { get; init; } = true;
+
+    /// <summary>
+    /// Karta „Otwarcie”: inwentarz jest istotny (strzałka kierunku korekty), gdy |Open − SETTLE poprz. dnia| wynosi co najmniej
+    /// tyle procent zakresu (High − Low) poprzedniego dnia; mniejszy odstęp – bez znaczenia.
+    /// </summary>
+    public int InventorySignificantPercent { get; init; } = 15;
+
+    /// <summary>Położenie karty „Otwarcie” na wykresie TPO.</summary>
+    public double OpeningPanelLeft { get; init; } = 12;
+
+    /// <summary>Położenie karty „Otwarcie” – odległość od góry wykresu.</summary>
+    public double OpeningPanelTop { get; init; } = 150;
+
     /// <summary>Czy kody produktów CME (do pobierania SETTLE) zostały już uzupełnione w zapisanej liście instrumentów.</summary>
     public bool CmeDefaultsApplied { get; init; }
 

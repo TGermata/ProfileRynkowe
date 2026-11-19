@@ -123,6 +123,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(ProfileStatsList));
         OnPropertyChanged(nameof(CurrentProfileStats));
         ProfileStatsUpdated?.Invoke(this, stats);
+        UpdateOpeningCard(stats);
     }
 
     /// <summary>
