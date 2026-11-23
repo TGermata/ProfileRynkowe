@@ -64,6 +64,11 @@ public partial class PriceLineWindow : Window
         LabelRightBox.IsChecked = line.LabelPosition == LabelPosition.Right;
         LockedBox.IsChecked = line.IsLocked;
 
+        if (line.Alert is { } alert)
+        {
+            ShowAlert(alert);
+        }
+
         // Kursor od razu w polu opisu (pierwsze pole okna).
         Loaded += (_, _) => LabelBox.Focus();
     }
@@ -93,6 +98,28 @@ public partial class PriceLineWindow : Window
             return;
         }
 
+        PriceAlert? alert = null;
+        if (_original.Alert is { } original)
+        {
+            if (!int.TryParse(RearmTicksBox.Text.Trim(), out var rearmTicks) || rearmTicks < 0 || rearmTicks > 1000)
+            {
+                ErrorText.Text = "Ponowne uzbrojenie: podaj liczbę ticków 0–1000";
+                return;
+            }
+
+            alert = original with
+            {
+                Repeat = SoundEveryBox.IsChecked == true ? AlertRepeat.EveryCross : AlertRepeat.Once,
+                Direction = DirectionUpBox.IsChecked == true ? AlertDirection.Up
+                    : DirectionDownBox.IsChecked == true ? AlertDirection.Down
+                    : AlertDirection.Both,
+                RearmTicks = rearmTicks,
+                Sound = SelectedSound(),
+                IsEnabled = AlertEnabledBox.IsChecked == true,
+                IsTriggered = false, // po zapisie poziom jest uzbrojony od nowa
+            };
+        }
+
         Result = _original with
         {
             Price = Math.Round(price / TickSize) * TickSize, // zaokrąglenie do pełnego ticka
@@ -102,9 +129,97 @@ public partial class PriceLineWindow : Window
             Label = LabelBox.Text.Trim(),
             LabelPosition = LabelLeftBox.IsChecked == true ? LabelPosition.Left : LabelPosition.Right,
             IsLocked = LockedBox.IsChecked == true,
+            Alert = alert,
         };
 
         DialogResult = true;
+    }
+
+    // =====================================================================
+    // Poziom alarmowy
+    // =====================================================================
+
+    /// <summary>Własny plik dźwięku (pełna ścieżka) – pozycja na końcu listy dźwięków.</summary>
+    private string? _soundFile;
+
+    private void ShowAlert(PriceAlert alert)
+    {
+        Title = "Poziom alarmowy";
+        AlertPanel.Visibility = Visibility.Visible;
+        LockedBox.Content = "🔒 Zablokuj poziom (nie można go przesunąć myszą)";
+        StyleBox.IsEnabled = false; // poziom alarmowy ma własny wzór (kreska-kropka)
+        StyleBox.ToolTip = "Poziom alarmowy zawsze ma wzór kreska-kropka – odróżnia się od zwykłych linii";
+
+        SoundOnceBox.IsChecked = alert.Repeat == AlertRepeat.Once;
+        SoundEveryBox.IsChecked = alert.Repeat == AlertRepeat.EveryCross;
+        RearmTicksBox.Text = alert.RearmTicks.ToString(CultureInfo.InvariantCulture);
+        DirectionBothBox.IsChecked = alert.Direction == AlertDirection.Both;
+        DirectionUpBox.IsChecked = alert.Direction == AlertDirection.Up;
+        DirectionDownBox.IsChecked = alert.Direction == AlertDirection.Down;
+        AlertEnabledBox.IsChecked = alert.IsEnabled;
+
+        if (!Infrastructure.AlertSoundPlayer.IsSystemSound(alert.Sound) && !string.IsNullOrWhiteSpace(alert.Sound))
+        {
+            _soundFile = alert.Sound;
+        }
+
+        FillSounds(alert.Sound);
+
+        AlertStateText.Text = alert.IsTriggered
+            ? $"Alarm zadziałał{(alert.LastTriggered is { } t ? $" ({t.ToLocalTime():dd.MM HH:mm:ss})" : string.Empty)} – zapis uzbroi go ponownie."
+            : "Zapis (także po zmianie ceny) uzbraja alarm od nowa. Dodawanie i menu poziomu: prawy przycisk myszy na wykresie.";
+    }
+
+    private void FillSounds(string selected)
+    {
+        SoundBox.Items.Clear();
+        foreach (var name in PriceAlert.SystemSounds)
+        {
+            SoundBox.Items.Add($"Windows: {name}");
+        }
+
+        if (_soundFile is not null)
+        {
+            SoundBox.Items.Add($"Plik: {System.IO.Path.GetFileName(_soundFile)}");
+        }
+
+        var index = PriceAlert.SystemSounds.ToList().FindIndex(n => string.Equals(n, selected, StringComparison.OrdinalIgnoreCase));
+        SoundBox.SelectedIndex = index >= 0 ? index : _soundFile is not null ? SoundBox.Items.Count - 1 : 0;
+    }
+
+    /// <summary>Wybrany dźwięk: nazwa systemowa albo ścieżka pliku.</summary>
+    private string SelectedSound() =>
+        SoundBox.SelectedIndex >= 0 && SoundBox.SelectedIndex < PriceAlert.SystemSounds.Count
+            ? PriceAlert.SystemSounds[SoundBox.SelectedIndex]
+            : _soundFile ?? PriceAlert.SystemSounds[0];
+
+    private void OnSoundFileClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Dźwięk alarmu",
+            Filter = "Dźwięki (*.wav;*.mp3)|*.wav;*.mp3|Wszystkie pliki (*.*)|*.*",
+            CheckFileExists = true,
+        };
+
+        if (_soundFile is not null)
+        {
+            dialog.InitialDirectory = System.IO.Path.GetDirectoryName(_soundFile);
+        }
+
+        if (dialog.ShowDialog(this) == true)
+        {
+            _soundFile = dialog.FileName;
+            FillSounds(_soundFile);
+        }
+    }
+
+    private void OnPlaySoundClick(object sender, RoutedEventArgs e)
+    {
+        if (!Infrastructure.AlertSoundPlayer.Play(SelectedSound()))
+        {
+            ErrorText.Text = "Nie można odtworzyć pliku – zagrał dźwięk systemowy.";
+        }
     }
 
     /// <summary>Sprawdza, czy tekst jest kolorem w formacie #RRGGBB.</summary>

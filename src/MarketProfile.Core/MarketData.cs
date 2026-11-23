@@ -6,7 +6,24 @@ namespace MarketProfile.Core;
 /// <param name="Time">Czas transakcji (z informacją o strefie czasowej).</param>
 /// <param name="Price">Cena transakcji.</param>
 /// <param name="Volume">Wolumen (liczba kontraktów).</param>
-public readonly record struct Tick(DateTimeOffset Time, decimal Price, long Volume);
+/// <param name="Side">
+/// Strona inicjująca transakcję ustalona z notowań bid/ask w chwili transakcji (Unknown = nieznana – wtedy szacuje ją
+/// reguła ticka przy budowie profilu, patrz <see cref="TickRule"/>).
+/// </param>
+public readonly record struct Tick(DateTimeOffset Time, decimal Price, long Volume, TradeSide Side = TradeSide.Unknown);
+
+/// <summary>Strona inicjująca transakcję (agresor).</summary>
+public enum TradeSide
+{
+    /// <summary>Nieznana (brak notowań bid/ask, cena w środku spreadu albo stare dane).</summary>
+    Unknown = 0,
+
+    /// <summary>Kupno – transakcja po cenie ask lub wyższej (kupujący „podnosi” ofertę).</summary>
+    Buy = 1,
+
+    /// <summary>Sprzedaż – transakcja po cenie bid lub niższej (sprzedający „uderza” w bid).</summary>
+    Sell = 2,
+}
 
 /// <summary>
 /// Świeca (bar) z danymi historycznymi: cena otwarcia, maksimum, minimum, zamknięcia i wolumen.
@@ -63,13 +80,19 @@ public enum BarInterval
 
     /// <summary>Świeca miesięczna.</summary>
     Month,
+
+    /// <summary>Świeca 30-minutowa (wewnątrzdzienna; zapisywana z rzeczywistym czasem początku, UTC).</summary>
+    Minutes30,
 }
 
 /// <summary>Pomocnicze dla <see cref="BarInterval"/>.</summary>
 public static class BarIntervals
 {
-    /// <summary>Wszystkie interwały, od najdłuższego.</summary>
+    /// <summary>Interwały D/W/M, od najdłuższego (świece 30 min są pobierane osobno – tylko dla rynku szerokiego).</summary>
     public static IReadOnlyList<BarInterval> All { get; } = [BarInterval.Month, BarInterval.Week, BarInterval.Day];
+
+    /// <summary>Czy interwał jest wewnątrzdzienny (świece z godziną, nie z samą datą).</summary>
+    public static bool IsIntraday(this BarInterval interval) => interval == BarInterval.Minutes30;
 
     /// <summary>Kod interwału w bazie: "D", "W" albo "M".</summary>
     public static string Code(this BarInterval interval) => interval switch
@@ -77,6 +100,7 @@ public static class BarIntervals
         BarInterval.Day => "D",
         BarInterval.Week => "W",
         BarInterval.Month => "M",
+        BarInterval.Minutes30 => "30m",
         _ => throw new ArgumentOutOfRangeException(nameof(interval)),
     };
 
@@ -88,6 +112,13 @@ public static class BarIntervals
     /// </summary>
     public static DateTimeOffset PeriodStart(this BarInterval interval, DateTimeOffset time)
     {
+        if (interval == BarInterval.Minutes30)
+        {
+            // Początek półgodziny (UTC). Strefy giełd mają przesunięcia w pełnych godzinach, więc 9:30 ET to też pełna półgodzina UTC.
+            var ticks = time.UtcTicks;
+            return new DateTimeOffset(ticks - ticks % TimeSpan.FromMinutes(30).Ticks, TimeSpan.Zero);
+        }
+
         var date = time.UtcDateTime.Date;
         var start = interval switch
         {
@@ -105,6 +136,7 @@ public static class BarIntervals
         BarInterval.Day => "Dzienny",
         BarInterval.Week => "Tygodniowy",
         BarInterval.Month => "Miesięczny",
+        BarInterval.Minutes30 => "30 min",
         _ => interval.ToString(),
     };
 }

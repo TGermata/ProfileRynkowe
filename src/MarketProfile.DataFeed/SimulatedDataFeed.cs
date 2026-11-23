@@ -116,18 +116,28 @@ public sealed class SimulatedDataFeed : IMarketDataFeed
         _liveTask = Task.Run(async () =>
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(50));
-
-            while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+            try
             {
-                var simSeconds = 0.05 * Speed;
-                var ticks = generator.Next(1, 4);
-
-                for (var i = 0; i < ticks; i++)
+                while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
                 {
-                    generator.Step(simSeconds / ticks);
-                    _simTime = _simTime.AddSeconds(simSeconds / ticks);
-                    TickReceived?.Invoke(this, new Tick(_simTime, generator.Price, generator.NextVolume(1, 20)));
+                    var simSeconds = 0.05 * Speed;
+                    var ticks = generator.Next(1, 4);
+
+                    for (var i = 0; i < ticks; i++)
+                    {
+                        generator.Step(simSeconds / ticks);
+                        _simTime = _simTime.AddSeconds(simSeconds / ticks);
+                        TickReceived?.Invoke(this, new Tick(_simTime, generator.Price, generator.NextVolume(1, 20)));
+                    }
                 }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // Zatrzymanie generatora.
+            }
+            catch (Exception ex)
+            {
+                StatusChanged?.Invoke(this, $"Generator: błąd – {ex.Message}; dane zatrzymane");
             }
         }, token);
 
@@ -152,10 +162,16 @@ public sealed class SimulatedDataFeed : IMarketDataFeed
             {
                 // Oczekiwane przy zatrzymaniu.
             }
-
-            _liveCts.Dispose();
-            _liveCts = null;
-            _liveTask = null;
+            catch (Exception)
+            {
+                // Błąd pętli został już zgłoszony (StatusChanged) – rozłączenie i tak musi się udać.
+            }
+            finally
+            {
+                _liveCts.Dispose();
+                _liveCts = null;
+                _liveTask = null;
+            }
         }
 
         StatusChanged?.Invoke(this, "Generator: zatrzymano");

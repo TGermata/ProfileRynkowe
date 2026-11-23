@@ -19,12 +19,16 @@ public partial class MainWindow : Window
 
         // Akcje z wykresu przekazujemy do modelu widoku (okna dialogowe otwieramy tutaj, bo to część widoku).
         Chart.AddLineRequested += price => EditLine(_viewModel.CreateLineTemplate(price), isNew: true);
+        Chart.AddAlertRequested += price => EditLine(_viewModel.CreateAlertTemplate(price), isNew: true);
+        Chart.ConvertToAlertRequested += line => EditLine(_viewModel.ToAlert(line), isNew: false);
+        Chart.RearmAlertRequested += _viewModel.RearmAlert;
+        Chart.ToggleAlertRequested += _viewModel.ToggleAlert;
         Chart.EditLineRequested += line => EditLine(line, isNew: false);
         Chart.DeleteLineRequested += _viewModel.DeleteLine;
         Chart.LineMoved += _viewModel.MoveLine;
         Chart.SplitRequested += _viewModel.SplitProfile;
         Chart.MergeRequested += _viewModel.MergeProfile;
-        Chart.SimulateBackToRequested += time => _ = _viewModel.SimulateBackToAsync(time);
+        Chart.SimulateBackToRequested += async time => await _viewModel.SimulateBackToAsync(time); // błąd → globalna obsługa w App
         _viewModel.SimulationStartFocusRequested += () => Chart.FocusSimulationStart();
         Chart.ToggleExpandRequested += _viewModel.ToggleExpanded;
         Chart.ToggleLockRequested += _viewModel.ToggleLineLock;
@@ -32,7 +36,7 @@ public partial class MainWindow : Window
         Chart.SettleRequested += (date, close) => SettleWindow.Edit(this, _viewModel, date, close);
 
         // Widać początek najstarszego profilu – doczytujemy starszą historię.
-        Chart.OlderHistoryRequested += () => _ = _viewModel.LoadOlderHistoryAsync();
+        Chart.OlderHistoryRequested += async () => await _viewModel.LoadOlderHistoryAsync();
 
         // Po zmianie instrumentu (i po pierwszym wczytaniu danych) – dopasowanie wykresu do ekranu.
         _viewModel.FitRequested += Chart.FitAndPinLatest; // „Dopasuj” po starcie, po zmianie instrumentu i po zmianie czasu symulacji
@@ -45,6 +49,13 @@ public partial class MainWindow : Window
         DisplayPanel.PositionCommitted += _viewModel.SaveDisplayPanelPosition;
         OpeningPanel.MoveTo(_viewModel.Settings.OpeningPanelLeft, _viewModel.Settings.OpeningPanelTop);
         OpeningPanel.PositionCommitted += _viewModel.SaveOpeningPanelPosition;
+
+        // Szeroki rynek: wiersze wskaźników nad i pod wykresem przesuwają się razem ze świecami (przewijanie, zoom, kursor).
+        BroadChart.ViewportChanged += (_, viewport) =>
+        {
+            BroadPaneBottom1.Viewport = viewport;
+            BroadPaneBottom2.Viewport = viewport;
+        };
 
         // Zakładki w osobnych oknach (kilka monitorów): obsługa nagłówków i układ okien z ostatniego uruchomienia.
         InitializeDetachableTabs();
@@ -172,6 +183,14 @@ public partial class MainWindow : Window
 
     private void OnCandleAutoScaleClick(object sender, RoutedEventArgs e) => CandleChart.AutoScale();
 
+    private void OnBroadZoomInClick(object sender, RoutedEventArgs e) => BroadChart.ZoomIn();
+
+    private void OnBroadZoomOutClick(object sender, RoutedEventArgs e) => BroadChart.ZoomOut();
+
+    private void OnBroadAutoScaleClick(object sender, RoutedEventArgs e) => BroadChart.AutoScale();
+
+    private void OnBroadFitClick(object sender, RoutedEventArgs e) => BroadChart.FitLatest();
+
     /// <summary>Otwiera okno edycji linii; po zatwierdzeniu dodaje nową linię lub zapisuje zmiany.</summary>
     private void EditLine(PriceLine line, bool isNew)
     {
@@ -191,12 +210,30 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Stan zamykania: po potwierdzeniu trwa sprzątanie, po nim okno zamyka się naprawdę.</summary>
+    private bool _closingConfirmed;
+    private bool _readyToClose;
+
     /// <summary>
     /// Przy zamykaniu okna pytamy, czy na pewno wyjść z aplikacji.
-    /// Po potwierdzeniu zatrzymujemy pobieranie danych (rejestrator zapisuje ostatnie ticki do bazy).
+    /// Po potwierdzeniu zatrzymujemy pobieranie danych (rejestrator zapisuje ostatnie ticki do bazy)
+    /// i dopiero po zakończeniu tego zamykamy okno – inaczej proces kończyłby się przed zapisem bufora.
     /// </summary>
     protected override async void OnClosing(CancelEventArgs e)
     {
+        if (_readyToClose)
+        {
+            base.OnClosing(e);
+            return;
+        }
+
+        // Sprzątanie już trwa (ponowne kliknięcie „X”) – czekamy na nie.
+        if (_closingConfirmed)
+        {
+            e.Cancel = true;
+            return;
+        }
+
         var answer = MessageBox.Show(this,
             "Czy na pewno chcesz wyjść z aplikacji?",
             "Zamykanie aplikacji",
@@ -217,7 +254,22 @@ public partial class MainWindow : Window
             window.CloseWithApplication();
         }
 
-        base.OnClosing(e);
-        await _viewModel.DisposeAsync();
+        // Okno zostaje otwarte, dopóki dane nie zostaną zapisane i źródło rozłączone.
+        e.Cancel = true;
+        _closingConfirmed = true;
+        IsEnabled = false;
+        try
+        {
+            await _viewModel.DisposeAsync();
+        }
+        catch (Exception)
+        {
+            // Błąd przy sprzątaniu nie może zablokować zamknięcia aplikacji.
+        }
+        finally
+        {
+            _readyToClose = true;
+            Close();
+        }
     }
 }

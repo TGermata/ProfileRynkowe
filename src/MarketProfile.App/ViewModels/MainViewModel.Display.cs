@@ -51,6 +51,32 @@ public sealed partial class MainViewModel
         set => SaveAppearance(_settings with { Arrows = _settings.Arrows with { ShowClose = value } });
     }
 
+    /// <summary>Profil wolumenowy tradycyjny (wolumen całkowity).</summary>
+    public bool VolumeDisplayTotal
+    {
+        get => _settings.VolumeDisplay == VolumeDisplayKind.Total;
+        set
+        {
+            if (value)
+            {
+                SaveAppearance(_settings with { VolumeDisplay = VolumeDisplayKind.Total });
+            }
+        }
+    }
+
+    /// <summary>Profil wolumenowy różnicowy (delta kupno − sprzedaż).</summary>
+    public bool VolumeDisplayDelta
+    {
+        get => _settings.VolumeDisplay == VolumeDisplayKind.Delta;
+        set
+        {
+            if (value)
+            {
+                SaveAppearance(_settings with { VolumeDisplay = VolumeDisplayKind.Delta });
+            }
+        }
+    }
+
     /// <summary>Profil wolumenowy bieżącego (budowanego) słupka TPO.</summary>
     public bool ShowPeriodVolume
     {
@@ -176,6 +202,7 @@ public sealed partial class MainViewModel
         foreach (var name in new[]
                  {
                      nameof(ShowInitialBalance), nameof(ShowOpenArrow), nameof(ShowCloseArrow), nameof(ShowPeriodVolume),
+                     nameof(VolumeDisplayTotal), nameof(VolumeDisplayDelta),
                      nameof(NotesStyle), nameof(ShowHalfback), nameof(ShowSettle), nameof(ShowPullback), nameof(ShowNoteText),
                      nameof(OvernightLevelsLastDay), nameof(OvernightLevelsAllDays), nameof(OvernightLevelsNone),
                      nameof(ShowTpoAverages), nameof(TpoAverageToggles),

@@ -57,3 +57,93 @@ public static class LiveBars
         return result;
     }
 }
+
+/// <summary>
+/// Bieżące świece wewnątrzdzienne (np. 30 min) z ticków na żywo – tylko z sesji kasowej (<see cref="CashSession"/>).
+/// Ticki przychodzą z wątku źródła danych, odczyt (<see cref="Merge"/>) – z wątku UI; klasa jest bezpieczna wątkowo.
+/// </summary>
+public sealed class LiveIntervalBarBuilder(Instrument instrument, BarInterval interval)
+{
+    private readonly Lock _lock = new();
+    private readonly SortedDictionary<DateTimeOffset, Bar> _bars = [];
+    private long _version;
+
+    /// <summary>Licznik zmian – rośnie z każdym przyjętym tickiem (do sprawdzania, czy odświeżyć widok).</summary>
+    public long Version => Interlocked.Read(ref _version);
+
+    /// <summary>Dodaje tick do świecy jego okresu; ticki spoza sesji kasowej są pomijane.</summary>
+    public void Add(Tick tick)
+    {
+        if (!CashSession.Contains(instrument, tick.Time))
+        {
+            return;
+        }
+
+        var key = interval.PeriodStart(tick.Time);
+        lock (_lock)
+        {
+            _bars[key] = _bars.TryGetValue(key, out var bar)
+                ? bar with
+                {
+                    High = Math.Max(bar.High, tick.Price),
+                    Low = Math.Min(bar.Low, tick.Price),
+                    Close = tick.Price,
+                    Volume = bar.Volume + tick.Volume,
+                }
+                : new Bar(key, tick.Price, tick.Price, tick.Price, tick.Price, tick.Volume);
+        }
+
+        Interlocked.Increment(ref _version);
+    }
+
+    /// <summary>Usuwa świece na żywo (np. po zatrzymaniu źródła danych albo zmianie instrumentu).</summary>
+    public void Clear()
+    {
+        lock (_lock)
+        {
+            _bars.Clear();
+        }
+
+        Interlocked.Increment(ref _version);
+    }
+
+    /// <summary>
+    /// Świece z bazy uzupełnione świecami na żywo: świeca tego samego okresu jest rozszerzana (maksimum, minimum,
+    /// zamknięcie z notowań na żywo; otwarcie z bazy – jest dokładne także po starcie w środku okresu),
+    /// brakująca – dopisywana. Starsze świece bez zmian.
+    /// </summary>
+    public IReadOnlyList<Bar> Merge(IReadOnlyList<Bar> stored)
+    {
+        Bar[] live;
+        lock (_lock)
+        {
+            live = [.. _bars.Values];
+        }
+
+        if (live.Length == 0)
+        {
+            return stored;
+        }
+
+        var result = new SortedDictionary<DateTimeOffset, Bar>();
+        foreach (var bar in stored)
+        {
+            result[bar.Time] = bar;
+        }
+
+        foreach (var bar in live)
+        {
+            result[bar.Time] = result.TryGetValue(bar.Time, out var saved)
+                ? saved with
+                {
+                    High = Math.Max(saved.High, bar.High),
+                    Low = Math.Min(saved.Low, bar.Low),
+                    Close = bar.Close,
+                    Volume = Math.Max(saved.Volume, bar.Volume),
+                }
+                : bar;
+        }
+
+        return [.. result.Values];
+    }
+}

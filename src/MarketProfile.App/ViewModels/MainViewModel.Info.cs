@@ -66,6 +66,26 @@ public sealed partial class MainViewModel
         NotifyInfo();
     }
 
+    /// <summary>
+    /// Uruchamia operację „w tle” (bez czekania na nią) tak, żeby jej błąd nie zginął po cichu:
+    /// wyjątek trafia do pola informacji zamiast zostawiać aplikację w połowie zmiany.
+    /// </summary>
+    private async void RunSafely(Task task, string context = "Błąd")
+    {
+        try
+        {
+            await task;
+        }
+        catch (OperationCanceledException)
+        {
+            // Przerwane celowo (zatrzymanie, zmiana instrumentu).
+        }
+        catch (Exception ex)
+        {
+            ShowError($"{context}: {ex.Message}");
+        }
+    }
+
     /// <summary>Usuwa błąd i problem źródła danych (np. po udanym połączeniu albo zmianie trybu).</summary>
     private void ClearError()
     {

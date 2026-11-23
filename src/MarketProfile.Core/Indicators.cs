@@ -1,5 +1,15 @@
 namespace MarketProfile.Core;
 
+/// <summary>Rodzaj średniej kroczącej.</summary>
+public enum MovingAverageKind
+{
+    /// <summary>Prosta (arytmetyczna).</summary>
+    Sma,
+
+    /// <summary>Wykładnicza.</summary>
+    Ema,
+}
+
 /// <summary>Wskaźniki techniczne liczone na świecach (wspólne dla wykresów, analiz i automatycznego tradingu).</summary>
 public static class Indicators
 {
@@ -29,6 +39,42 @@ public static class Indicators
 
         return result;
     }
+
+    /// <summary>
+    /// Wykładnicza średnia krocząca (EMA) cen zamknięcia. Start: SMA z pierwszych <paramref name="period"/> zamknięć,
+    /// potem <c>EMA = EMA_poprz + k × (zamknięcie − EMA_poprz)</c>, gdzie <c>k = 2 / (period + 1)</c>
+    /// (tak liczą TWS i TradingView). Dla pierwszych <c>period − 1</c> świec – null (za mało danych).
+    /// </summary>
+    public static decimal?[] Ema(IReadOnlyList<Bar> bars, int period)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(period, 1);
+        var result = new decimal?[bars.Count];
+        if (bars.Count < period)
+        {
+            return result;
+        }
+
+        decimal sum = 0;
+        for (var i = 0; i < period; i++)
+        {
+            sum += bars[i].Close;
+        }
+
+        var k = 2m / (period + 1);
+        var ema = sum / period;
+        result[period - 1] = ema;
+        for (var i = period; i < bars.Count; i++)
+        {
+            ema += k * (bars[i].Close - ema);
+            result[i] = ema;
+        }
+
+        return result;
+    }
+
+    /// <summary>Średnia krocząca wybranego rodzaju (SMA albo EMA).</summary>
+    public static decimal?[] MovingAverage(IReadOnlyList<Bar> bars, MovingAverageKind kind, int period) =>
+        kind == MovingAverageKind.Ema ? Ema(bars, period) : Sma(bars, period);
 
     /// <summary>
     /// Wartość SMA „na dziś” ze świec dziennych: <paramref name="period"/> − 1 ostatnich zamknięć świec sprzed dnia

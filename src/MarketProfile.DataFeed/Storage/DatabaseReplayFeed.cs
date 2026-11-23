@@ -127,6 +127,9 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     /// <summary>Zdarzenie wywoływane po odtworzeniu wszystkich danych z zakresu.</summary>
     public event EventHandler? Completed;
 
+    /// <summary>Odtwarzanie przerwane błędem (np. odczytu bazy) – wywoływane z wątku w tle.</summary>
+    public event EventHandler<Exception>? Failed;
+
     /// <summary>Wstrzymuje odtwarzanie (zegar symulacji stoi).</summary>
     public void Pause() => _paused = true;
 
@@ -199,6 +202,16 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
         try
         {
             await ReplayLoopAsync(symbol, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // Zatrzymanie odtwarzania.
+        }
+        catch (Exception ex)
+        {
+            // Np. błąd odczytu bazy albo wyjątek w obsłudze ticka – bez tego zegar symulacji stanąłby bez słowa.
+            StatusChanged?.Invoke(this, $"Symulacja przerwana – błąd: {ex.Message}");
+            Failed?.Invoke(this, ex);
         }
         finally
         {
@@ -338,10 +351,16 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
             {
                 // Oczekiwane przy zatrzymaniu.
             }
-
-            _liveCts.Dispose();
-            _liveCts = null;
-            _liveTask = null;
+            catch (Exception)
+            {
+                // Błąd pętli został już zgłoszony (StatusChanged / Failed) – rozłączenie i tak musi się udać.
+            }
+            finally
+            {
+                _liveCts.Dispose();
+                _liveCts = null;
+                _liveTask = null;
+            }
         }
     }
 

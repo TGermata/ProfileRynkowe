@@ -54,7 +54,8 @@ public sealed partial class MarketDataStore
                 time   INTEGER NOT NULL,   -- ms od 1970-01-01 UTC
                 price  INTEGER NOT NULL,   -- cena × 10000
                 volume INTEGER NOT NULL,
-                source TEXT    NOT NULL
+                source TEXT    NOT NULL,
+                side   INTEGER NOT NULL DEFAULT 0   -- strona transakcji z bid/ask: 0 = nieznana, 1 = kupno, 2 = sprzedaż
             );
             CREATE INDEX IF NOT EXISTS ix_ticks ON ticks (symbol, time);
 
@@ -80,22 +81,37 @@ public sealed partial class MarketDataStore
             CREATE INDEX IF NOT EXISTS ix_tick_coverage ON tick_coverage (symbol, from_time);
             """);
 
+        EnsureTickSideColumn(connection);
         EnsureProfileStatsTable(connection);
         EnsureOhlcBarsTable(connection);
         EnsureSettlementsTable(connection);
 
         // Migracja: bazy zapisane przez wcześniejsze wersje mają ceny × 10⁴ – przeliczamy je na × 10⁸ (bez strat).
+        // Wersję sprawdzamy wewnątrz transakcji z blokadą zapisu (BEGIN IMMEDIATE): dwie kopie aplikacji otwierające
+        // starą bazę naraz nie mogą obie pomnożyć cen (wyszłoby × 10¹²).
+        using var transaction = connection.BeginTransaction(deferred: false);
         using var version = connection.CreateCommand();
         version.CommandText = "PRAGMA user_version";
         if ((long)version.ExecuteScalar()! < SchemaVersion)
         {
-            using var transaction = connection.BeginTransaction();
             Execute(connection, $"""
                 UPDATE ticks SET price = price * 10000;
                 UPDATE bars  SET open = open * 10000, high = high * 10000, low = low * 10000, close = close * 10000;
                 PRAGMA user_version = {SchemaVersion};
                 """);
-            transaction.Commit();
+        }
+
+        transaction.Commit();
+    }
+
+    /// <summary>Bazy z wcześniejszych wersji nie mają kolumny „side” – dopisujemy ją (stare ticki: strona nieznana).</summary>
+    private static void EnsureTickSideColumn(SqliteConnection connection)
+    {
+        using var columns = connection.CreateCommand();
+        columns.CommandText = "SELECT COUNT(*) FROM pragma_table_info('ticks') WHERE name = 'side'";
+        if ((long)columns.ExecuteScalar()! == 0)
+        {
+            Execute(connection, "ALTER TABLE ticks ADD COLUMN side INTEGER NOT NULL DEFAULT 0");
         }
     }
 
@@ -109,13 +125,14 @@ public sealed partial class MarketDataStore
         using var connection = Open();
         using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO ticks (symbol, time, price, volume, source) VALUES ($s, $t, $p, $v, $src)";
+        command.CommandText = "INSERT INTO ticks (symbol, time, price, volume, source, side) VALUES ($s, $t, $p, $v, $src, $side)";
 
         var pSymbol = command.Parameters.Add("$s", SqliteType.Text);
         var pTime = command.Parameters.Add("$t", SqliteType.Integer);
         var pPrice = command.Parameters.Add("$p", SqliteType.Integer);
         var pVolume = command.Parameters.Add("$v", SqliteType.Integer);
         var pSource = command.Parameters.Add("$src", SqliteType.Text);
+        var pSide = command.Parameters.Add("$side", SqliteType.Integer);
         pSymbol.Value = symbol;
         pSource.Value = source;
 
@@ -124,6 +141,7 @@ public sealed partial class MarketDataStore
             pTime.Value = tick.Time.ToUnixTimeMilliseconds();
             pPrice.Value = ToStored(tick.Price);
             pVolume.Value = tick.Volume;
+            pSide.Value = (int)tick.Side;
             command.ExecuteNonQuery();
         }
 
@@ -182,6 +200,12 @@ public sealed partial class MarketDataStore
         var fromMs = from.ToUnixTimeMilliseconds();
         var toMs = to.ToUnixTimeMilliseconds();
 
+        // Strona transakcji zmierzona na żywo (bid/ask) – historyczne ticki IB jej nie mają, więc przy zastępowaniu odcinka
+        // przenosimy ją z usuwanych ticków na te same transakcje (czas, cena, wolumen).
+        var measuredSides = replaceExisting
+            ? ReadMeasuredSides(connection, symbol, source, fromMs, toMs)
+            : new Dictionary<(long, long, long), Queue<int>>();
+
         if (replaceExisting)
         {
             using var delete = connection.CreateCommand();
@@ -196,18 +220,27 @@ public sealed partial class MarketDataStore
         if (ticks.Count > 0)
         {
             using var insert = connection.CreateCommand();
-            insert.CommandText = "INSERT INTO ticks (symbol, time, price, volume, source) VALUES ($s, $t, $p, $v, $src)";
+            insert.CommandText = "INSERT INTO ticks (symbol, time, price, volume, source, side) VALUES ($s, $t, $p, $v, $src, $side)";
             insert.Parameters.AddWithValue("$s", symbol);
             insert.Parameters.AddWithValue("$src", source);
             var pTime = insert.Parameters.Add("$t", SqliteType.Integer);
             var pPrice = insert.Parameters.Add("$p", SqliteType.Integer);
             var pVolume = insert.Parameters.Add("$v", SqliteType.Integer);
+            var pSide = insert.Parameters.Add("$side", SqliteType.Integer);
 
             foreach (var tick in ticks)
             {
-                pTime.Value = tick.Time.ToUnixTimeMilliseconds();
-                pPrice.Value = ToStored(tick.Price);
+                var key = (tick.Time.ToUnixTimeMilliseconds(), ToStored(tick.Price), tick.Volume);
+                var side = (int)tick.Side;
+                if (side == 0 && measuredSides.TryGetValue(key, out var sides) && sides.Count > 0)
+                {
+                    side = sides.Dequeue();
+                }
+
+                pTime.Value = key.Item1;
+                pPrice.Value = key.Item2;
                 pVolume.Value = tick.Volume;
+                pSide.Value = side;
                 insert.ExecuteNonQuery();
             }
         }
@@ -335,7 +368,7 @@ public sealed partial class MarketDataStore
         using var connection = Open();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT time, price, volume FROM ticks
+            SELECT time, price, volume, side FROM ticks
             WHERE symbol = $s AND time >= $from AND time < $to AND ($src IS NULL OR source = $src)
             ORDER BY time, rowid
             """;
@@ -344,11 +377,45 @@ public sealed partial class MarketDataStore
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
+            var side = reader.GetInt64(3);
             yield return new Tick(
                 DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(0)),
                 FromStored(reader.GetInt64(1)),
-                reader.GetInt64(2));
+                reader.GetInt64(2),
+                side is 1 or 2 ? (TradeSide)side : TradeSide.Unknown);
         }
+    }
+
+    /// <summary>Zmierzone strony ticków z odcinka: (czas ms, cena, wolumen) → strony w kolejności zapisu.</summary>
+    private static Dictionary<(long, long, long), Queue<int>> ReadMeasuredSides(
+        SqliteConnection connection, string symbol, string source, long fromMs, long toMs)
+    {
+        var result = new Dictionary<(long, long, long), Queue<int>>();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT time, price, volume, side FROM ticks
+            WHERE symbol = $s AND source = $src AND time >= $from AND time < $to AND side <> 0
+            ORDER BY time, rowid
+            """;
+        command.Parameters.AddWithValue("$s", symbol);
+        command.Parameters.AddWithValue("$src", source);
+        command.Parameters.AddWithValue("$from", fromMs);
+        command.Parameters.AddWithValue("$to", toMs);
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var key = (reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2));
+            if (!result.TryGetValue(key, out var sides))
+            {
+                sides = new Queue<int>();
+                result[key] = sides;
+            }
+
+            sides.Enqueue(reader.GetInt32(3));
+        }
+
+        return result;
     }
 
     /// <summary>Odczytuje świece 1-minutowe z zakresu [from, to) w kolejności czasu.</summary>

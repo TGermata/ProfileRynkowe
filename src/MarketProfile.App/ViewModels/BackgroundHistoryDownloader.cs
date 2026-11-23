@@ -157,7 +157,7 @@ public sealed class BackgroundHistoryDownloader
             return 0;
         }
 
-        Progress?.Invoke(this, $"Dane w tle: {symbol} (rynek szeroki) – świece D/W/M...");
+        Progress?.Invoke(this, $"Dane w tle: {symbol} (rynek szeroki) – świece D/W/M i 30 min...");
         string? lastFeedMessage = null;
         await using var feed = IbFeeds.Create(_connection);
         feed.StatusChanged += (_, message) => lastFeedMessage = message;
@@ -170,11 +170,13 @@ public sealed class BackgroundHistoryDownloader
             throw new InvalidOperationException(lastFeedMessage is { } m && !m.Contains("łączenie") ? m : ex.Message, ex);
         }
 
-        var results = await OhlcBarUpdater.UpdateAsync(feed, symbol, _store, token).ConfigureAwait(false);
+        var results = (await OhlcBarUpdater.UpdateAsync(feed, symbol, _store, token).ConfigureAwait(false)).ToList();
+        // Świece 30 min (sesja kasowa) – wykres „Szeroki rynek”.
+        results.Add(await OhlcBarUpdater.UpdateIntradayAsync(feed, symbol, _store, token).ConfigureAwait(false));
         _ohlcUpdatedAt[symbol] = DateTimeOffset.UtcNow;
         if (OhlcBarUpdater.Errors(results) is { } error)
         {
-            throw new InvalidOperationException($"świece D/W/M: {error}");
+            throw new InvalidOperationException($"świece rynku szerokiego: {error}");
         }
 
         return results.Sum(r => r.Saved);
@@ -302,7 +304,8 @@ public sealed class BackgroundHistoryDownloader
     /// <summary>Brakujące doby ticków instrumentu (od najnowszej); pusta lista, gdy ticki są wyłączone lub pobrane.</summary>
     private IReadOnlyList<TimeRange> TickChunks(string symbol, DateTimeOffset now)
     {
-        if (_tickDays == 0)
+        // IBKR Web API nie udostępnia historii ticków – pobieramy tylko świece.
+        if (_tickDays == 0 || _connection.UseWebApi)
         {
             return [];
         }

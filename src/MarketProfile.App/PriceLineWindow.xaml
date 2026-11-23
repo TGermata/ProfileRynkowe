@@ -64,6 +64,58 @@
             <ComboBox Grid.Row="5" Grid.Column="1" x:Name="StyleBox" Width="140" HorizontalAlignment="Left" Margin="4" />
         </Grid>
 
+        <!-- Alarm dźwiękowy – tylko dla poziomu alarmowego. -->
+        <GroupBox x:Name="AlertPanel" Header="🔔 Alarm" Margin="0,8,0,0" Visibility="Collapsed">
+            <Grid Margin="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition />
+                    <RowDefinition />
+                    <RowDefinition />
+                    <RowDefinition />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="Dźwięk" VerticalAlignment="Top" Margin="4,7,4,4" />
+                <StackPanel Grid.Row="0" Grid.Column="1" Margin="4">
+                    <WrapPanel>
+                        <RadioButton x:Name="SoundOnceBox" GroupName="Repeat" Content="Jednokrotnie" Margin="0,0,12,0"
+                                     ToolTip="Po pierwszym przebiciu alarm się wyłącza (prawy przycisk → Uzbrój ponownie)" />
+                        <RadioButton x:Name="SoundEveryBox" GroupName="Repeat" Content="Przy każdym przebiciu"
+                                     ToolTip="Dźwięk przy każdym kolejnym przebiciu poziomu" />
+                    </WrapPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0"
+                                IsEnabled="{Binding IsChecked, ElementName=SoundEveryBox}">
+                        <TextBlock Text="Ponowne uzbrojenie po odsunięciu ceny o" Margin="0,0,4,0" />
+                        <TextBox x:Name="RearmTicksBox" Width="40" />
+                        <TextBlock Text="tick(ów)" Margin="4,0,0,0" />
+                    </StackPanel>
+                </StackPanel>
+
+                <TextBlock Grid.Row="1" Text="Kierunek" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="4">
+                    <RadioButton x:Name="DirectionBothBox" GroupName="Direction" Content="▲▼ Oba" Margin="0,0,12,0" />
+                    <RadioButton x:Name="DirectionUpBox" GroupName="Direction" Content="▲ W górę" Margin="0,0,12,0" />
+                    <RadioButton x:Name="DirectionDownBox" GroupName="Direction" Content="▼ W dół" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="2" Text="Plik / dźwięk" />
+                <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="4">
+                    <ComboBox x:Name="SoundBox" Width="170" />
+                    <Button Content="Plik…" Margin="6,0,0,0" Padding="6,0" Click="OnSoundFileClick"
+                            ToolTip="Własny dźwięk .wav / .mp3" />
+                    <Button Content="▶" Margin="6,0,0,0" Padding="8,0" Click="OnPlaySoundClick" ToolTip="Odtwórz" />
+                </StackPanel>
+
+                <CheckBox Grid.Row="3" Grid.ColumnSpan="2" x:Name="AlertEnabledBox" Content="Alarm włączony" Margin="4" />
+                <TextBlock Grid.Row="4" Grid.ColumnSpan="2" x:Name="AlertStateText" Foreground="Gray" FontSize="11"
+                           TextWrapping="Wrap" MaxWidth="320" HorizontalAlignment="Left" />
+            </Grid>
+        </GroupBox>
+
         <!-- Blokada: zablokowanej linii nie da się przypadkowo przesunąć myszą. -->
         <CheckBox x:Name="LockedBox" Content="🔒 Zablokuj linię (nie można jej przesunąć myszą)" Margin="4,8,4,4" />
 

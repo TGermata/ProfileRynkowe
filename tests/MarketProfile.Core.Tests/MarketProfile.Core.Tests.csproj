@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\MarketProfile.Core\MarketProfile.Core.csproj" />
     <ProjectReference Include="..\..\src\MarketProfile.DataFeed\MarketProfile.DataFeed.csproj" />
     <ProjectReference Include="..\..\src\MarketProfile.DataFeed.IB\MarketProfile.DataFeed.IB.csproj" />
+    <ProjectReference Include="..\..\src\MarketProfile.DataFeed.IBWeb\MarketProfile.DataFeed.IBWeb.csproj" />
   </ItemGroup>
 
   <!-- Logika powiększania wykresu nie zależy od WPF – testujemy sam plik, bez całej aplikacji okienkowej. -->

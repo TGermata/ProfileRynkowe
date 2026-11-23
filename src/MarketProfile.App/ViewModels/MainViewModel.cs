@@ -42,6 +42,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private int _loadedHistoryDays;            // ile dni historii wczytano przy ostatnim starcie
     private DateTimeOffset? _oldestLoaded;     // czas najstarszej wczytanej świecy
     private bool _loadingOlder;                // trwa doczytywanie starszej historii
+    private int _historyLoadId;                // właściciel flagi _loadingOlder (zwalnia ją tylko ten, kto ją ustawił)
     private bool _noOlderData;                 // źródło nie ma już starszych danych
     private CancellationTokenSource? _historyCts; // doczytywanie historii po zwiększeniu liczby profili (do przerwania)
     private long _lastTickUtcTicks;          // czas ostatniego ticka (UTC) – "teraz" w danych na żywo
@@ -61,6 +62,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public MainViewModel()
     {
+        // Problemy z plikami ustawień (uszkodzony plik, nieudany zapis) – do pola informacji zamiast cichej utraty danych.
+        JsonFileStore.Problem += OnSettingsFileProblem;
         _settings = SettingsStore.Load();
         _appearance = ChartStyle.Create(_settings);
         _drawings = DrawingsStore.Load();
@@ -73,7 +76,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             RefreshSnapshots();
         };
 
-        StartStopCommand = new AsyncRelayCommand(() => IsRunning ? StopAsync() : StartAsync());
+        StartStopCommand = new AsyncRelayCommand(() =>
+        {
+            CancelReconnect(); // użytkownik sam decyduje – automatyczne ponowne łączenie przestaje być potrzebne
+            return IsRunning ? StopAsync() : StartAsync();
+        });
 
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _refreshTimer.Tick += (_, _) =>
@@ -84,10 +91,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             UpdateProfileStats();
             UpdatePeriodTimer();
             OnCandleTimer();
+            OnBroadTimer();
+            CheckPriceAlerts();
         };
 
         RefreshTickDownloadText();
-        _ = LoadDailyBarsAsync(); // średnie dzienne na wykresie TPO
+        RunSafely(LoadDailyBarsAsync()); // średnie dzienne na wykresie TPO
     }
 
     /// <summary>Bieżące ustawienia aplikacji.</summary>
@@ -122,7 +131,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 return;
             }
 
-            _ = ApplySettingsAsync(_settings with { InstrumentSymbol = value.Symbol });
+            RunSafely(ApplySettingsAsync(_settings with { InstrumentSymbol = value.Symbol }));
         }
     }
 
@@ -192,7 +201,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
             SaveDisplaySettings(_settings with { ProfilesOnScreen = value });
             OnPropertyChanged();
-            _ = EnsureHistoryForProfilesAsync();
+            RunSafely(EnsureHistoryForProfilesAsync());
         }
     }
 
@@ -262,7 +271,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
         }
 
-        _loadingOlder = true;
+        var loadId = BeginHistoryLoad();
         var zone = _settings.ExchangeTimeZone;
         try
         {
@@ -284,6 +293,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                         builder.ProcessBar(bar);
                     }
                 });
+                if (!ReferenceEquals(feed, _feed) || !ReferenceEquals(builder, _builder))
+                {
+                    return;
+                }
+
                 _oldestLoaded = dbBars[0].Time;
                 RefreshSnapshots();
             }
@@ -308,6 +322,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                     }
                 });
 
+                if (!ReferenceEquals(feed, _feed) || !ReferenceEquals(builder, _builder))
+                {
+                    return;
+                }
+
                 if (ibBars.Count > 0)
                 {
                     _oldestLoaded = ibBars.Min(b => b.Time);
@@ -321,11 +340,31 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             // Przerwane (np. zmiana instrumentu albo zatrzymanie) – nic do zgłaszania.
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ReferenceEquals(feed, _feed))
         {
             ShowError($"Nie udało się doczytać historii: {ex.Message}");
         }
+        catch (Exception)
+        {
+            // Błąd starego (zatrzymanego) źródła – już nieaktualny.
+        }
         finally
+        {
+            EndHistoryLoad(loadId);
+        }
+    }
+
+    /// <summary>Zajmuje flagę doczytywania historii (IB obsługuje jedno zapytanie o historię naraz).</summary>
+    private int BeginHistoryLoad()
+    {
+        _loadingOlder = true;
+        return ++_historyLoadId;
+    }
+
+    /// <summary>Zwalnia flagę – tylko jeśli w międzyczasie nie zajął jej nowszy start / doczytywanie.</summary>
+    private void EndHistoryLoad(int loadId)
+    {
+        if (_historyLoadId == loadId)
         {
             _loadingOlder = false;
         }
@@ -347,7 +386,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        _loadingOlder = true;
+        var loadId = BeginHistoryLoad();
         var recorder = _recorder;
         var from = to - OlderHistoryStep;
         var zone = _settings.ExchangeTimeZone;
@@ -376,17 +415,26 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 }
             });
 
+            if (!ReferenceEquals(feed, _feed) || !ReferenceEquals(builder, _builder))
+            {
+                return;
+            }
+
             _oldestLoaded = bars.Min(b => b.Time);
             RefreshSnapshots();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ReferenceEquals(feed, _feed))
         {
             _noOlderData = true; // nie ponawiamy w kółko po błędzie
             ShowError($"Nie udało się doczytać starszej historii: {ex.Message}");
         }
+        catch (Exception)
+        {
+            // Błąd starego (zatrzymanego) źródła – już nieaktualny.
+        }
         finally
         {
-            _loadingOlder = false;
+            EndHistoryLoad(loadId);
         }
     }
 
@@ -576,7 +624,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// Tryb na żywo z danymi od brokera (na żywo lub opóźnionymi): połączenie uruchamia się samo,
     /// więc przycisk Start/Stop nie jest potrzebny.
     /// </summary>
-    public bool IsBrokerLive => !IsSimulationMode && _settings.LiveSource == LiveSourceKind.InteractiveBrokers;
+    public bool IsBrokerLive => !IsSimulationMode && _settings.UsesInteractiveBrokers;
 
     /// <summary>
     /// Czy pokazać przycisk Start/Stop: dla generatora – zawsze w trybie na żywo; dla brokera – tylko gdy
@@ -619,19 +667,19 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>
     /// Tryb "Na żywo": uruchamia źródło danych wybrane w ustawieniach – Interactive Brokers albo generator.
     /// </summary>
-    public Task StartAsync() => _settings.LiveSource == LiveSourceKind.InteractiveBrokers
+    public Task StartAsync() => _settings.UsesInteractiveBrokers
         ? StartInteractiveBrokersAsync()
         : StartFeedAsync(new SimulatedDataFeed { Speed = _settings.SimulatorSpeed });
 
     /// <summary>
-    /// Start Interactive Brokers: najpierw wskazujemy bibliotekę TWS API ze ścieżki z ustawień,
-    /// dopiero potem tworzymy źródło danych (które z tej biblioteki korzysta).
+    /// Start Interactive Brokers: dla TWS API najpierw wskazujemy bibliotekę TWS API ze ścieżki z ustawień,
+    /// dopiero potem tworzymy źródło danych (które z tej biblioteki korzysta). Web API biblioteki nie potrzebuje.
     /// </summary>
     private async Task StartInteractiveBrokersAsync()
     {
         try
         {
-            IbApiLoader.Use(string.IsNullOrWhiteSpace(_settings.IbApiPath) ? IbApiLoader.AutoDetect() : _settings.IbApiPath);
+            IbFeeds.Prepare(_settings);
         }
         catch (Exception ex)
         {
@@ -644,6 +692,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             _tickSizeWarning = IbFeeds.TickSizeWarning(_feed);
             NotifyDataSource();
             StartBackgroundDownload();
+            RunSafely(StartBroadLiveAsync(), "Szeroki rynek – połączenie na żywo");
         }
     }
 
@@ -660,7 +709,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         RefreshTickDownloadText();
         if (_backgroundCts is not null || !_settings.RecordToDatabase ||
-            _settings.LiveSource != LiveSourceKind.InteractiveBrokers)
+            !_settings.UsesInteractiveBrokers)
         {
             return;
         }
@@ -671,10 +720,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        // Biblioteka TWS API – w trybie na żywo jest już wskazana, w symulacji wskazujemy ją tutaj.
+        // Biblioteka TWS API – w trybie na żywo jest już wskazana, w symulacji wskazujemy ją tutaj (Web API jej nie potrzebuje).
         try
         {
-            IbApiLoader.Use(string.IsNullOrWhiteSpace(_settings.IbApiPath) ? IbApiLoader.AutoDetect() : _settings.IbApiPath);
+            IbFeeds.Prepare(_settings);
         }
         catch (Exception ex)
         {
@@ -812,7 +861,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             state = !_settings.RecordToDatabase
                 ? "⏸ Pobieranie ticków wyłączone – włącz „Zapisuj dane od brokera do bazy” w Ustawieniach → Dane i broker → Pobieranie i baza"
-                : _settings.LiveSource != LiveSourceKind.InteractiveBrokers
+                : !_settings.UsesInteractiveBrokers
                     ? "⏸ Pobieranie ticków nieaktywne – źródłem danych nie jest Interactive Brokers"
                     : _backgroundError is { } startError
                         ? $"⚠ Pobieranie ticków nie wystartowało – {startError}"
@@ -834,6 +883,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         else
         {
             state = _backgroundActivity is { } activity ? $"⬇ {activity}" : "⬇ Pobieranie w tle – sprawdzanie brakujących danych...";
+        }
+
+        // IBKR Web API nie ma historii ticków – w tle pobierane są tylko świece (1-min i D/W/M).
+        if (_settings.LiveSource == LiveSourceKind.InteractiveBrokersWebApi)
+        {
+            TickDownloadText = $"{state}     |     Ticki: IBKR Web API nie udostępnia historii ticków – symulacja korzysta ze świec 1-min " +
+                               "(transakcje na żywo są zapisywane na bieżąco)";
+            return;
         }
 
         try
@@ -884,32 +941,44 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 Profiles = [];
             }
 
-            // Nowy silnik profili z aktualnymi ustawieniami.
+            // Nowy silnik profili z aktualnymi ustawieniami. Alarmy dopiero po wczytaniu historii.
+            SetAlertsLive(false);
             _builder = new ProfileBuilder(_settings.ToProfileSettings());
 
             _feed = feed;
             _feed.StatusChanged += OnFeedStatusChanged;
+            SubscribeConnectionLoss(_feed);
             if (_feed is DatabaseReplayFeed replay)
             {
                 // Symulacja: zegar dla widoku i informacja o końcu danych.
                 replay.Completed += OnReplayCompleted;
+                replay.Failed += OnReplayFailed;
                 replay.TimeChanged += OnSimTimeChanged;
                 replay.BarReceived += OnBarReceived;
                 replay.DataKindChanged += OnReplayDataKindChanged;
                 replay.StopReached += OnSimStopReached;
             }
 
-            await _feed.ConnectAsync(_settings.Instrument);
+            // Od tego miejsca pracujemy na lokalnych `feed` i `builder`: po każdym await sprawdzamy (IsCurrent),
+            // czy w międzyczasie nie zatrzymano / nie podmieniono źródła (np. zmiana instrumentu w trakcie wczytywania).
+            // Bez tego stare wywołanie podpięłoby się do nowego źródła – ticki liczyłyby się podwójnie.
+            var builder = _builder;
+            await feed.ConnectAsync(_settings.Instrument);
+            if (!IsCurrent(feed, builder))
+            {
+                return false;
+            }
 
             // Rejestrator: dane od brokera zapisujemy w lokalnej bazie do późniejszych symulacji.
             // (Danych z symulatora nie zapisujemy – generator jest losowy, a odtwarzane dane już są w bazie.)
-            if (_settings.RecordToDatabase && IsBrokerFeed(_feed))
+            if (_settings.RecordToDatabase && IsBrokerFeed(feed))
             {
                 _recorder = new MarketDataRecorder(GetStore(), _settings.InstrumentSymbol, MarketDataStore.SourceBroker);
+                _recorder.WriteFailed += OnRecorderWriteFailed;
+                _recorder.WriteRecovered += OnRecorderWriteRecovered;
             }
 
             // Historia: pobieramy i przetwarzamy w tle, żeby nie blokować okna.
-            var builder = _builder;
             var recorder = _recorder;
 
             // Tyle historii, ile potrzeba na ustawioną liczbę profili na ekranie (ale nie mniej niż „Historia (dni)”).
@@ -920,7 +989,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
             // Na czas wczytywania historii nie wolno doczytywać starszej (IB obsługuje jedno zapytanie o historię naraz).
             _oldestLoaded = null;
-            _loadingOlder = true;
+            var loadId = BeginHistoryLoad();
 
             // Broker: najpierw historia z lokalnej bazy (profile widać od razu), z IB tylko brakujący najnowszy kawałek.
             IReadOnlyList<Bar> dbBars = [];
@@ -940,6 +1009,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                     return loaded;
                 });
 
+                if (!IsCurrent(feed, builder))
+                {
+                    return false;
+                }
+
                 if (dbBars.Count > 0)
                 {
                     RefreshSnapshots();
@@ -952,7 +1026,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
 
             var lastDbBar = dbBars.Count > 0 ? dbBars[^1].Time : (DateTimeOffset?)null;
-            _oldestLoaded = await Task.Run(async () =>
+            var (oldestLoaded, historyEndUtcTicks) = await Task.Run(async () =>
             {
                 // Z IB: od ostatniej świecy z bazy (min. 1 doba – IB liczy w dobach), a bez bazy – cała historia.
                 var lookback = lastDbBar is { } last
@@ -971,27 +1045,41 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 var all = dbBars.Concat(newBars).ToList();
 
                 // Koniec historii – ticki starsze od niego są pomijane (te minuty są już w historii).
-                _historyEndUtcTicks = all.Count > 0 ? all.Max(b => b.Time).AddMinutes(1).UtcTicks : 0;
-
                 // Najstarsza wczytana świeca – od niej w tył doczytujemy historię przy przesuwaniu w lewo.
-                return all.Count > 0 ? all.Min(b => b.Time) : (DateTimeOffset?)null;
+                return all.Count > 0
+                    ? (all.Min(b => b.Time), all.Max(b => b.Time).AddMinutes(1).UtcTicks)
+                    : ((DateTimeOffset?)null, 0L);
             });
-            _loadingOlder = false;
+
+            if (!IsCurrent(feed, builder))
+            {
+                return false;
+            }
+
+            _historyEndUtcTicks = historyEndUtcTicks;
+            _oldestLoaded = oldestLoaded;
+            EndHistoryLoad(loadId);
 
             // Strumień ticków: każdy tick trafia prosto do silnika profili (z wątku źródła danych).
-            _feed.TickReceived += OnTickReceived;
-            beforeLive?.Invoke(_feed);
-            await _feed.StartLiveAsync();
+            feed.TickReceived += OnTickReceived;
+            beforeLive?.Invoke(feed);
+            await feed.StartLiveAsync();
 
             // Symulacja: najpierw cały odcinek od początku bieżącego profilu do startu (np. po cofnięciu o słupek),
             // dopiero potem pokazujemy wykres – inaczej profil „rysowałby się” od początku sesji na oczach.
-            if (_feed is DatabaseReplayFeed caughtUpFeed)
+            if (feed is DatabaseReplayFeed caughtUpFeed)
             {
                 await caughtUpFeed.CaughtUp;
             }
 
+            if (!IsCurrent(feed, builder))
+            {
+                return false;
+            }
+
             _refreshTimer.Start();
             RefreshSnapshots();
+            SetAlertsLive(true); // od teraz przebicia poziomów alarmowych uruchamiają dźwięk
             ClearError(); // źródło danych działa – wcześniejszy błąd (np. brak połączenia) już nieaktualny
 
             // Pierwsze dane po starcie / po zmianie instrumentu – dopasowanie, żeby wykres był od razu widoczny.
@@ -1005,6 +1093,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception ex)
         {
+            // Źródło zatrzymane / podmienione w trakcie startu – błąd dotyczy starego źródła, nowego nie ruszamy.
+            if (!IsCurrent(feed, _builder))
+            {
+                return false;
+            }
+
+            _historyLoadId++;
             _loadingOlder = false;
             await StopAsync();
             ShowError($"Błąd: {ex.Message}");
@@ -1012,36 +1107,67 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>Czy to źródło i silnik profili są nadal bieżące (nie zatrzymane i nie podmienione).</summary>
+    private bool IsCurrent(IMarketDataFeed feed, ProfileBuilder? builder) =>
+        ReferenceEquals(_feed, feed) && ReferenceEquals(_builder, builder);
+
+    private void OnRecorderWriteFailed(Exception ex) =>
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
+            ShowError($"Zapis do bazy nie działa (ticki czekają w pamięci i zostaną zapisane później): {ex.Message}"));
+
+    private void OnRecorderWriteRecovered() =>
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => Hint("Zapis do bazy działa ponownie"));
+
     /// <summary>Zatrzymuje pobieranie danych (profile pozostają na ekranie).</summary>
     public async Task StopAsync()
     {
         _refreshTimer.Stop();
+        await StopBroadLiveAsync(); // dodatkowe połączenia zakładki „Szeroki rynek” (SPX, SPY)
+        SetAlertsLive(false);
         CancelHistoryExtension();
 
-        if (_feed is not null)
+        if (_feed is { } feed)
         {
-            _feed.TickReceived -= OnTickReceived;
+            // Najpierw zerujemy pole – trwający start (StartFeedAsync) po swoim await zobaczy, że źródło już nie jest bieżące.
+            _feed = null;
+            feed.TickReceived -= OnTickReceived;
             // Najpierw odłączamy komunikaty – inaczej "rozłączono" od źródła nadpisałoby opis błędu.
-            _feed.StatusChanged -= OnFeedStatusChanged;
-            await _feed.DisposeAsync();
-            if (_feed is DatabaseReplayFeed replay)
+            feed.StatusChanged -= OnFeedStatusChanged;
+            UnsubscribeConnectionLoss(feed);
+            if (feed is DatabaseReplayFeed replay)
             {
                 replay.Completed -= OnReplayCompleted;
+                replay.Failed -= OnReplayFailed;
                 replay.TimeChanged -= OnSimTimeChanged;
                 replay.BarReceived -= OnBarReceived;
                 replay.DataKindChanged -= OnReplayDataKindChanged;
                 replay.StopReached -= OnSimStopReached;
             }
 
-            _feed = null;
+            try
+            {
+                await feed.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                // Błąd przy rozłączaniu nie może zatrzymać sprzątania (rejestrator musi zapisać bufor).
+                ShowError($"Błąd przy zatrzymywaniu źródła danych: {ex.Message}");
+            }
         }
 
         IsSimPlaying = false;
 
         if (_recorder is not null)
         {
-            await _recorder.DisposeAsync(); // zapisuje ostatnie ticki z bufora
+            var recorder = _recorder;
             _recorder = null;
+            await recorder.DisposeAsync(); // zapisuje ostatnie ticki z bufora
+            recorder.WriteFailed -= OnRecorderWriteFailed;
+            recorder.WriteRecovered -= OnRecorderWriteRecovered;
+            if (recorder.PendingTicks > 0)
+            {
+                ShowError($"Nie udało się zapisać do bazy {recorder.PendingTicks} ostatnich ticków");
+            }
         }
 
         RefreshSnapshots(); // ostatnie dane na ekran
@@ -1066,6 +1192,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public async Task ApplySettingsAsync(AppSettings newSettings)
     {
+        CancelReconnect();
         var rebuild = _settings.RequiresRebuild(newSettings);
         if (_settings.RequiresDownloadRestart(newSettings))
         {
@@ -1143,8 +1270,31 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await StopBackgroundDownloadAsync();
-        await StopAsync();
+        CancelReconnect();
+        try
+        {
+            // Pobieranie w tle może czekać na odpowiedź IB (do minuty) – przy zamykaniu nie czekamy dłużej niż kilka sekund.
+            await Task.WhenAny(StopBackgroundDownloadAsync(), Task.Delay(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            // Zatrzymanie źródła i zapis bufora rejestratora – także gdy pobieranie w tle zakończyło się błędem.
+            await StopAsync();
+            JsonFileStore.Problem -= OnSettingsFileProblem;
+        }
+    }
+
+    private void OnSettingsFileProblem(string message)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            ShowError(message);
+        }
+        else
+        {
+            dispatcher.BeginInvoke(() => ShowError(message));
+        }
     }
 
     // =====================================================================
@@ -1228,6 +1378,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Nowy tick: do silnika profili i (jeśli włączony) do rejestratora bazy danych.</summary>
     private void OnTickReceived(object? sender, Tick tick)
     {
+        RouteTickToBroadMarket(tick); // instrument główny to rynek szeroki albo SPY – ticki także dla zakładki „Szeroki rynek”
+
         // Tick z minuty, która jest już w historii – pomijamy (inaczej TPO i wolumen liczone byłyby dwa razy).
         if (tick.Time.UtcTicks < Interlocked.Read(ref _historyEndUtcTicks))
         {
@@ -1235,6 +1387,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _builder?.ProcessTick(tick);
+        TrackAlertPrice(tick.Price, tick.Price, tick.Price);
         Interlocked.Exchange(ref _lastTickUtcTicks, tick.Time.UtcTicks); // czas danych – dla zegara okresu TPO
         _recorder?.Record(tick);
     }
@@ -1251,6 +1404,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _builder?.ProcessBar(bar);
+        TrackAlertPrice(bar.Low, bar.High, bar.Close);
         Interlocked.Exchange(ref _lastTickUtcTicks, bar.Time.AddMinutes(1).UtcTicks);
     }
 
@@ -1274,7 +1428,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Dodaje nową linię cenową.</summary>
     public void AddLine(PriceLine line)
     {
-        _lineTemplate = line;
+        line = RearmedAfterEdit(line);
+        if (!line.IsAlert)
+        {
+            _lineTemplate = line;
+        }
+
         Lines = [.. Lines, line];
         SaveDrawings();
     }
@@ -1282,7 +1441,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Zastępuje linię o tym samym identyfikatorze (edycja koloru, grubości, ceny...).</summary>
     public void UpdateLine(PriceLine line)
     {
-        _lineTemplate = line;
+        line = RearmedAfterEdit(line);
+        if (!line.IsAlert)
+        {
+            _lineTemplate = line;
+        }
+
         Lines = Lines.Select(l => l.Id == line.Id ? line : l).ToList();
         SaveDrawings();
     }
@@ -1290,7 +1454,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Przesuwa linię na nową cenę (po przeciągnięciu myszą).</summary>
     public void MoveLine(PriceLine line, decimal newPrice)
     {
-        Lines = Lines.Select(l => l.Id == line.Id ? l with { Price = newPrice } : l).ToList();
+        _alertMonitor.Rearm(line.Id);
+        Lines = Lines.Select(l => l.Id == line.Id
+                ? l with { Price = newPrice, Alert = l.Alert is { } a ? a with { IsTriggered = false } : null }
+                : l)
+            .ToList();
         SaveDrawings();
     }
 
@@ -1347,6 +1515,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         var drawings = _drawings.GetValueOrDefault(_settings.InstrumentSymbol) ?? new InstrumentDrawings();
         Lines = drawings.Lines;
+        ResetAlertTracking();
         _expanded.Clear();
         _expanded.UnionWith(drawings.ExpandedProfiles);
         _splits.Load(drawings.Splits);

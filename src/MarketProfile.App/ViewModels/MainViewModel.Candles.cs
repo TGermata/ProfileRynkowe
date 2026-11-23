@@ -49,11 +49,15 @@ public sealed partial class MainViewModel
                 OnPropertyChanged(nameof(IsTpoTab));
                 if (value == CandlesTab)
                 {
-                    _ = LoadCandlesAsync();
+                    RunSafely(LoadCandlesAsync());
                 }
                 else if (value == VolumeTab)
                 {
                     UpdateVolumeComparison(force: true);
+                }
+                else if (value == BroadTab)
+                {
+                    OnBroadTabShown();
                 }
             }
         }
@@ -84,11 +88,15 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(IsTpoTab));
         if (detached && tab == CandlesTab)
         {
-            _ = LoadCandlesAsync();
+            RunSafely(LoadCandlesAsync());
         }
         else if (detached && tab == VolumeTab)
         {
             UpdateVolumeComparison(force: true);
+        }
+        else if (detached && tab == BroadTab)
+        {
+            OnBroadTabShown();
         }
     }
 
@@ -103,7 +111,7 @@ public sealed partial class MainViewModel
                 OnPropertyChanged(nameof(IsMonthly));
                 OnPropertyChanged(nameof(IsWeekly));
                 OnPropertyChanged(nameof(IsDaily));
-                _ = LoadCandlesAsync();
+                RunSafely(LoadCandlesAsync());
             }
         }
     }
@@ -129,7 +137,7 @@ public sealed partial class MainViewModel
     public string BroadSymbolLabel => BroadMarket?.Symbol ?? string.Empty;
 
     public string BroadSymbolToolTip => BroadMarket is { } broad
-        ? $"{broad.Symbol} – {broad.Description}: rynek szeroki (zmiana w Ustawieniach → Wykres D/W/M). Świece D/W/M są zapisywane w bazie i odświeżane w tle."
+        ? $"{broad.Symbol} – {broad.Description}: rynek szeroki (zmiana w Ustawieniach → Szeroki rynek). Świece D/W/M są zapisywane w bazie i odświeżane w tle."
         : string.Empty;
 
     public bool IsBaseSelected
@@ -155,7 +163,25 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(IsBaseSelected));
         OnPropertyChanged(nameof(IsBroadSelected));
         OnPropertyChanged(nameof(CandleTickSize));
-        _ = LoadCandlesAsync();
+        RunSafely(LoadCandlesAsync());
+    }
+
+    /// <summary>Wolne miejsce za najnowszą świecą (%) – przeciąganie znacznika na wykresie, zapisywane w ustawieniach.</summary>
+    public double CandleRightMargin
+    {
+        get => _settings.CandleChart.RightMarginPercent;
+        set
+        {
+            var percent = (int)Math.Round(Math.Clamp(value, 0, 50));
+            if (percent == _settings.CandleChart.RightMarginPercent)
+            {
+                return;
+            }
+
+            _settings = _settings with { CandleChart = _settings.CandleChart with { RightMarginPercent = percent } };
+            SettingsStore.Save(_settings);
+            OnPropertyChanged();
+        }
     }
 
     /// <summary>Wygląd wykresu D/W/M z ustawień (rodzaj prezentacji, kolory, wolumen, średnie kroczące).</summary>
@@ -178,7 +204,7 @@ public sealed partial class MainViewModel
     {
         if (_settings.CandleChart.Type != type)
         {
-            _ = ApplySettingsAsync(_settings with { CandleChart = _settings.CandleChart with { Type = type } });
+            RunSafely(ApplySettingsAsync(_settings with { CandleChart = _settings.CandleChart with { Type = type } }));
         }
     }
 
@@ -196,8 +222,10 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(BroadSymbolToolTip));
         if (IsTabShown(CandlesTab))
         {
-            _ = LoadCandlesAsync(); // np. zmieniono rynek szeroki
+            RunSafely(LoadCandlesAsync()); // np. zmieniono rynek szeroki
         }
+
+        OnBroadSettingsChanged();
     }
 
     /// <summary>Świece wybranego interwału (z bazy).</summary>
@@ -231,20 +259,25 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(HasBroadMarketSwitch));
         OnPropertyChanged(nameof(BaseSymbolLabel));
         _nextCandleIbRefresh = null; // świece nowego instrumentu – z IB od razu (gdy połączony)
-        _ = LoadDailyBarsAsync(); // średnie dzienne na wykresie TPO – nowego instrumentu
+        RunSafely(LoadDailyBarsAsync()); // średnie dzienne na wykresie TPO – nowego instrumentu
         if (IsTabShown(CandlesTab))
         {
-            _ = LoadCandlesAsync();
+            RunSafely(LoadCandlesAsync());
         }
     }
 
     /// <summary>Pobieranie w tle skończyło przebieg – w bazie mogły pojawić się nowe świece.</summary>
     private void OnCandleBackgroundPass()
     {
-        _ = LoadDailyBarsAsync(); // nowe świece dzienne → aktualne średnie na wykresie TPO
+        RunSafely(LoadDailyBarsAsync()); // nowe świece dzienne → aktualne średnie na wykresie TPO
         if (IsTabShown(CandlesTab) && !_candleRefreshing)
         {
-            _ = LoadCandlesAsync();
+            RunSafely(LoadCandlesAsync());
+        }
+
+        if (!_candleRefreshing)
+        {
+            OnBroadBarsUpdated();
         }
     }
 
@@ -335,7 +368,7 @@ public sealed partial class MainViewModel
         }
 
         _nextCandleIbRefresh = DateTime.Now.AddMinutes(Math.Clamp(_settings.CandleChart.IbRefreshMinutes, 1, 60));
-        _ = RefreshCandlesFromIbAsync();
+        RunSafely(RefreshCandlesFromIbAsync());
     }
 
     private async Task RefreshCandlesFromIbAsync()
@@ -404,13 +437,15 @@ public sealed partial class MainViewModel
         var symbol = instrument.Symbol;
         _candleIbNotes[symbol] = "pobieranie z IBKR...";
         UpdateCandleInfo();
+        RefreshBroadInfoIf(symbol);
 
         try
         {
-            IbApiLoader.Use(string.IsNullOrWhiteSpace(_settings.IbApiPath) ? IbApiLoader.AutoDetect() : _settings.IbApiPath);
+            IbFeeds.Prepare(_settings);
             var connection = _settings.ToIbSettings();
             var store = GetStore();
-            var results = await Task.Run(() => OhlcBarUpdater.ConnectAndUpdateAsync(instrument, connection, store, CancellationToken.None));
+            var intraday = symbol == BroadMarket?.Symbol; // rynek szeroki – także świece 30 min (zakładka „Szeroki rynek”)
+            var results = await Task.Run(() => OhlcBarUpdater.ConnectAndUpdateAsync(instrument, connection, store, CancellationToken.None, intraday));
 
             _candleIbNotes[symbol] = OhlcBarUpdater.Errors(results) is { } error
                 ? $"IBKR {DateTime.Now:HH:mm}: {error}"
@@ -423,7 +458,7 @@ public sealed partial class MainViewModel
 
         if (symbol == _settings.InstrumentSymbol)
         {
-            _ = LoadDailyBarsAsync();
+            RunSafely(LoadDailyBarsAsync());
         }
 
         if (symbol == CandleInstrument.Symbol && IsTabShown(CandlesTab))
@@ -433,6 +468,21 @@ public sealed partial class MainViewModel
         else
         {
             UpdateCandleInfo();
+        }
+
+        // Zakładka „Szeroki rynek” – nowe świece (albo opis błędu) rynku szerokiego.
+        if (IsTabShown(BroadTab) && symbol == BroadMarket?.Symbol)
+        {
+            await LoadBroadBarsAsync();
+        }
+    }
+
+    /// <summary>Opis zakładki „Szeroki rynek” po zmianie stanu odświeżania z IB tego instrumentu.</summary>
+    private void RefreshBroadInfoIf(string symbol)
+    {
+        if (BroadMarket is { } broad && broad.Symbol == symbol)
+        {
+            UpdateBroadInfo(broad);
         }
     }
 }

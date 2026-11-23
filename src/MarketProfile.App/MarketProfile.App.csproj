@@ -4,6 +4,7 @@
     <ProjectReference Include="..\MarketProfile.Core\MarketProfile.Core.csproj" />
     <ProjectReference Include="..\MarketProfile.DataFeed\MarketProfile.DataFeed.csproj" />
     <ProjectReference Include="..\MarketProfile.DataFeed.IB\MarketProfile.DataFeed.IB.csproj" />
+    <ProjectReference Include="..\MarketProfile.DataFeed.IBWeb\MarketProfile.DataFeed.IBWeb.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

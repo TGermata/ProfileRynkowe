@@ -17,3 +17,19 @@ TWS API/
 *.db
 *.db-shm
 *.db-wal
+
+# Klucze i sekrety (IBKR Web API / OAuth) – NIGDY do repozytorium.
+# Aplikacja trzyma je zaszyfrowane (DPAPI) w %AppData%\MarketProfile, poza repozytorium.
+*.pem
+*.key
+*.p12
+*.pfx
+*.secret
+*secrets*.json
+dhparam*
+ibkr*credentials*
+.env
+
+# Materialy referencyjne (ksiazki PDF i wyciagniety tekst)
+*.pdf
+Options-as-a-Strategic-Investment-*.txt

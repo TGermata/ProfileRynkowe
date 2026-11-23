@@ -75,12 +75,69 @@ public sealed class CandleChartControl : FrameworkElement
         set => SetValue(EmptyTextProperty, value);
     }
 
+    public static readonly DependencyProperty RightMarginPercentProperty = DependencyProperty.Register(
+        nameof(RightMarginPercent), typeof(double), typeof(CandleChartControl),
+        new FrameworkPropertyMetadata(10.0, FrameworkPropertyMetadataOptions.AffectsRender | FrameworkPropertyMetadataOptions.BindsTwoWayByDefault,
+            null, (_, value) => Math.Clamp((double)value, 0, MaxRightMargin)));
+
+    /// <summary>
+    /// Wolne miejsce za najnowszą świecą w % szerokości obszaru świec (0–50, domyślnie 10).
+    /// Użytkownik zmienia je, przeciągając pionowy znacznik końca wykresu.
+    /// </summary>
+    public double RightMarginPercent
+    {
+        get => (double)GetValue(RightMarginPercentProperty);
+        set => SetValue(RightMarginPercentProperty, value);
+    }
+
+    public static readonly DependencyProperty DisplayTimeZoneProperty = DependencyProperty.Register(
+        nameof(DisplayTimeZone), typeof(TimeZoneInfo), typeof(CandleChartControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    /// <summary>Strefa czasowa godzin świec wewnątrzdziennych (np. Nowy Jork dla SPX); null – UTC.</summary>
+    public TimeZoneInfo? DisplayTimeZone
+    {
+        get => (TimeZoneInfo?)GetValue(DisplayTimeZoneProperty);
+        set => SetValue(DisplayTimeZoneProperty, value);
+    }
+
+    public static readonly DependencyProperty ShowDateAxisProperty = DependencyProperty.Register(
+        nameof(ShowDateAxis), typeof(bool), typeof(CandleChartControl),
+        new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    /// <summary>
+    /// Oś dat na dole wykresu. Wyłączona, gdy pod wykresem są wiersze wskaźników – oś dat rysuje wtedy najniższy wiersz.
+    /// </summary>
+    public bool ShowDateAxis
+    {
+        get => (bool)GetValue(ShowDateAxisProperty);
+        set => SetValue(ShowDateAxisProperty, value);
+    }
+
+    /// <summary>
+    /// Zmiana widoku (przewinięcie, zoom, nowe świece, świeca pod kursorem) – dla wierszy wskaźników pod i nad wykresem.
+    /// Null – brak świec.
+    /// </summary>
+    public event EventHandler<CandleViewport?>? ViewportChanged;
+
+    private CandleViewport? _lastViewport;
+
+    private void PublishViewport(CandleViewport? viewport)
+    {
+        if (viewport != _lastViewport)
+        {
+            _lastViewport = viewport;
+            ViewportChanged?.Invoke(this, viewport);
+        }
+    }
+
     // --- Układ (piksele) ---
-    private const double AxisWidth = 75;
+    private const double AxisWidth = CandleViewport.AxisWidth;
     private const double InfoHeight = 26;
-    private const double DateAxisHeight = 22;
+    private const double DateAxisBand = 22;
     private const double VolumeShare = 0.18;
-    private const double RightPadSlots = 3;      // wolne miejsce za najnowszą świecą
+    private const double MaxRightMargin = 50;    // wolne miejsce za najnowszą świecą – najwyżej połowa szerokości
+    private const double MarginGrip = 4;         // odległość od znacznika końca wykresu, w której można go chwycić
     private const double MinSlot = 2, MaxSlot = 80, DefaultSlot = 9;
     private const double ZoomStep = 1.15;
 
@@ -112,14 +169,34 @@ public sealed class CandleChartControl : FrameworkElement
     private double _plotTop, _priceBottom = 1;
 
     // Przeciąganie: wykresu (przesuwanie) albo osi cen (skala pionowa).
-    private enum DragMode { None, Pan, Axis }
+    private enum DragMode { None, Pan, Axis, Margin }
+
+    // Znacznik końca wykresu: przeciągany procent (do puszczenia myszy) i podświetlenie po najechaniu.
+    private double _dragMargin;
+    private bool _marginHover;
+
+    /// <summary>Wolne miejsce za najnowszą świecą (%) – w trakcie przeciągania znacznika wartość z myszy.</summary>
+    private double MarginPercent => _drag == DragMode.Margin ? _dragMargin : RightMarginPercent;
+
+    /// <summary>Wolne miejsce za najnowszą świecą w liczbie miejsc na świecę.</summary>
+    private double RightPadSlots => PlotRight * MarginPercent / 100 / _slot;
+
+    /// <summary>Położenie znacznika końca wykresu (środek najnowszej świecy przy przypiętym widoku).</summary>
+    private double MarginX => PlotRight * (1 - MarginPercent / 100);
+
+    private bool OverMarginGrip(Point p) =>
+        Bars is { Count: > 0 } && p.X < PlotRight && Math.Abs(p.X - MarginX) <= MarginGrip &&
+        p.Y >= InfoHeight && p.Y <= ActualHeight - DateAxisHeight;
     private DragMode _drag;
     private Point _dragStart;
     private double _dragEndIndex, _dragTop, _dragBottom;
     private Point? _mouse;
 
-    // Średnie kroczące policzone dla bieżących świec (okres → wartości).
-    private readonly Dictionary<int, decimal?[]> _smaCache = [];
+    // Średnie kroczące policzone dla bieżących świec ((rodzaj, okres) → wartości).
+    private readonly Dictionary<(MovingAverageKind Kind, int Period), decimal?[]> _averageCache = [];
+
+    /// <summary>Wysokość paska osi dat (0, gdy oś dat rysuje wiersz wskaźnika pod wykresem).</summary>
+    private double DateAxisHeight => ShowDateAxis ? DateAxisBand : 0;
 
     public CandleChartControl()
     {
@@ -152,7 +229,7 @@ public sealed class CandleChartControl : FrameworkElement
 
     private void OnBarsChanged(IReadOnlyList<Bar>? oldBars, IReadOnlyList<Bar>? newBars)
     {
-        _smaCache.Clear();
+        _averageCache.Clear();
 
         // Inny zestaw świec (interwał, instrument) – od najnowszych, skala automatyczna; dopisanie świec – widok zostaje.
         var sameSeries = oldBars is { Count: > 0 } && newBars is { Count: > 0 } && newBars[0].Time == oldBars[0].Time;
@@ -166,12 +243,12 @@ public sealed class CandleChartControl : FrameworkElement
 
     private double PlotRight => Math.Max(0, ActualWidth - AxisWidth);
 
-    private decimal?[] Sma(IReadOnlyList<Bar> bars, int period)
+    private decimal?[] Average(IReadOnlyList<Bar> bars, MovingAverageKind kind, int period)
     {
-        if (!_smaCache.TryGetValue(period, out var values))
+        if (!_averageCache.TryGetValue((kind, period), out var values))
         {
-            values = Indicators.Sma(bars, period);
-            _smaCache[period] = values;
+            values = Indicators.MovingAverage(bars, kind, period);
+            _averageCache[(kind, period)] = values;
         }
 
         return values;
@@ -193,6 +270,7 @@ public sealed class CandleChartControl : FrameworkElement
         {
             var empty = CreateText(EmptyText ?? string.Empty, 14, DimTextBrush, UiTypeface);
             dc.DrawText(empty, new Point((width - empty.Width) / 2, (height - empty.Height) / 2));
+            PublishViewport(null);
             return;
         }
 
@@ -201,7 +279,7 @@ public sealed class CandleChartControl : FrameworkElement
         {
             // Mało świec (np. miesięczne) – rozciągnięte na całą szerokość zamiast skupione przy prawej krawędzi.
             _fitPending = false;
-            _slot = Math.Clamp(plotRight / (bars.Count + RightPadSlots + 1), DefaultSlot, 30);
+            _slot = Math.Clamp(plotRight * (1 - MarginPercent / 100) / (bars.Count + 1), DefaultSlot, 30);
         }
 
         if (_pinned)
@@ -224,7 +302,7 @@ public sealed class CandleChartControl : FrameworkElement
             first = last = Math.Clamp(first, 0, bars.Count - 1);
         }
 
-        var averages = style.MovingAverages.Select(m => (Line: m, Values: Sma(bars, m.Period))).ToList();
+        var averages = style.MovingAverages.Select(m => (Line: m, Values: Average(bars, m.Kind, m.Period))).ToList();
 
         // Skala pionowa: automatyczna – widoczne świece i średnie z marginesem; ręczna – ustawiona przez użytkownika.
         double top, bottom;
@@ -275,9 +353,15 @@ public sealed class CandleChartControl : FrameworkElement
             _manualScale ? ManualScaleBrush : DimTextBrush, UiTypeface);
         dc.DrawText(scaleLabel, new Point(plotRight + (AxisWidth - scaleLabel.Width) / 2, (InfoHeight - scaleLabel.Height) / 2));
 
-        // Oś dat (linie podziałki pod świecami).
-        dc.DrawRectangle(HeaderBrush, null, new Rect(0, plotBottom, width, DateAxisHeight));
-        DrawDateAxis(dc, bars, first, last, plotTop, plotBottom);
+        // Oś dat (linie podziałki pod świecami; podpisy – tylko gdy oś dat jest na tym wykresie).
+        if (ShowDateAxis)
+        {
+            dc.DrawRectangle(HeaderBrush, null, new Rect(0, plotBottom, width, DateAxisHeight));
+        }
+
+        CandleDateAxis.Draw(dc, bars, first, last, Interval, _slot, i => XOf(i), plotTop, plotBottom,
+            ShowDateAxis ? plotBottom : null, DateAxisHeight, GridPen, TextBrush, DimTextBrush,
+            (text, brush) => CreateText(text, 11, brush, UiTypeface), DisplayTimeZone);
 
         // Wolumen.
         if (hasVolume)
@@ -330,21 +414,26 @@ public sealed class CandleChartControl : FrameworkElement
 
         dc.Pop();
 
+        // Znacznik końca wykresu (przeciągany myszą – wolne miejsce za najnowszą świecą).
+        DrawMarginMarker(dc, plotTop, plotBottom);
+
         // Ostatnia cena.
         var lastBar = bars[^1];
         var lastY = PriceY(lastBar.Close);
         var lastBrush = lastBar.Close >= lastBar.Open ? style.UpBrush : style.DownBrush;
         if (lastY >= plotTop && lastY <= priceBottom)
         {
-            dc.DrawLine(new Pen(lastBrush, 1) { DashStyle = DashStyles.Dash }, new Point(0, lastY), new Point(plotRight, lastY));
+            dc.DrawLine(Frozen(new Pen(lastBrush, 1) { DashStyle = DashStyles.Dash }), new Point(0, lastY), new Point(plotRight, lastY));
             DrawAxisLabel(dc, plotRight, lastY, FormatPrice(lastBar.Close), lastBrush);
         }
 
         // Krzyż kursora i opis świecy.
         var hovered = bars.Count - 1;
+        int? hover = null;
         if (_mouse is { } m && m.X < plotRight && m.Y >= plotTop && m.Y < plotBottom && _drag == DragMode.None)
         {
             hovered = Math.Clamp((int)Math.Round(IndexAt(m.X)), 0, bars.Count - 1);
+            hover = hovered;
             var cx = Math.Round(XOf(hovered)) + 0.5;
             dc.DrawLine(CrosshairPen, new Point(cx, plotTop), new Point(cx, plotBottom));
             dc.DrawLine(CrosshairPen, new Point(0, Math.Round(m.Y) + 0.5), new Point(plotRight, Math.Round(m.Y) + 0.5));
@@ -353,13 +442,37 @@ public sealed class CandleChartControl : FrameworkElement
                 DrawAxisLabel(dc, plotRight, m.Y, FormatPrice((decimal)PriceAt(m.Y)), CrosshairLabelBrush, TextBrush);
             }
 
-            var dateText = CreateText(FormatDate(bars[hovered].Time, Interval), 11, Brushes.Black, UiTypeface);
-            var dx = Math.Clamp(cx - dateText.Width / 2 - 4, 0, Math.Max(0, plotRight - dateText.Width - 8));
-            dc.DrawRectangle(TextBrush, null, new Rect(dx, plotBottom + 2, dateText.Width + 8, DateAxisHeight - 4));
-            dc.DrawText(dateText, new Point(dx + 4, plotBottom + (DateAxisHeight - dateText.Height) / 2));
+            if (ShowDateAxis)
+            {
+                var dateText = CreateText(FormatDate(bars[hovered].Time, Interval), 11, Brushes.Black, UiTypeface);
+                var dx = Math.Clamp(cx - dateText.Width / 2 - 4, 0, Math.Max(0, plotRight - dateText.Width - 8));
+                dc.DrawRectangle(TextBrush, null, new Rect(dx, plotBottom + 2, dateText.Width + 8, DateAxisHeight - 4));
+                dc.DrawText(dateText, new Point(dx + 4, plotBottom + (DateAxisHeight - dateText.Height) / 2));
+            }
         }
 
         DrawInfo(dc, bars, hovered, style, averages, plotRight);
+        PublishViewport(new CandleViewport(bars, Interval, _slot, _endIndex, first, last, hover, DisplayTimeZone));
+    }
+
+    private static readonly Pen MarginPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x3A, 0x40, 0x4A)), 1) { DashStyle = DashStyles.Dot });
+    private static readonly Pen MarginActivePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x9A, 0xA4, 0xB0)), 1) { DashStyle = DashStyles.Dash });
+
+    /// <summary>Pionowa linia końca wykresu; po najechaniu / w trakcie przeciągania – jaśniejsza, z wartością w %.</summary>
+    private void DrawMarginMarker(DrawingContext dc, double plotTop, double plotBottom)
+    {
+        var active = _drag == DragMode.Margin || (_marginHover && _drag == DragMode.None);
+        var x = Math.Round(MarginX) + 0.5;
+        dc.DrawLine(active ? MarginActivePen : MarginPen, new Point(x, plotTop), new Point(x, plotBottom));
+        if (!active)
+        {
+            return;
+        }
+
+        var label = CreateText($"{Math.Round(MarginPercent):0}%", 11, Brushes.Black, UiTypeface);
+        var lx = Math.Clamp(x - label.Width / 2 - 4, 0, Math.Max(0, PlotRight - label.Width - 8));
+        dc.DrawRectangle(TextBrush, null, new Rect(lx, plotTop + 2, label.Width + 8, label.Height + 2));
+        dc.DrawText(label, new Point(lx + 4, plotTop + 3));
     }
 
     /// <summary>Linia wartości (np. SMA) od świecy <paramref name="from"/> do <paramref name="to"/>; brak wartości przerywa linię.</summary>
@@ -436,56 +549,6 @@ public sealed class CandleChartControl : FrameworkElement
         return 10 * magnitude;
     }
 
-    /// <summary>
-    /// Oś dat: podpis przy pierwszej świecy nowego okresu (miesiąc, kwartał, rok albo 5 lat) –
-    /// najkrótszy okres, przy którym podpisy są co najmniej ~70 px od siebie.
-    /// </summary>
-    private void DrawDateAxis(DrawingContext dc, IReadOnlyList<Bar> bars, int first, int last, double plotTop, double plotBottom)
-    {
-        // Przybliżona liczba świec w miesiącu dla interwału.
-        var barsPerMonth = Interval switch
-        {
-            BarInterval.Day => 21.0,
-            BarInterval.Week => 4.35,
-            _ => 1.0,
-        };
-
-        var months = new[] { 1, 3, 12, 60 }.FirstOrDefault(n => n * barsPerMonth * _slot >= 70, 120);
-        var previous = first > 0 ? (int?)PeriodKey(bars[first - 1].Time, months) : null;
-
-        for (var i = first; i <= last; i++)
-        {
-            var key = PeriodKey(bars[i].Time, months);
-            if (previous is { } p && key == p)
-            {
-                continue;
-            }
-
-            var isFirstVisible = previous is null;
-            previous = key;
-            if (isFirstVisible)
-            {
-                continue; // pierwsza widoczna świeca nie musi zaczynać okresu
-            }
-
-            var x = Math.Round(XOf(i)) + 0.5;
-            dc.DrawLine(GridPen, new Point(x, plotTop), new Point(x, plotBottom));
-            var date = bars[i].Time.UtcDateTime;
-            var text = months >= 12 || date.Month == 1
-                ? date.ToString("yyyy", CultureInfo.CurrentCulture)
-                : date.ToString("MMM", CultureInfo.CurrentCulture);
-            var label = CreateText(text, 11, date.Month == 1 ? TextBrush : DimTextBrush, UiTypeface);
-            dc.DrawText(label, new Point(x - label.Width / 2, plotBottom + (DateAxisHeight - label.Height) / 2));
-        }
-    }
-
-    /// <summary>Numer okresu daty (miesiące od roku 0 podzielone przez długość okresu).</summary>
-    private static int PeriodKey(DateTimeOffset time, int months)
-    {
-        var date = time.UtcDateTime;
-        return (date.Year * 12 + date.Month - 1) / months;
-    }
-
     /// <summary>Opis świecy u góry: data, OHLC, zmiana względem poprzedniego zamknięcia, wolumen, wartości SMA.</summary>
     private void DrawInfo(DrawingContext dc, IReadOnlyList<Bar> bars, int index, CandleChartAppearance style,
         IReadOnlyList<(MovingAverageLine Line, decimal?[] Values)> averages, double plotRight)
@@ -526,23 +589,14 @@ public sealed class CandleChartControl : FrameworkElement
 
         foreach (var (line, values) in averages)
         {
-            Part($"SMA{line.Period} {(values[index] is { } v ? FormatPrice(RoundToTick(v)) : "–")}", line.Brush);
+            Part($"{line.Label} {(values[index] is { } v ? FormatPrice(RoundToTick(v)) : "–")}", line.Brush);
         }
     }
 
     private decimal RoundToTick(decimal price) =>
         TickSize > 0 ? Math.Round(price / TickSize, MidpointRounding.AwayFromZero) * TickSize : price;
 
-    private static string FormatDate(DateTimeOffset time, BarInterval interval)
-    {
-        var date = time.UtcDateTime;
-        return interval switch
-        {
-            BarInterval.Month => date.ToString("MMMM yyyy", CultureInfo.CurrentCulture),
-            BarInterval.Week => "tydz. " + date.ToString("dd.MM.yyyy", CultureInfo.CurrentCulture),
-            _ => date.ToString("ddd dd.MM.yyyy", CultureInfo.CurrentCulture),
-        };
-    }
+    private string FormatDate(DateTimeOffset time, BarInterval interval) => CandleDateAxis.FormatDate(time, interval, DisplayTimeZone);
 
     private void DrawAxisLabel(DrawingContext dc, double plotRight, double y, string text, Brush background, Brush? foreground = null)
     {
@@ -643,6 +697,18 @@ public sealed class CandleChartControl : FrameworkElement
             return;
         }
 
+        if (OverMarginGrip(position))
+        {
+            // Znacznik końca wykresu: przeciąganie ustawia wolne miejsce za najnowszą świecą.
+            _drag = DragMode.Margin;
+            _dragMargin = RightMarginPercent;
+            _pinned = true;
+            CaptureMouse();
+            e.Handled = true;
+            InvalidateVisual();
+            return;
+        }
+
         _drag = OverPriceAxis(position) ? DragMode.Axis : DragMode.Pan;
         _dragStart = position;
         _dragEndIndex = _endIndex;
@@ -655,7 +721,19 @@ public sealed class CandleChartControl : FrameworkElement
     {
         var position = e.GetPosition(this);
         _mouse = position;
-        Cursor = _drag == DragMode.Axis || (_drag == DragMode.None && OverPriceAxis(position)) ? Cursors.SizeNS : null;
+        _marginHover = _drag == DragMode.None && OverMarginGrip(position);
+        Cursor = _drag == DragMode.Margin || _marginHover ? Cursors.SizeWE
+            : _drag == DragMode.Axis || (_drag == DragMode.None && OverPriceAxis(position)) ? Cursors.SizeNS
+            : null;
+
+        if (_drag == DragMode.Margin)
+        {
+            var plotRight = Math.Max(1, PlotRight);
+            _dragMargin = Math.Clamp((plotRight - position.X) / plotRight * 100, 0, MaxRightMargin);
+            _pinned = true;
+            InvalidateVisual();
+            return;
+        }
 
         if (_drag == DragMode.Pan && Bars is { Count: > 0 } bars)
         {
@@ -696,6 +774,17 @@ public sealed class CandleChartControl : FrameworkElement
         }
 
         var wasPan = _drag == DragMode.Pan;
+        if (_drag == DragMode.Margin)
+        {
+            // Wartość do właściwości (i przez binding do ustawień) – raz, po puszczeniu myszy.
+            var margin = Math.Round(_dragMargin);
+            _drag = DragMode.None;
+            ReleaseMouseCapture();
+            SetCurrentValue(RightMarginPercentProperty, margin);
+            InvalidateVisual();
+            return;
+        }
+
         _drag = DragMode.None;
         ReleaseMouseCapture();
         if (wasPan && Bars is { Count: > 0 } bars && _endIndex >= bars.Count - 1 + RightPadSlots - 0.5)
@@ -709,6 +798,7 @@ public sealed class CandleChartControl : FrameworkElement
     protected override void OnMouseLeave(MouseEventArgs e)
     {
         _mouse = null;
+        _marginHover = false;
         InvalidateVisual();
     }
 

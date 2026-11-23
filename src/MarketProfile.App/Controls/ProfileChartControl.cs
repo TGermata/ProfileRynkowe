@@ -179,6 +179,47 @@ public sealed partial class ProfileChartControl : FrameworkElement
         new FrameworkPropertyMetadata(TpoAverageOverlay.Empty, FrameworkPropertyMetadataOptions.AffectsRender,
             (d, e) => ((ProfileChartControl)d).UpdateBlinkTimer((TpoAverageOverlay?)e.NewValue)));
 
+    /// <summary>Poziomy alarmowe, które właśnie zadziałały – migają (identyfikatory linii).</summary>
+    public static readonly DependencyProperty FlashingAlertsProperty = DependencyProperty.Register(
+        nameof(FlashingAlerts), typeof(IReadOnlySet<Guid>), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender,
+            (d, e) => ((ProfileChartControl)d).UpdateAlertFlashTimer((IReadOnlySet<Guid>?)e.NewValue)));
+
+    public IReadOnlySet<Guid>? FlashingAlerts
+    {
+        get => (IReadOnlySet<Guid>?)GetValue(FlashingAlertsProperty);
+        set => SetValue(FlashingAlertsProperty, value);
+    }
+
+    // Miganie poziomów alarmowych: zegar działa tylko, gdy któryś poziom miga.
+    private System.Windows.Threading.DispatcherTimer? _alertFlashTimer;
+    private bool _alertFlashOn = true;
+
+    private void UpdateAlertFlashTimer(IReadOnlySet<Guid>? flashing)
+    {
+        if (flashing is not { Count: > 0 })
+        {
+            _alertFlashTimer?.Stop();
+            _alertFlashOn = true;
+            return;
+        }
+
+        if (_alertFlashTimer is null)
+        {
+            _alertFlashTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            _alertFlashTimer.Tick += (_, _) =>
+            {
+                _alertFlashOn = !_alertFlashOn;
+                InvalidateVisual();
+            };
+        }
+
+        if (!_alertFlashTimer.IsEnabled)
+        {
+            _alertFlashTimer.Start();
+        }
+    }
+
     // Miganie linii średnich, do których zbliżyła się cena: zegar działa tylko, gdy któraś linia miga.
     private System.Windows.Threading.DispatcherTimer? _blinkTimer;
     private bool _blinkVisible = true;
@@ -240,6 +281,18 @@ public sealed partial class ProfileChartControl : FrameworkElement
 
     /// <summary>Użytkownik chce zablokować/odblokować linię.</summary>
     public event Action<PriceLine>? ToggleLockRequested;
+
+    /// <summary>Użytkownik chce dodać poziom alarmowy na podanej cenie.</summary>
+    public event Action<decimal>? AddAlertRequested;
+
+    /// <summary>Użytkownik chce zamienić zwykłą linię w poziom alarmowy.</summary>
+    public event Action<PriceLine>? ConvertToAlertRequested;
+
+    /// <summary>Użytkownik chce ponownie uzbroić poziom alarmowy, który zadziałał.</summary>
+    public event Action<PriceLine>? RearmAlertRequested;
+
+    /// <summary>Użytkownik chce włączyć / wyłączyć alarm poziomu.</summary>
+    public event Action<PriceLine>? ToggleAlertRequested;
 
     /// <summary>Użytkownik chce zablokować (true) lub odblokować (false) wszystkie linie.</summary>
     public event Action<bool>? LockAllRequested;
@@ -881,9 +934,109 @@ public sealed partial class ProfileChartControl : FrameworkElement
         dc.DrawText(text, new Point(x, y));
     }
 
+    // =====================================================================
+    // Profil różnicowy (delta = kupno − sprzedaż)
+    // =====================================================================
+
+    /// <summary>
+    /// Słupek delty wiersza: długość ∝ |delta| (ta sama skala, limit i kierunek co profil tradycyjny), kolor wg znaku –
+    /// przewaga kupna albo sprzedaży. Wiersz z największą |deltą| ma pełny kolor (jak VPOC).
+    /// </summary>
+    private void DrawDeltaBar(DrawingContext dc, ProfileSnapshot profile, PriceLevel level, double y, double areaLeft)
+    {
+        var style = Appearance;
+        var delta = level.Delta;
+        if (delta == 0 || profile.MaxRowAbsDelta <= 0)
+        {
+            return;
+        }
+
+        var (barLength, clipped) = style.VolumeBarLength(Math.Abs(delta), profile.MaxRowAbsDelta);
+        barLength *= _compact;
+        var barLeft = style.VolumeMirrored ? areaLeft + VolWidth - barLength : areaLeft;
+        var barRect = new Rect(barLeft, y - _rowPx / 2 + 1, barLength, Math.Max(1, _rowPx - 2));
+        var isMax = Math.Abs(delta) == profile.MaxRowAbsDelta;
+        var brush = delta > 0
+            ? isMax ? style.DeltaBuyStrongBrush : style.DeltaBuyBrush
+            : isMax ? style.DeltaSellStrongBrush : style.DeltaSellBrush;
+        var outline = barRect.Height >= 3 ? delta > 0 ? style.DeltaBuyOutlinePen : style.DeltaSellOutlinePen : null;
+        dc.DrawRectangle(brush, outline, barRect);
+
+        if (style.VolumeLabelsOnSession)
+        {
+            DrawVolumeLabel(dc, delta, barRect, style.VolumeMirrored);
+        }
+
+        if (clipped)
+        {
+            var markerX = style.VolumeMirrored ? barRect.Left : barRect.Right - 2;
+            dc.DrawRectangle(Brushes.White, null, new Rect(markerX, barRect.Top, 2, barRect.Height));
+        }
+    }
+
+    /// <summary>Delta bieżącego słupka TPO (skala: największa |delta| wiersza w tym słupku).</summary>
+    private void DrawPeriodDelta(DrawingContext dc, ProfileSnapshot profile, double left)
+    {
+        var style = Appearance;
+        var max = profile.MaxCurrentPeriodAbsDelta;
+        if (max <= 0)
+        {
+            return;
+        }
+
+        foreach (var (row, delta) in profile.CurrentPeriodDelta)
+        {
+            if (delta == 0)
+            {
+                continue;
+            }
+
+            var y = PriceToY(row);
+            var length = Math.Max(1, PvWidth * Math.Abs(delta) / max);
+            var rect = new Rect(left, y - _rowPx / 2 + 1, length, Math.Max(1, _rowPx - 2));
+            dc.DrawRectangle(delta > 0 ? style.DeltaBuyBrush : style.DeltaSellBrush,
+                rect.Height >= 3 ? delta > 0 ? style.DeltaBuyOutlinePen : style.DeltaSellOutlinePen : null, rect);
+
+            if (style.VolumeLabelsOnPeriod)
+            {
+                DrawVolumeLabel(dc, delta, rect, mirrored: false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Podpis pod profilem różnicowym: „Δ +1 234 · 82% wol.” – delta sesji i jaka część wolumenu ma ustaloną stronę
+    /// (świece 1-min z historii jej nie mają). Przy małym pokryciu podpis jest przygaszony.
+    /// </summary>
+    private void DrawDeltaSummary(DrawingContext dc, ProfileSnapshot profile, double left)
+    {
+        if (profile.TotalVolume <= 0)
+        {
+            return;
+        }
+
+        var style = Appearance;
+        var delta = profile.TotalDelta;
+        var share = profile.ClassifiedShare;
+        var text = $"Δ {(delta > 0 ? "+" : string.Empty)}{FormatVolume(delta)} · {share:0%} wol.";
+        Brush brush = delta > 0 ? style.DeltaBuyStrongBrush : delta < 0 ? style.DeltaSellStrongBrush : DimTextBrush;
+        if (share < 0.5)
+        {
+            brush = DimTextBrush; // większość wolumenu bez strony transakcji – delta mało wiarygodna
+        }
+
+        var label = CreateText(text, 10, brush, UiTypeface);
+        var y = PriceToY(ToRow(profile.Low, profile.RowHeight)) + _rowPx / 2 + 2;
+        if (y + label.Height <= ActualHeight && y >= HeaderHeight)
+        {
+            dc.DrawText(label, new Point(left, y));
+        }
+    }
+
     /// <summary>Wolumen w krótkiej postaci: do 99 999 pełna liczba, potem tysiące (k) i miliony (M).</summary>
     internal static string FormatVolume(long volume) => volume switch
     {
+        < 0 => "−" + FormatVolume(-volume), // delta ujemna (profil różnicowy)
         >= 10_000_000 => (volume / 1_000_000.0).ToString("0.#", CultureInfo.InvariantCulture) + "M",
         >= 100_000 => (volume / 1000.0).ToString("0", CultureInfo.InvariantCulture) + "k",
         _ => volume.ToString(CultureInfo.InvariantCulture),
@@ -994,7 +1147,13 @@ public sealed partial class ProfileChartControl : FrameworkElement
             //   Odwrócony:  słupki zaczynają się przy prawej krawędzi i rosną w lewo – w stronę liter TPO.
             //   Długość zależy od wybranej skali (liniowa/pierwiastkowa/logarytmiczna) i limitu –
             //   słupki powyżej limitu mają pełną długość i znacznik obcięcia na końcu.
-            if (view.ShowVolume && level.Volume > 0 && profile.MaxRowVolume > 0)
+            if (view.ShowVolume && style.VolumeDelta)
+            {
+                DrawDeltaBar(dc, profile, level, y, view.ShowPeriodVolume
+                    ? lettersRight + CloseSpace + PvGapFromTpo + PvWidth + PvGapToSession
+                    : lettersRight + CloseSpace + VolGap);
+            }
+            else if (view.ShowVolume && level.Volume > 0 && profile.MaxRowVolume > 0)
             {
                 var (barLength, clipped) = style.VolumeBarLength(level.Volume, profile.MaxRowVolume);
                 var areaLeft = view.ShowPeriodVolume
@@ -1034,7 +1193,22 @@ public sealed partial class ProfileChartControl : FrameworkElement
         // to właśnie bieżący słupek), przed profilem wolumenowym sesji. Skala: własne maksimum bieżącego okresu.
         if (view.ShowPeriodVolume)
         {
-            DrawPeriodVolume(dc, profile, lettersRight + CloseSpace + PvGapFromTpo, view.PeriodVolumeReference);
+            if (style.VolumeDelta)
+            {
+                DrawPeriodDelta(dc, profile, lettersRight + CloseSpace + PvGapFromTpo);
+            }
+            else
+            {
+                DrawPeriodVolume(dc, profile, lettersRight + CloseSpace + PvGapFromTpo, view.PeriodVolumeReference);
+            }
+        }
+
+        // Profil różnicowy: delta sesji i udział wolumenu ze stroną transakcji – pod profilem wolumenowym.
+        if (view.ShowVolume && style.VolumeDelta)
+        {
+            DrawDeltaSummary(dc, profile, view.ShowPeriodVolume
+                ? lettersRight + CloseSpace + PvGapFromTpo + PvWidth + PvGapToSession
+                : lettersRight + CloseSpace + VolGap);
         }
 
         // Strzałki początku i końca rysowania profilu – obie skierowane w stronę profilu.
@@ -1257,6 +1431,12 @@ public sealed partial class ProfileChartControl : FrameworkElement
                 continue;
             }
 
+            if (line.Alert is not null)
+            {
+                DrawAlertLine(dc, line, y, chartRight);
+                continue;
+            }
+
             var brush = CreateBrush(line.Color);
             dc.DrawLine(CreatePen(brush, line.Thickness, line.Style), new Point(0, y), new Point(chartRight, y));
 
@@ -1270,6 +1450,64 @@ public sealed partial class ProfileChartControl : FrameworkElement
                 dc.DrawText(label, new Point(labelX, y - label.Height - line.Thickness / 2 - 1));
             }
         }
+    }
+
+    /// <summary>Wzór poziomu alarmowego: kreska-kropka (inny niż style zwykłych linii).</summary>
+    private static readonly DashStyle AlertDash = Frozen(new DashStyle([6, 2, 1, 2], 0));
+
+    /// <summary>
+    /// Poziom alarmowy – wyróżniony: kreska-kropka, półprzezroczysty pas wokół linii, ikona dzwonka i znaczniki
+    /// kierunku (▲ / ▼) oraz powtarzania (1× / ∞). Wyłączony albo zadziałały (jednokrotny) – przygaszony, 🔕.
+    /// Świeżo zadziałały – miga.
+    /// </summary>
+    private void DrawAlertLine(DrawingContext dc, PriceLine line, double y, double chartRight)
+    {
+        var alert = line.Alert!;
+        var flashing = FlashingAlerts?.Contains(line.Id) == true;
+        var brush = alert.IsArmed || flashing ? CreateBrush(line.Color) : Faded(CreateBrush(line.Color), 0.4);
+        var thickness = flashing && _alertFlashOn ? line.Thickness + 2 : line.Thickness;
+
+        // Pas wokół poziomu (strefa alarmu) – przy miganiu wyraźniejszy.
+        var band = Faded(CreateBrush(line.Color), flashing && _alertFlashOn ? 0.45 : alert.IsArmed ? 0.12 : 0.05);
+        dc.DrawRectangle(band, null, new Rect(0, y - 3 - thickness / 2, chartRight, 6 + thickness));
+        dc.DrawLine(Frozen(new Pen(brush, thickness) { DashStyle = AlertDash }), new Point(0, y), new Point(chartRight, y));
+
+        var icon = alert.IsArmed ? "🔔" : "🔕";
+        var direction = alert.Direction switch
+        {
+            AlertDirection.Up => "▲",
+            AlertDirection.Down => "▼",
+            _ => "▲▼",
+        };
+        var repeat = alert.Repeat == AlertRepeat.Once ? "1×" : "∞";
+        var state = alert.IsTriggered ? " zadziałał" : !alert.IsEnabled ? " wyłączony" : string.Empty;
+        var labelText = $"{(line.IsLocked ? "🔒 " : string.Empty)}{icon} {direction} {repeat}{state}" +
+                        (string.IsNullOrWhiteSpace(line.Label) ? string.Empty : $"  {line.Label}");
+
+        var label = CreateText(labelText, 11, brush, SymbolTypeface);
+        var labelX = line.LabelPosition == LabelPosition.Left ? 8 : chartRight - label.Width - 8;
+        dc.DrawText(label, new Point(labelX, y - label.Height - thickness / 2 - 3));
+    }
+
+    /// <summary>Etykieta poziomu alarmowego na osi: ciemne tło z ramką w kolorze poziomu (zwykłe linie mają pełne tło).</summary>
+    private void DrawAlertAxisLabel(DrawingContext dc, double chartRight, double y, decimal price, PriceLine line)
+    {
+        var alert = line.Alert!;
+        var flashing = FlashingAlerts?.Contains(line.Id) == true;
+        var color = CreateBrush(line.Color);
+        var brush = alert.IsArmed || flashing ? color : Faded(color, 0.5);
+        var highlighted = flashing && _alertFlashOn;
+        var text = CreateText(FormatPrice(price), 11, highlighted ? Brushes.Black : brush, UiTypeface);
+        var rect = new Rect(chartRight + 2, y - text.Height / 2 - 1, AxisWidth - 4, text.Height + 2);
+        dc.DrawRectangle(highlighted ? brush : HeaderBrush, Frozen(new Pen(brush, 1.5)), rect);
+        dc.DrawText(text, new Point(chartRight + 8, y - text.Height / 2));
+    }
+
+    private static Brush Faded(Brush brush, double opacity)
+    {
+        var copy = brush.Clone();
+        copy.Opacity = opacity;
+        return Frozen(copy);
     }
 
     /// <summary>Rysuje oś cen po prawej stronie, znaczniki linii cenowych oraz ostatniej ceny.</summary>
@@ -1318,7 +1556,14 @@ public sealed partial class ProfileChartControl : FrameworkElement
             var y = PriceToY(price);
             if (y >= HeaderHeight && y <= ActualHeight)
             {
-                DrawAxisLabel(dc, chartRight, y, price, CreateBrush(line.Color));
+                if (line.Alert is not null)
+                {
+                    DrawAlertAxisLabel(dc, chartRight, y, price, line);
+                }
+                else
+                {
+                    DrawAxisLabel(dc, chartRight, y, price, CreateBrush(line.Color));
+                }
             }
         }
 
@@ -1532,17 +1777,38 @@ public sealed partial class ProfileChartControl : FrameworkElement
 
         if (HitTestLine(position) is { } line)
         {
-            // Menu linii cenowej.
-            menu.Items.Add(CreateMenuItem($"Edytuj linię {FormatPrice(line.Price)}…", () => EditLineRequested?.Invoke(line)));
-            menu.Items.Add(CreateMenuItem(line.IsLocked ? "🔓 Odblokuj linię" : "🔒 Zablokuj linię",
-                () => ToggleLockRequested?.Invoke(line)));
-            menu.Items.Add(new Separator());
-            menu.Items.Add(CreateMenuItem("Usuń linię", () => DeleteLineRequested?.Invoke(line)));
+            if (line.Alert is { } alert)
+            {
+                // Menu poziomu alarmowego.
+                menu.Items.Add(CreateMenuItem($"🔔 Edytuj poziom alarmowy {FormatPrice(line.Price)}…", () => EditLineRequested?.Invoke(line)));
+                if (alert.IsTriggered)
+                {
+                    menu.Items.Add(CreateMenuItem("Uzbrój ponownie", () => RearmAlertRequested?.Invoke(line)));
+                }
+
+                menu.Items.Add(CreateMenuItem(alert.IsEnabled ? "🔕 Wyłącz alarm" : "🔔 Włącz alarm",
+                    () => ToggleAlertRequested?.Invoke(line)));
+                menu.Items.Add(CreateMenuItem(line.IsLocked ? "🔓 Odblokuj poziom" : "🔒 Zablokuj poziom",
+                    () => ToggleLockRequested?.Invoke(line)));
+                menu.Items.Add(new Separator());
+                menu.Items.Add(CreateMenuItem("Usuń poziom alarmowy", () => DeleteLineRequested?.Invoke(line)));
+            }
+            else
+            {
+                // Menu linii cenowej.
+                menu.Items.Add(CreateMenuItem($"Edytuj linię {FormatPrice(line.Price)}…", () => EditLineRequested?.Invoke(line)));
+                menu.Items.Add(CreateMenuItem("🔔 Zamień w poziom alarmowy…", () => ConvertToAlertRequested?.Invoke(line)));
+                menu.Items.Add(CreateMenuItem(line.IsLocked ? "🔓 Odblokuj linię" : "🔒 Zablokuj linię",
+                    () => ToggleLockRequested?.Invoke(line)));
+                menu.Items.Add(new Separator());
+                menu.Items.Add(CreateMenuItem("Usuń linię", () => DeleteLineRequested?.Invoke(line)));
+            }
         }
         else
         {
             var price = YToTickPrice(position.Y);
             menu.Items.Add(CreateMenuItem($"Dodaj linię na cenie {FormatPrice(price)}…", () => AddLineRequested?.Invoke(price)));
+            menu.Items.Add(CreateMenuItem($"🔔 Dodaj poziom alarmowy na cenie {FormatPrice(price)}…", () => AddAlertRequested?.Invoke(price)));
 
             // Rozbicie profilu – tylko po kliknięciu w literę, która nie jest pierwszym okresem części.
             if (HitTestLetter(position) is { } hit && hit.Period > hit.Column.Profile.FirstPeriod)
@@ -1831,18 +2097,42 @@ public sealed partial class ProfileChartControl : FrameworkElement
     /// <summary>Cena jako tekst – liczba miejsc po przecinku wg ticka instrumentu (np. 6E: 1.08455).</summary>
     private string FormatPrice(decimal price) => PriceFormat.Format(price, _lastTickSize);
 
-    /// <summary>Zamienia kolor zapisany jako tekst "#RRGGBB" na pędzel (przy błędnym kolorze – biały).</summary>
-    private static Brush CreateBrush(string color)
+    /// <summary>
+    /// Zamienia kolor zapisany jako tekst "#RRGGBB" na pędzel (przy błędnym lub pustym kolorze – biały).
+    /// Pędzle są zapamiętywane – rysowanie linii co klatkę (np. miganie alarmu) nie tworzy ich od nowa.
+    /// Wywoływane tylko z wątku UI.
+    /// </summary>
+    private static Brush CreateBrush(string? color)
     {
-        try
-        {
-            return Frozen(new SolidColorBrush((Color)ColorConverter.ConvertFromString(color)));
-        }
-        catch (FormatException)
+        if (string.IsNullOrWhiteSpace(color))
         {
             return Brushes.White;
         }
+
+        if (BrushCache.TryGetValue(color, out var cached))
+        {
+            return cached;
+        }
+
+        Brush brush;
+        try
+        {
+            brush = ColorConverter.ConvertFromString(color) is Color parsed ? Frozen(new SolidColorBrush(parsed)) : Brushes.White;
+        }
+        catch (FormatException)
+        {
+            brush = Brushes.White;
+        }
+
+        if (BrushCache.Count < 256)
+        {
+            BrushCache[color] = brush;
+        }
+
+        return brush;
     }
+
+    private static readonly Dictionary<string, Brush> BrushCache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Tworzy pióro o zadanej grubości i stylu.</summary>
     private static Pen CreatePen(Brush brush, double thickness, LineStyle style)

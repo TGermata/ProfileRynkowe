@@ -13,6 +13,15 @@ public sealed record PriceLevel(decimal Price, IReadOnlyList<int> Periods, long 
 
     /// <summary>Litery TPO w wierszu, np. "ABDF".</summary>
     public string Letters => string.Concat(Periods.Select(TpoLetters.ForPeriod));
+
+    /// <summary>Wolumen kupna w wierszu (transakcje ze znaną / oszacowaną stroną).</summary>
+    public long BuyVolume { get; init; }
+
+    /// <summary>Wolumen sprzedaży w wierszu.</summary>
+    public long SellVolume { get; init; }
+
+    /// <summary>Delta wiersza: kupno − sprzedaż.</summary>
+    public long Delta => BuyVolume - SellVolume;
 }
 
 /// <summary>
@@ -140,6 +149,29 @@ public sealed record ProfileSnapshot
 
     /// <summary>Największy wolumen wiersza w bieżącym okresie (0 = brak wolumenu).</summary>
     public long MaxCurrentPeriodVolume => CurrentPeriodVolume.Count > 0 ? CurrentPeriodVolume.Values.Max() : 0;
+
+    // --- Delta (kupno − sprzedaż) – profil wolumenowy różnicowy ---
+
+    /// <summary>Wolumen kupna (transakcje ze znaną / oszacowaną stroną).</summary>
+    public long TotalBuyVolume { get; init; }
+
+    /// <summary>Wolumen sprzedaży (transakcje ze znaną / oszacowaną stroną).</summary>
+    public long TotalSellVolume { get; init; }
+
+    /// <summary>Delta sesji: kupno − sprzedaż.</summary>
+    public long TotalDelta => TotalBuyVolume - TotalSellVolume;
+
+    /// <summary>Udział wolumenu ze stroną transakcji w całym wolumenie (0–1; świece historyczne nie mają strony).</summary>
+    public double ClassifiedShare => TotalVolume > 0 ? Math.Min(1, (double)(TotalBuyVolume + TotalSellVolume) / TotalVolume) : 0;
+
+    /// <summary>Największa bezwzględna delta wiersza (skala profilu różnicowego).</summary>
+    public long MaxRowAbsDelta { get; init; }
+
+    /// <summary>Delta wierszy bieżącego okresu TPO (cena wiersza → kupno − sprzedaż).</summary>
+    public IReadOnlyDictionary<decimal, long> CurrentPeriodDelta { get; init; } = new Dictionary<decimal, long>();
+
+    /// <summary>Największa bezwzględna delta wiersza w bieżącym okresie.</summary>
+    public long MaxCurrentPeriodAbsDelta => CurrentPeriodDelta.Count > 0 ? CurrentPeriodDelta.Values.Max(Math.Abs) : 0;
 
     /// <summary>Czy profil nie zawiera jeszcze żadnych danych.</summary>
     public bool IsEmpty => Levels.Count == 0;

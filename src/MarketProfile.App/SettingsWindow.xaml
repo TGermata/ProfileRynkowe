@@ -7,6 +7,7 @@
         ResizeMode="CanResize" WindowStartupLocation="CenterOwner">
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
         <Style TargetType="TextBox">
             <Setter Property="Width" Value="70" />
             <Setter Property="Margin" Value="4" />
@@ -547,6 +548,7 @@
                                             <Grid.RowDefinitions>
                                                 <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
                                                 <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                                <RowDefinition /><RowDefinition /><RowDefinition />
                                             </Grid.RowDefinitions>
 
                                             <!-- Dla których profili TPO rysować (to samo co „Wolumen” na pasku narzędzi). -->
@@ -586,7 +588,22 @@
 
                                             <TextBlock Grid.Row="8" Text="Limit (% największego wolumenu)" />
                                             <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding VolumeCapPercent}" HorizontalAlignment="Left" />
+
+                                            <!-- Rodzaj profilu: tradycyjny albo różnicowy (delta) – to samo co w menu „Wyświetlanie”. -->
+                                            <TextBlock Grid.Row="9" Text="Rodzaj wolumenu" VerticalAlignment="Top" Margin="4,6,4,4" />
+                                            <StackPanel Grid.Row="9" Grid.Column="1">
+                                                <RadioButton GroupName="VolumeDisplayKind" Content="Tradycyjny – wolumen całkowity" IsChecked="{Binding VolumeDisplayTotal}" />
+                                                <RadioButton GroupName="VolumeDisplayKind" Content="Różnicowy – delta (kupno − sprzedaż)" IsChecked="{Binding VolumeDisplayDelta}" />
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Row="10" Text="Delta: kolor przewagi kupna" />
+                                            <controls:ColorPicker Grid.Row="10" Grid.Column="1" Color="{Binding VolumeDeltaBuyColor}" />
+
+                                            <TextBlock Grid.Row="11" Text="Delta: kolor przewagi sprzedaży" />
+                                            <controls:ColorPicker Grid.Row="11" Grid.Column="1" Color="{Binding VolumeDeltaSellColor}" />
                                         </Grid>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Delta: strona transakcji ustalana z notowań bid/ask (transakcja po ask = kupno, po bid = sprzedaż; dla TWS potrzebna subskrypcja tick-by-tick bid/ask). Ticki zapisane wcześniej i transakcje w środku spreadu – reguła ticka (szacunek). Świece 1-min z historii nie mają strony – pod profilem widać, jaka część wolumenu jest w delcie." />
                                         <TextBlock Style="{StaticResource Hint}"
                                                    Text="Skala pierwiastkowa lub logarytmiczna spłaszcza duże wolumeny. Limit np. 60% – wolumen powyżej 60% maksimum ma pełną długość (z białym znacznikiem obcięcia), a pozostałe słupki są dłuższe i czytelniejsze. 100% = bez limitu. Słupki mają wyraźny obrys, więc są widoczne także przy niskim kryciu." />
                                     </StackPanel>
@@ -786,18 +803,6 @@
                             </StackPanel>
                         </GroupBox>
 
-                        <GroupBox Header="Rynek szeroki">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="Instrument" Width="140" />
-                                    <ComboBox Width="120" IsEditable="True" ItemsSource="{Binding BroadMarketOptions}"
-                                              Text="{Binding BroadMarketSymbol, UpdateSourceTrigger=PropertyChanged}" />
-                                </StackPanel>
-                                <TextBlock Style="{StaticResource Hint}"
-                                           Text="Na wykresie D/W/M przełącznik [instrument | rynek szeroki] pokazuje świece tego instrumentu (domyślnie SPX – indeks S&amp;P 500). Jego świece D/W/M są pobierane w tle i zapisywane w bazie do analiz, także bez zaznaczonego „Pobieraj dane”. Dla instrumentów europejskich można wybrać np. DAX." />
-                            </StackPanel>
-                        </GroupBox>
-
                         <GroupBox Header="Średnie kroczące (SMA)">
                             <StackPanel>
                                 <!-- Nagłówek kolumn. -->
@@ -936,6 +941,103 @@
             </TabItem>
 
             <!-- Wygląd okna głównego. -->
+            <TabItem Header="  Szeroki rynek  " Padding="10,5">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <GroupBox Header="Instrument">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Indeks" Width="140" />
+                                    <ComboBox Width="120" IsEditable="True" ItemsSource="{Binding BroadMarketOptions}"
+                                              Text="{Binding BroadMarketSymbol, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Rynek szeroki – domyślnie SPX (indeks S&amp;P 500); dla instrumentów europejskich np. DAX. Do wyboru są tylko indeksy: świece dzienne pochodzą wyłącznie z sesji kasowej. Jego świece D/W/M są pobierane w tle i zapisywane w bazie, także bez zaznaczonego „Pobieraj dane”. Ten instrument pokazuje zakładka „Szeroki rynek” i przełącznik [instrument | rynek szeroki] na wykresie D/W/M." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Świece">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Świeca wzrostowa" Width="140" />
+                                    <controls:ColorPicker Color="{Binding BroadUpColor}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Świeca spadkowa" Width="140" />
+                                    <controls:ColorPicker Color="{Binding BroadDownColor}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Średnie kroczące">
+                            <StackPanel>
+                                <!-- Nagłówek kolumn. -->
+                                <Grid Margin="0,0,0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70" /><ColumnDefinition Width="80" /><ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="150" /><ColumnDefinition Width="100" /><ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Rysuj" Foreground="Gray" />
+                                    <TextBlock Grid.Column="1" Text="Rodzaj" Foreground="Gray" />
+                                    <TextBlock Grid.Column="2" Text="Okres (dni)" Foreground="Gray" />
+                                    <TextBlock Grid.Column="3" Text="Kolor" Foreground="Gray" />
+                                    <TextBlock Grid.Column="4" Text="Grubość (px)" Foreground="Gray" />
+                                    <TextBlock Grid.Column="5" Text="Styl linii" Foreground="Gray" />
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding BroadMovingAverages}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="70" /><ColumnDefinition Width="80" /><ColumnDefinition Width="90" />
+                                                    <ColumnDefinition Width="150" /><ColumnDefinition Width="100" /><ColumnDefinition Width="130" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" Margin="8,4" VerticalAlignment="Center" />
+                                                <ComboBox Grid.Column="1" Width="70" Margin="4" HorizontalAlignment="Left"
+                                                          ItemsSource="{Binding DataContext.MovingAverageKinds, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                          DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding Kind}" />
+                                                <TextBox Grid.Column="2" Text="{Binding Period}" Width="60" Margin="4" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" />
+                                                <controls:ColorPicker Grid.Column="3" Color="{Binding Color}" Margin="4" HorizontalAlignment="Left" />
+                                                <TextBox Grid.Column="4" Text="{Binding Thickness}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" />
+                                                <ComboBox Grid.Column="5" Width="120" Margin="4" HorizontalAlignment="Left"
+                                                          ItemsSource="{Binding DataContext.LineStyles, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                          DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding LineStyle}" />
+                                                <Button Grid.Column="6" Content="✕ Usuń" Click="OnRemoveBroadMovingAverageClick" Padding="8,2"
+                                                        HorizontalAlignment="Left" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Content="+ Dodaj średnią" Click="OnAddBroadMovingAverageClick" />
+                                    <Button Content="Przywróć domyślne (EMA 8, EMA 21)" Click="OnResetBroadMarketChartClick"
+                                            ToolTip="Domyślne kolory świec i średnie: EMA 8 – jasnoniebieska kropkowana, EMA 21 – biała ciągła. Zapis dopiero po kliknięciu „Zapisz”." />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="EMA = wykładnicza średnia z cen zamknięcia ostatnich N dni (start od SMA z pierwszych N zamknięć, jak w TWS i TradingView); SMA = zwykła średnia. Wartości średnich pod kursorem są w opisie świecy u góry wykresu." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Oddech rynku (wiersz nad wykresem)">
+                            <StackPanel>
+                                <CheckBox Content="Pokazuj wskaźnik graficzny (pasek)" IsChecked="{Binding ShowBreathGauge}" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Od otwarcia sesji kasowej (9:30 ET) sumowany jest rzeczywisty wolumen kupna i sprzedaży SPY – strona transakcji z notowań bid/ask (kupno = transakcja po ask, sprzedaż = po bid), a nie ze zmiany ceny. Wartość: przewaga kupna = kupno / sprzedaż (np. +1,25), przewaga sprzedaży = −(sprzedaż / kupno) (np. −1,25). Pasek: zielony dla wartości dodatnich, czerwony dla ujemnych, tym mocniejszy, im większa przewaga. Wymaga połączenia z IB w trybie „Na żywo” i danych SPY. Obok – drugi wskaźnik dla całej NYSE (dane IB VOL-NYSE): wolumen spółek rosnących do spadających względem wczorajszego zamknięcia, liczony tak samo (ze znakiem)." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Wiersze wskaźników">
+                            <TextBlock Style="{StaticResource Hint}" Margin="0"
+                                       Text="Nad wykresem: Oddech rynku. Pod wykresem dwa wiersze (D1, D2) – na razie wolne. Wiersze przesuwają się razem ze świecami (przewijanie, zoom, kursor)." />
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <TabItem Header="  Okno  " Padding="10,5">
                 <ScrollViewer>
                     <StackPanel>
@@ -965,7 +1067,52 @@
                                 <GroupBox Header="Źródło danych w trybie „Na żywo”">
                                     <StackPanel>
                                         <RadioButton Content="Interactive Brokers (TWS / IB Gateway)" IsChecked="{Binding UseInteractiveBrokers}" />
+                                        <RadioButton Content="Interactive Brokers – IBKR Web API (bez TWS, klucze OAuth)" IsChecked="{Binding UseIbWebApi}" />
                                         <RadioButton Content="Generator losowych cen (do testów)" IsChecked="{Binding UseGeneratorLive}" />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- IBKR Web API: klucze OAuth. Wartości NIE są wiązane z modelem ani zapisywane w ustawieniach –
+                                     „Zapisz klucze” szyfruje je (DPAPI) do pliku w %AppData%\MarketProfile, poza repozytorium. -->
+                                <GroupBox Header="IBKR Web API – klucze OAuth 1.0a"
+                                          Visibility="{Binding UseIbWebApi, Converter={StaticResource BoolToVisibility}}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding WebApiKeysStatus}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                        <Grid Margin="0,4,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Text="Consumer key" />
+                                            <PasswordBox Grid.Row="0" Grid.Column="1" x:Name="WebApiConsumerKey" Width="260" Margin="4" HorizontalAlignment="Left" />
+
+                                            <TextBlock Grid.Row="1" Text="Access token" />
+                                            <PasswordBox Grid.Row="1" Grid.Column="1" x:Name="WebApiAccessToken" Width="260" Margin="4" HorizontalAlignment="Left" />
+
+                                            <TextBlock Grid.Row="2" Text="Access token secret" />
+                                            <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="WebApiAccessTokenSecret" Width="400" Margin="4" HorizontalAlignment="Left" />
+
+                                            <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,2,0,2">
+                                                <Button Content="Klucz podpisu (.pem)…" Click="OnWebApiSignatureKeyClick" Margin="4,0,0,0" />
+                                                <Button Content="Klucz szyfrowania (.pem)…" Click="OnWebApiEncryptionKeyClick" Margin="4,0,0,0" />
+                                                <Button Content="dhparam.pem…" Click="OnWebApiDhParamClick" Margin="4,0,0,0" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock Text="{Binding WebApiKeyFilesText}" TextWrapping="Wrap" FontSize="11" Margin="4,0,4,4" />
+                                        <StackPanel Orientation="Horizontal" Margin="4">
+                                            <Button Content="Zapisz klucze (zaszyfrowane)" Click="OnWebApiSaveKeysClick" />
+                                            <Button Content="Usuń zapisane klucze" Click="OnWebApiDeleteKeysClick" Margin="6,0,0,0" />
+                                        </StackPanel>
+                                        <CheckBox Content="Przejmij sesję, gdy ten sam użytkownik jest zalogowany w TWS (TWS zostanie rozłączony)"
+                                                  IsChecked="{Binding IbWebApiCompete}" />
+                                        <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                                   Text="Puste pole lub niewybrany plik = zostaje wartość zapisana wcześniej. Klucze są szyfrowane przez Windows (tylko Twoje konto) w %AppData%\MarketProfile – nigdy w ustawieniach ani w repozytorium. Pliki .pem możesz po zapisaniu przenieść w bezpieczne miejsce." />
+                                        <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                                   Text="Ograniczenia Web API: brak historii ticków (w tle pobierane są tylko świece 1-min i D/W/M), transakcje na żywo składane z notowań (bez tick-by-tick), świece D/W/M futures tylko z bieżącego kontraktu. IBKR pozwala na jedną sesję na użytkownika – Web API i TWS na tym samym loginie się wykluczają." />
                                     </StackPanel>
                                 </GroupBox>
 

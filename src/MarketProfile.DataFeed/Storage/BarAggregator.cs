@@ -47,7 +47,14 @@ public static class BarAggregator
     }
 
     /// <summary>
-    /// Świece z bazy z zakresu [from, to): świece zbudowane z ticków mają pierwszeństwo,
+    /// Czy ticki z minuty mają pierwszeństwo przed zapisaną świecą brokera. Tak – chyba że jest ich wyraźnie mniej
+    /// niż w świecy (poniżej połowy wolumenu): wtedy to niepełny zapis (np. rejestrator zatrzymany w połowie minuty,
+    /// przerwa w połączeniu), a pełna świeca brokera jest dokładniejsza.
+    /// </summary>
+    public static bool TicksPreferred(long tickVolume, Bar storedBar) => tickVolume * 2 >= storedBar.Volume;
+
+    /// <summary>
+    /// Świece z bazy z zakresu [from, to): świece zbudowane z ticków mają pierwszeństwo (<see cref="TicksPreferred"/>),
     /// a zapisane świece uzupełniają minuty, dla których nie ma ticków.
     /// </summary>
     /// <param name="source">Tylko dane z tego źródła (null = ze wszystkich) – zob. <see cref="MarketDataStore.SimulationSource"/>.</param>
@@ -63,7 +70,10 @@ public static class BarAggregator
 
         foreach (var bar in ToMinuteBars(store.ReadTicks(symbol, from, to, source)))
         {
-            byMinute[bar.Time] = bar;
+            if (!byMinute.TryGetValue(bar.Time, out var stored) || TicksPreferred(bar.Volume, stored))
+            {
+                byMinute[bar.Time] = bar;
+            }
         }
 
         return [.. byMinute.Values];
@@ -81,7 +91,8 @@ public static class BarAggregator
 
     /// <summary>
     /// Scala posortowane ticki i świece w jeden strumień posortowany po czasie zdarzenia. Świeca jest pomijana,
-    /// jeśli w jej minucie jest choć jeden tick; w przeciwnym razie jest oddawana w chwili zamknięcia minuty.
+    /// jeśli w jej minucie są ticki (<see cref="TicksPreferred"/>); w przeciwnym razie jest oddawana w chwili
+    /// zamknięcia minuty, a niepełne ticki z tej minuty są pomijane (zawiera je świeca).
     /// </summary>
     public static IEnumerable<ReplayItem> Merge(IEnumerable<Tick> ticks, IEnumerable<Bar> bars)
     {
@@ -102,8 +113,22 @@ public static class BarAggregator
                 hasTick = t.MoveNext();
             }
 
-            // W minucie świecy są ticki – świecę pomijamy (ticki zostaną oddane w kolejnych krokach).
-            if (!(hasTick && t.Current.Time < barEnd))
+            // Ticki z minuty świecy – zbieramy, żeby porównać ich wolumen ze świecą.
+            var minuteTicks = new List<Tick>();
+            while (hasTick && t.Current.Time < barEnd)
+            {
+                minuteTicks.Add(t.Current);
+                hasTick = t.MoveNext();
+            }
+
+            if (minuteTicks.Count > 0 && TicksPreferred(minuteTicks.Sum(x => x.Volume), bar))
+            {
+                foreach (var tick in minuteTicks)
+                {
+                    yield return ReplayItem.FromTick(tick);
+                }
+            }
+            else
             {
                 yield return ReplayItem.FromBar(bar);
             }

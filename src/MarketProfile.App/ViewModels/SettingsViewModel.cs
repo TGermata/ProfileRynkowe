@@ -1,9 +1,11 @@
 ﻿using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using MarketProfile.App.Infrastructure;
 using MarketProfile.App.Settings;
 using MarketProfile.Core;
 using MarketProfile.DataFeed.IB;
+using MarketProfile.DataFeed.IBWeb;
 using MarketProfile.DataFeed.Storage;
 
 namespace MarketProfile.App.ViewModels;
@@ -35,7 +37,9 @@ public sealed class SettingsViewModel : ObservableObject
                                     ?? InstrumentEditors.FirstOrDefault();
 
         // Interactive Brokers. Pustą ścieżkę od razu uzupełniamy znalezioną automatycznie – użytkownik widzi, skąd biblioteka.
-        UseInteractiveBrokers = settings.LiveSource == LiveSourceKind.InteractiveBrokers;
+        _liveSource = settings.LiveSource;
+        IbWebApiCompete = settings.IbWebApiCompete;
+        RefreshWebApiKeysStatus();
         _ibApiPath = string.IsNullOrWhiteSpace(settings.IbApiPath) ? IbApiLoader.AutoDetect() ?? string.Empty : settings.IbApiPath;
         IbHost = settings.IbHost;
         IbPort = ToText(settings.IbPort);
@@ -70,9 +74,12 @@ public sealed class SettingsViewModel : ObservableObject
         VolumeMirrored = volume.Mirrored;
         VolumeBarColor = volume.BarColor;
         VolumeVpocColor = volume.VpocColor;
+        VolumeDeltaBuyColor = volume.DeltaBuyColor;
+        VolumeDeltaSellColor = volume.DeltaSellColor;
         VolumeOpacity = ToText(volume.Opacity);
         VolumeScale = volume.Scale;
         VolumeMode = settings.VolumeProfile;
+        VolumeDisplayDelta = settings.VolumeDisplay == VolumeDisplayKind.Delta;
         LoadPeriodVolume(settings.PeriodVolume);
         LoadVolumeLabels(settings.VolumeLabels);
         VolumeCapPercent = ToText(volume.CapPercent);
@@ -104,17 +111,103 @@ public sealed class SettingsViewModel : ObservableObject
         // Wykres D/W/M.
         LoadCandleChart(settings.CandleChart);
         LoadTpoAverages(settings.TpoAverages);
+        // Szeroki rynek: tylko indeksy (świece wyłącznie z sesji kasowej).
         BroadMarketSymbol = settings.BroadMarketSymbol;
-        BroadMarketOptions = settings.Instruments.Select(i => i.Symbol)
-            .Append(settings.BroadMarketSymbol).Append(Instrument.DefaultBroadMarketSymbol)
+        BroadMarketOptions = settings.Instruments.Concat(Instrument.BuiltIn)
+            .Where(i => i.Type == InstrumentType.Index)
+            .Select(i => i.Symbol)
+            .Prepend(Instrument.DefaultBroadMarketSymbol)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        LoadBroadMarketChart(settings.BroadMarketChart);
     }
 
-    /// <summary>Symbol „rynku szerokiego” (np. SPX) – przełącznik na wykresie D/W/M, świece D/W/M w bazie.</summary>
+    /// <summary>Symbol „rynku szerokiego” (indeks, np. SPX) – zakładka „Szeroki rynek”, przełącznik na wykresie D/W/M.</summary>
     public string BroadMarketSymbol { get; set; } = string.Empty;
 
-    /// <summary>Symbole do wyboru jako rynek szeroki (instrumenty z listy + SPX).</summary>
+    /// <summary>Symbole do wyboru jako rynek szeroki – indeksy (z listy instrumentów i wbudowane).</summary>
     public IReadOnlyList<string> BroadMarketOptions { get; } = [];
+
+    // --- Szeroki rynek: wykres dzienny (kolory świec, średnie SMA/EMA) ---
+    public string BroadUpColor { get; set; } = string.Empty;
+    public string BroadDownColor { get; set; } = string.Empty;
+
+    /// <summary>„Oddech rynku”: wskaźnik graficzny (pasek) obok liczby.</summary>
+    public bool ShowBreathGauge { get; set; }
+
+    /// <summary>Średnie kroczące wykresu „Szeroki rynek” – edytowalna lista.</summary>
+    public ObservableCollection<BroadMovingAverageEditorViewModel> BroadMovingAverages { get; } = [];
+
+    /// <summary>Rodzaje średnich do wyboru.</summary>
+    public IReadOnlyList<KeyValuePair<MovingAverageKind, string>> MovingAverageKinds { get; } =
+    [
+        new(MovingAverageKind.Ema, "EMA"),
+        new(MovingAverageKind.Sma, "SMA"),
+    ];
+
+    private void LoadBroadMarketChart(BroadMarketChartStyle style)
+    {
+        BroadUpColor = style.UpColor;
+        BroadDownColor = style.DownColor;
+        ShowBreathGauge = style.ShowBreathGauge;
+        BroadMovingAverages.Clear();
+        foreach (var average in style.MovingAverages)
+        {
+            BroadMovingAverages.Add(new BroadMovingAverageEditorViewModel(average));
+        }
+    }
+
+    /// <summary>Nowa średnia na wykresie „Szeroki rynek” (EMA, kolejny kolor z palety).</summary>
+    public void AddBroadMovingAverage()
+    {
+        string[] palette = ["#7FD4FF", "#FFFFFF", "#F0C030", "#E040FB", "#FF8C2E", "#30C070"];
+        var period = BroadMovingAverages.Count == 0 ? 8 : BroadMovingAverages.Max(m => int.TryParse(m.Period, out var p) ? p : 0) * 2;
+        BroadMovingAverages.Add(new BroadMovingAverageEditorViewModel(new BroadMovingAverageStyle
+        {
+            Period = Math.Clamp(period, 2, 500),
+            Color = palette[BroadMovingAverages.Count % palette.Length],
+        }));
+    }
+
+    public void RemoveBroadMovingAverage(BroadMovingAverageEditorViewModel average) => BroadMovingAverages.Remove(average);
+
+    /// <summary>Przywraca domyślny wygląd wykresu „Szeroki rynek”: EMA 8 i EMA 21 (zapis dopiero po kliknięciu „Zapisz”).</summary>
+    public void ResetBroadMarketChart()
+    {
+        LoadBroadMarketChart(new BroadMarketChartStyle());
+        OnPropertyChanged(string.Empty);
+    }
+
+    /// <summary>Wygląd wykresu „Szeroki rynek” z formularza; null + komunikat błędu, gdy coś jest niepoprawne.</summary>
+    private BroadMarketChartStyle? TryCreateBroadMarketChart(out string? error)
+    {
+        error = null;
+        if (!ColorUtil.TryParse(BroadUpColor, out _) || !ColorUtil.TryParse(BroadDownColor, out _))
+        {
+            error = "Szeroki rynek: kolory świec podaj w formacie #RRGGBB.";
+            return null;
+        }
+
+        var averages = new List<BroadMovingAverageStyle>();
+        for (var i = 0; i < BroadMovingAverages.Count; i++)
+        {
+            if (BroadMovingAverages[i].TryCreate(out var average) is { } averageError)
+            {
+                error = $"Szeroki rynek – średnia nr {i + 1}: {averageError}";
+                return null;
+            }
+
+            averages.Add(average!);
+        }
+
+        return new BroadMarketChartStyle
+        {
+            RightMarginPercent = _original.BroadMarketChart.RightMarginPercent, // ustawiane na wykresie, nie w tym oknie
+            ShowBreathGauge = ShowBreathGauge,
+            UpColor = BroadUpColor.Trim().ToUpperInvariant(),
+            DownColor = BroadDownColor.Trim().ToUpperInvariant(),
+            MovingAverages = averages,
+        };
+    }
 
     // --- Wykres D/W/M: rodzaj prezentacji, kolory, wolumen, średnie kroczące ---
     public bool CandleTypeCandles { get; set; }
@@ -271,6 +364,7 @@ public sealed class SettingsViewModel : ObservableObject
 
         return new CandleChartStyle
         {
+            RightMarginPercent = _original.CandleChart.RightMarginPercent, // ustawiane na wykresie, nie w tym oknie
             Type = CandleTypeOhlc ? CandleChartType.OhlcBars : CandleChartType.Candles,
             UpColor = CandleUpColor.Trim().ToUpperInvariant(),
             DownColor = CandleDownColor.Trim().ToUpperInvariant(),
@@ -548,7 +642,7 @@ public sealed class SettingsViewModel : ObservableObject
             return;
         }
 
-        if (!IbApiValid)
+        if (!ibSettings.UseWebApi && !IbApiValid)
         {
             InstrumentLookupResult = $"Interactive Brokers: {IbApiStatus}";
             return;
@@ -566,7 +660,7 @@ public sealed class SettingsViewModel : ObservableObject
 
         try
         {
-            IbApiLoader.Use(IbApiPath);
+            UseTwsLibraryIfNeeded(ibSettings);
             var info = await IbFeeds.LookupAsync(ibSettings with { ClientId = ibSettings.ClientId + 101 }, instrument);
             editor.Apply(info);
 
@@ -597,14 +691,195 @@ public sealed class SettingsViewModel : ObservableObject
     private string _ibTestResult = string.Empty;
     private bool _isTestingIb;
 
-    /// <summary>Tryb „Na żywo” korzysta z Interactive Brokers (w przeciwnym razie z generatora).</summary>
-    public bool UseInteractiveBrokers { get; set; }
+    private LiveSourceKind _liveSource;
 
-    /// <summary>Tryb „Na żywo” korzysta z generatora (przeciwieństwo – dla przycisków opcji).</summary>
+    /// <summary>Tryb „Na żywo” korzysta z Interactive Brokers przez TWS / IB Gateway.</summary>
+    public bool UseInteractiveBrokers
+    {
+        get => _liveSource == LiveSourceKind.InteractiveBrokers;
+        set => SetLiveSource(value, LiveSourceKind.InteractiveBrokers);
+    }
+
+    /// <summary>Tryb „Na żywo” korzysta z Interactive Brokers przez IBKR Web API (bez TWS).</summary>
+    public bool UseIbWebApi
+    {
+        get => _liveSource == LiveSourceKind.InteractiveBrokersWebApi;
+        set => SetLiveSource(value, LiveSourceKind.InteractiveBrokersWebApi);
+    }
+
+    /// <summary>Tryb „Na żywo” korzysta z generatora losowych cen.</summary>
     public bool UseGeneratorLive
     {
-        get => !UseInteractiveBrokers;
-        set => UseInteractiveBrokers = !value;
+        get => _liveSource == LiveSourceKind.Generator;
+        set => SetLiveSource(value, LiveSourceKind.Generator);
+    }
+
+    /// <summary>Przyciski opcji: zaznaczenie ustawia źródło, odznaczenie (przez inny przycisk) niczego nie zmienia.</summary>
+    private void SetLiveSource(bool selected, LiveSourceKind kind)
+    {
+        if (!selected || _liveSource == kind)
+        {
+            return;
+        }
+
+        _liveSource = kind;
+        OnPropertyChanged(nameof(UseInteractiveBrokers));
+        OnPropertyChanged(nameof(UseIbWebApi));
+        OnPropertyChanged(nameof(UseGeneratorLive));
+    }
+
+    /// <summary>Dla TWS API wskazuje bibliotekę ze ścieżki z okna (Web API jej nie potrzebuje).</summary>
+    private void UseTwsLibraryIfNeeded(IbConnectionSettings settings)
+    {
+        if (!settings.UseWebApi)
+        {
+            IbApiLoader.Use(IbApiPath);
+        }
+    }
+
+    // --- IBKR Web API (klucze OAuth) ---
+    //
+    // BEZPIECZEŃSTWO: klucze nie są właściwościami wiązanymi z oknem ani częścią AppSettings. Wartości z pól hasła
+    // i zawartość plików PEM trafiają od razu do zaszyfrowanego magazynu (DPAPI, %AppData%\MarketProfile) i nie są
+    // nigdzie wyświetlane ani zapisywane jawnie.
+
+    private readonly IbWebCredentialStore _webKeys = new();
+    private readonly Dictionary<WebApiKeyFile, string> _webKeyFiles = [];
+    private string _webApiKeysStatus = string.Empty;
+    private string _webApiKeyFilesText = string.Empty;
+
+    /// <summary>Web API: przejmij sesję, gdy ten sam użytkownik jest zalogowany w TWS (TWS zostanie rozłączony).</summary>
+    public bool IbWebApiCompete { get; set; }
+
+    /// <summary>Stan zapisanych kluczy (bez ich wartości).</summary>
+    public string WebApiKeysStatus
+    {
+        get => _webApiKeysStatus;
+        private set => SetProperty(ref _webApiKeysStatus, value);
+    }
+
+    /// <summary>Wybrane pliki kluczy (tylko nazwy plików) oczekujące na „Zapisz klucze”.</summary>
+    public string WebApiKeyFilesText
+    {
+        get => _webApiKeyFilesText;
+        private set => SetProperty(ref _webApiKeyFilesText, value);
+    }
+
+    /// <summary>Wybór pliku klucza (zawartość jest czytana dopiero przy „Zapisz klucze”).</summary>
+    public void SetWebApiKeyFile(WebApiKeyFile kind, string path)
+    {
+        _webKeyFiles[kind] = path;
+        var names = _webKeyFiles.OrderBy(f => f.Key).Select(f => $"{WebApiKeyFileName(f.Key)}: {Path.GetFileName(f.Value)}");
+        var warning = _webKeyFiles.Values.Any(IsInsideGitRepository)
+            ? "\n⚠ Co najmniej jeden plik leży w folderze repozytorium Git – po zapisaniu kluczy przenieś go stamtąd (nigdy nie dodawaj go do Gita)."
+            : string.Empty;
+        WebApiKeyFilesText = string.Join(" · ", names) + warning;
+    }
+
+    private static string WebApiKeyFileName(WebApiKeyFile kind) => kind switch
+    {
+        WebApiKeyFile.Signature => "klucz podpisu",
+        WebApiKeyFile.Encryption => "klucz szyfrowania",
+        _ => "dhparam",
+    };
+
+    /// <summary>
+    /// Zapisuje klucze (zaszyfrowane). Puste pole / niewybrany plik = zostaje wartość zapisana wcześniej.
+    /// Przed zapisem sprawdza, czy klucze są poprawne i pasują do siebie (odszyfrowanie access token secret, plik DH).
+    /// </summary>
+    public bool SaveWebApiKeys(string consumerKey, string accessToken, string accessTokenSecret)
+    {
+        try
+        {
+            var existing = LoadWebApiKeysOrEmpty();
+            string Pem(WebApiKeyFile kind, string old) => _webKeyFiles.TryGetValue(kind, out var path) ? File.ReadAllText(path) : old;
+
+            var credentials = new IbWebCredentials
+            {
+                ConsumerKey = string.IsNullOrWhiteSpace(consumerKey) ? existing.ConsumerKey : consumerKey.Trim(),
+                AccessToken = string.IsNullOrWhiteSpace(accessToken) ? existing.AccessToken : accessToken.Trim(),
+                AccessTokenSecret = string.IsNullOrWhiteSpace(accessTokenSecret) ? existing.AccessTokenSecret : accessTokenSecret.Trim(),
+                SignatureKeyPem = Pem(WebApiKeyFile.Signature, existing.SignatureKeyPem),
+                EncryptionKeyPem = Pem(WebApiKeyFile.Encryption, existing.EncryptionKeyPem),
+                DhParamPem = Pem(WebApiKeyFile.DhParam, existing.DhParamPem),
+            };
+
+            if (!credentials.IsComplete)
+            {
+                WebApiKeysStatus = $"Nie zapisano – brakuje: {string.Join(", ", credentials.Missing())}.";
+                return false;
+            }
+
+            // Sprawdzenie bez łączenia z IBKR: klucz szyfrowania odszyfrowuje secret, klucz podpisu podpisuje, plik DH się wczytuje.
+            _ = IbWebOAuth.DecryptPrepend(credentials.EncryptionKeyPem, credentials.AccessTokenSecret);
+            _ = IbWebOAuth.SignRsa(credentials.SignatureKeyPem, "test");
+            _ = IbWebOAuth.ReadDhParameters(credentials.DhParamPem);
+
+            _webKeys.Save(credentials);
+            _webKeyFiles.Clear();
+            WebApiKeyFilesText = string.Empty;
+            _ = IbWebSession.ResetSharedAsync(); // nowa sesja z nowymi kluczami
+            RefreshWebApiKeysStatus();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // Komunikat wyjątku nie zawiera wartości kluczy (błędy kryptografii / odczytu pliku).
+            WebApiKeysStatus = $"Nie zapisano – klucze są niepoprawne albo nie pasują do siebie ({ex.GetType().Name}: {ex.Message}).";
+            return false;
+        }
+    }
+
+    /// <summary>Usuwa zapisane klucze Web API.</summary>
+    public void DeleteWebApiKeys()
+    {
+        _webKeys.Delete();
+        _ = IbWebSession.ResetSharedAsync();
+        RefreshWebApiKeysStatus();
+    }
+
+    private IbWebCredentials LoadWebApiKeysOrEmpty()
+    {
+        try
+        {
+            return _webKeys.Load() ?? new IbWebCredentials();
+        }
+        catch (Exception)
+        {
+            return new IbWebCredentials(); // uszkodzony plik / inny użytkownik Windows – zapis nadpisze
+        }
+    }
+
+    private bool HasCompleteWebApiKeys() => LoadWebApiKeysOrEmpty().IsComplete;
+
+    private void RefreshWebApiKeysStatus()
+    {
+        try
+        {
+            WebApiKeysStatus = _webKeys.Load() is { } keys
+                ? keys.IsComplete
+                    ? $"✓ Klucze zapisane (zaszyfrowane w Windows, poza repozytorium), consumer key {IbWebCredentials.Mask(keys.ConsumerKey)}."
+                    : $"Klucze niekompletne – brakuje: {string.Join(", ", keys.Missing())}."
+                : "Brak zapisanych kluczy – wpisz je i wczytaj pliki, potem „Zapisz klucze”.";
+        }
+        catch (Exception ex)
+        {
+            WebApiKeysStatus = $"Nie udało się odczytać zapisanych kluczy: {ex.Message}";
+        }
+    }
+
+    /// <summary>Czy plik leży w folderze repozytorium Git (jest nad nim folder .git).</summary>
+    private static bool IsInsideGitRepository(string path)
+    {
+        for (var dir = Path.GetDirectoryName(Path.GetFullPath(path)); dir is not null; dir = Path.GetDirectoryName(dir))
+        {
+            if (Directory.Exists(Path.Combine(dir, ".git")) || File.Exists(Path.Combine(dir, ".git")))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Ścieżka do biblioteki TWS API (plik CSharpAPI.dll albo folder) – sprawdzana na bieżąco.</summary>
@@ -673,14 +948,20 @@ public sealed class SettingsViewModel : ObservableObject
         var instrument = _original.Instrument;
         _isTestingIb = true;
         OnPropertyChanged(nameof(CanTestIb));
-        IbTestResult = $"Łączenie z {ibSettings.Host}:{ibSettings.Port} – sprawdzanie historii ticków {instrument.Symbol} (ok. 1–3 min)...";
+        IbTestResult = $"Łączenie z {ibSettings.Endpoint} – sprawdzanie historii ticków {instrument.Symbol} (ok. 1–3 min)...";
 
+        _probeCts?.Cancel();
+        var cts = _probeCts = new CancellationTokenSource();
         try
         {
-            IbApiLoader.Use(IbApiPath);
+            UseTwsLibraryIfNeeded(ibSettings);
             var progress = new Progress<string>(message => IbTestResult = $"{instrument.Symbol}: {message}");
-            var result = await IbFeeds.ProbeTickHistoryAsync(ibSettings with { ClientId = ibSettings.ClientId + 102 }, instrument, progress);
+            var result = await IbFeeds.ProbeTickHistoryAsync(ibSettings with { ClientId = ibSettings.ClientId + 102 }, instrument, progress, cts.Token);
             IbTestResult = DescribeTickProbe(result, instrument, _original.BackgroundHistoryDays);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            IbTestResult = "Sprawdzanie historii ticków przerwane";
         }
         catch (Exception ex)
         {
@@ -688,10 +969,21 @@ public sealed class SettingsViewModel : ObservableObject
         }
         finally
         {
+            if (ReferenceEquals(_probeCts, cts))
+            {
+                _probeCts = null;
+            }
+
+            cts.Dispose();
             _isTestingIb = false;
             OnPropertyChanged(nameof(CanTestIb));
         }
     }
+
+    private CancellationTokenSource? _probeCts;
+
+    /// <summary>Przerywa trwające długie operacje (np. sprawdzanie historii ticków) – przy zamykaniu okna ustawień.</summary>
+    public void CancelPendingOperations() => _probeCts?.Cancel();
 
     /// <summary>Opis wyniku sprawdzenia historii ticków dla użytkownika.</summary>
     private static string DescribeTickProbe(IbTickProbeResult r, Instrument instrument, int backgroundDays)
@@ -753,11 +1045,11 @@ public sealed class SettingsViewModel : ObservableObject
 
         _isTestingIb = true;
         OnPropertyChanged(nameof(CanTestIb));
-        IbTestResult = $"Łączenie z {ibSettings.Host}:{ibSettings.Port}...";
+        IbTestResult = $"Łączenie z {ibSettings.Endpoint}...";
 
         try
         {
-            IbApiLoader.Use(IbApiPath);
+            UseTwsLibraryIfNeeded(ibSettings);
             IbTestResult = await IbFeeds.TestConnectionAsync(ibSettings with { ClientId = ibSettings.ClientId + 100 }, _original.Instrument);
         }
         catch (Exception ex)
@@ -809,6 +1101,8 @@ public sealed class SettingsViewModel : ObservableObject
             Port = port,
             ClientId = clientId,
             DataType = IbDataType,
+            UseWebApi = UseIbWebApi,
+            WebApiCompete = IbWebApiCompete,
         };
         return true;
     }
@@ -952,6 +1246,17 @@ public sealed class SettingsViewModel : ObservableObject
 
     public string VolumeBarColor { get; set; }
     public string VolumeVpocColor { get; set; }
+    public string VolumeDeltaBuyColor { get; set; } = "";
+    public string VolumeDeltaSellColor { get; set; } = "";
+
+    /// <summary>Profil różnicowy (delta) zamiast tradycyjnego – to samo co w menu „Wyświetlanie”.</summary>
+    public bool VolumeDisplayDelta { get; set; }
+
+    public bool VolumeDisplayTotal
+    {
+        get => !VolumeDisplayDelta;
+        set => VolumeDisplayDelta = !value;
+    }
     public string VolumeOpacity { get; set; }
 
     // --- Profil wolumenowy bieżącego słupka TPO ---
@@ -1122,6 +1427,11 @@ public sealed class SettingsViewModel : ObservableObject
             return Fail($"Interactive Brokers: {IbApiStatus}");
         }
 
+        if (UseIbWebApi && !HasCompleteWebApiKeys())
+        {
+            return Fail("IBKR Web API: najpierw zapisz klucze OAuth (Dane i broker → Źródło i połączenie → „Zapisz klucze”).");
+        }
+
         if (!TryParseInt(TestDataDays, 1, 60, out var testDays))
         {
             return Fail("Dane testowe: podaj liczbę dni od 1 do 60.");
@@ -1137,7 +1447,8 @@ public sealed class SettingsViewModel : ObservableObject
             return Fail($"Dane w tle: podaj liczbę dni ticków od 0 do {backgroundDays} (nie więcej niż dni historii świec).");
         }
 
-        if (!ColorUtil.TryParse(VolumeBarColor, out _) || !ColorUtil.TryParse(VolumeVpocColor, out _))
+        if (!ColorUtil.TryParse(VolumeBarColor, out _) || !ColorUtil.TryParse(VolumeVpocColor, out _) ||
+            !ColorUtil.TryParse(VolumeDeltaBuyColor, out _) || !ColorUtil.TryParse(VolumeDeltaSellColor, out _))
         {
             return Fail("Profil wolumenowy: kolory podaj w formacie #RRGGBB.");
         }
@@ -1227,6 +1538,11 @@ public sealed class SettingsViewModel : ObservableObject
             return Fail(candleError!);
         }
 
+        if (TryCreateBroadMarketChart(out var broadChartError) is not { } broadMarketChart)
+        {
+            return Fail(broadChartError!);
+        }
+
         if (TryCreateTpoAverages(out var tpoAveragesError) is not { } tpoAverages)
         {
             return Fail(tpoAveragesError!);
@@ -1269,7 +1585,13 @@ public sealed class SettingsViewModel : ObservableObject
         var broadSymbol = BroadMarketSymbol?.Trim() ?? string.Empty;
         if (Instrument.Find(instruments, broadSymbol) is not { } broadInstrument)
         {
-            return Fail($"Wykres D/W/M: nieznany instrument rynku szerokiego „{broadSymbol}” – wybierz symbol z listy instrumentów (np. SPX).");
+            return Fail($"Szeroki rynek: nieznany instrument „{broadSymbol}” – wybierz indeks z listy (np. SPX).");
+        }
+
+        if (broadInstrument.Type != InstrumentType.Index)
+        {
+            return Fail($"Szeroki rynek: {broadInstrument.Symbol} nie jest indeksem – wybierz indeks (np. SPX), " +
+                        "bo wykres pokazuje świece tylko z sesji kasowej.");
         }
 
         // Wybrany instrument zostaje, chyba że został usunięty – wtedy pierwszy z listy.
@@ -1293,7 +1615,8 @@ public sealed class SettingsViewModel : ObservableObject
             TempoGauge = TempoGauge,
             TempoGaugePosition = TempoGaugePosition,
             TempoInStatusBar = TempoInStatusBar,
-            LiveSource = UseInteractiveBrokers ? LiveSourceKind.InteractiveBrokers : LiveSourceKind.Generator,
+            LiveSource = _liveSource,
+            IbWebApiCompete = IbWebApiCompete,
             IbApiPath = IbApiPath?.Trim() ?? string.Empty,
             IbHost = ibSettings.Host,
             IbPort = ibSettings.Port,
@@ -1303,6 +1626,7 @@ public sealed class SettingsViewModel : ObservableObject
             BackgroundHistoryDays = backgroundDays,
             BackgroundTickDays = tickDays,
             VolumeProfile = VolumeMode,
+            VolumeDisplay = VolumeDisplayDelta ? VolumeDisplayKind.Delta : VolumeDisplayKind.Total,
             VolumeLabels = new VolumeLabelStyle
             {
                 ShowOnSessionVolume = VolumeLabelsOnSession,
@@ -1333,6 +1657,8 @@ public sealed class SettingsViewModel : ObservableObject
                 Mirrored = VolumeMirrored,
                 BarColor = VolumeBarColor.Trim().ToUpperInvariant(),
                 VpocColor = VolumeVpocColor.Trim().ToUpperInvariant(),
+                DeltaBuyColor = VolumeDeltaBuyColor.Trim().ToUpperInvariant(),
+                DeltaSellColor = VolumeDeltaSellColor.Trim().ToUpperInvariant(),
                 Opacity = volumeOpacity,
             },
             DayColors = dayColors!,
@@ -1372,6 +1698,7 @@ public sealed class SettingsViewModel : ObservableObject
                 Length = arrowLength,
             },
             CandleChart = candleChart,
+            BroadMarketChart = broadMarketChart,
             TpoAverages = tpoAverages,
             BroadMarketSymbol = broadInstrument.Symbol,
             PeriodTimer = new PeriodTimerStyle
@@ -1394,6 +1721,8 @@ public sealed class SettingsViewModel : ObservableObject
         VolumeMirrored = defaults.Mirrored;
         VolumeBarColor = defaults.BarColor;
         VolumeVpocColor = defaults.VpocColor;
+        VolumeDeltaBuyColor = defaults.DeltaBuyColor;
+        VolumeDeltaSellColor = defaults.DeltaSellColor;
         VolumeOpacity = ToText(defaults.Opacity);
         VolumeScale = defaults.Scale;
         VolumeCapPercent = ToText(defaults.CapPercent);
@@ -1494,6 +1823,48 @@ public sealed class ColorSchemeViewModel : ObservableObject
             ValueAreaColor = ValueAreaColor.Trim().ToUpperInvariant(),
             ValueAreaOpacity = vaOpacity,
             IbColor = IbColor.Trim().ToUpperInvariant(),
+        };
+        return null;
+    }
+}
+
+/// <summary>Edycja jednej średniej kroczącej (SMA/EMA) wykresu „Szeroki rynek”.</summary>
+public sealed class BroadMovingAverageEditorViewModel(BroadMovingAverageStyle style) : ObservableObject
+{
+    public bool Enabled { get; set; } = style.Enabled;
+    public MovingAverageKind Kind { get; set; } = style.Kind;
+    public string Period { get; set; } = style.Period.ToString(CultureInfo.InvariantCulture);
+    public string Color { get; set; } = style.Color;
+    public string Thickness { get; set; } = style.Thickness.ToString(CultureInfo.InvariantCulture);
+    public LineStyle LineStyle { get; set; } = style.LineStyle;
+
+    /// <summary>Średnia z formularza; zwraca opis błędu albo null.</summary>
+    public string? TryCreate(out BroadMovingAverageStyle? result)
+    {
+        result = null;
+        if (!SettingsViewModel.TryParseInt(Period, 1, 500, out var period))
+        {
+            return "okres podaj jako liczbę świec od 1 do 500.";
+        }
+
+        if (!ColorUtil.TryParse(Color, out _))
+        {
+            return "kolor podaj w formacie #RRGGBB.";
+        }
+
+        if (!SettingsViewModel.TryParseInt(Thickness, 1, 10, out var thickness))
+        {
+            return "grubość podaj w pikselach od 1 do 10.";
+        }
+
+        result = new BroadMovingAverageStyle
+        {
+            Enabled = Enabled,
+            Kind = Kind,
+            Period = period,
+            Color = Color.Trim().ToUpperInvariant(),
+            Thickness = thickness,
+            LineStyle = LineStyle,
         };
         return null;
     }
@@ -1646,4 +2017,12 @@ public sealed class MovingAverageEditorViewModel : ObservableObject
         };
         return null;
     }
+}
+
+/// <summary>Pliki kluczy IBKR Web API wybierane w ustawieniach.</summary>
+public enum WebApiKeyFile
+{
+    Signature,
+    Encryption,
+    DhParam,
 }

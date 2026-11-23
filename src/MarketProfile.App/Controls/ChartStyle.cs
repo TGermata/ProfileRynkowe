@@ -162,6 +162,20 @@ public sealed class ChartStyle
     public required Brush VolumeBrush { get; init; }
     public required Brush VolumePocBrush { get; init; }
 
+    // --- Profil różnicowy (delta) ---
+
+    /// <summary>Profil wolumenowy różnicowy (delta kupno − sprzedaż) zamiast tradycyjnego.</summary>
+    public bool VolumeDelta { get; init; }
+
+    public Brush DeltaBuyBrush { get; init; } = Brushes.SeaGreen;
+    public Brush DeltaSellBrush { get; init; } = Brushes.IndianRed;
+
+    /// <summary>Wiersz z największą |deltą| – pełny kolor (jak VPOC w profilu tradycyjnym).</summary>
+    public Brush DeltaBuyStrongBrush { get; init; } = Brushes.SeaGreen;
+    public Brush DeltaSellStrongBrush { get; init; } = Brushes.IndianRed;
+    public Pen? DeltaBuyOutlinePen { get; init; }
+    public Pen? DeltaSellOutlinePen { get; init; }
+
     /// <summary>
     /// Obrys słupków wolumenu – w kolorze słupków, ale wyraźniejszy (min. 70% krycia), żeby profil wolumenowy
     /// był widoczny także przy niskim kryciu wypełnienia.
@@ -273,6 +287,13 @@ public sealed class ChartStyle
             VolumeBrush = ColorUtil.ToBrush(volume.BarColor, volume.Opacity),
             VolumeOutlinePen = CreateOutline(volume.BarColor, Math.Max(volume.Opacity, 70)),
             VolumePocBrush = ColorUtil.ToBrush(volume.VpocColor, Math.Max(volume.Opacity, 80)),
+            VolumeDelta = settings.VolumeDisplay == VolumeDisplayKind.Delta,
+            DeltaBuyBrush = ColorUtil.ToBrush(volume.DeltaBuyColor, volume.Opacity),
+            DeltaSellBrush = ColorUtil.ToBrush(volume.DeltaSellColor, volume.Opacity),
+            DeltaBuyStrongBrush = ColorUtil.ToBrush(volume.DeltaBuyColor, Math.Max(volume.Opacity, 90)),
+            DeltaSellStrongBrush = ColorUtil.ToBrush(volume.DeltaSellColor, Math.Max(volume.Opacity, 90)),
+            DeltaBuyOutlinePen = CreateOutline(volume.DeltaBuyColor, Math.Max(volume.Opacity, 70)),
+            DeltaSellOutlinePen = CreateOutline(volume.DeltaSellColor, Math.Max(volume.Opacity, 70)),
             VolumeLabelsOnSession = settings.VolumeLabels.ShowOnSessionVolume,
             VolumeLabelsOnPeriod = settings.VolumeLabels.ShowOnPeriodVolume,
             VolumeLabelPosition = settings.VolumeLabels.Position,

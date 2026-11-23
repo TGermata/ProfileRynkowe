@@ -33,28 +33,11 @@ public static class DrawingsStore
     };
 
     /// <summary>Wczytuje elementy wszystkich instrumentów (symbol -> elementy).</summary>
-    public static Dictionary<string, InstrumentDrawings> Load()
-    {
-        try
-        {
-            if (File.Exists(FilePath))
-            {
-                return JsonSerializer.Deserialize<Dictionary<string, InstrumentDrawings>>(File.ReadAllText(FilePath), JsonOptions)
-                       ?? [];
-            }
-        }
-        catch (Exception)
-        {
-            // Uszkodzony plik – zaczynamy od pustej listy.
-        }
+    /// <remarks>Uszkodzony plik: kopia zapasowa + komunikat i pusta lista (patrz <see cref="JsonFileStore"/>).</remarks>
+    public static Dictionary<string, InstrumentDrawings> Load() =>
+        JsonFileStore.Read<Dictionary<string, InstrumentDrawings>>(FilePath, JsonOptions) ?? [];
 
-        return [];
-    }
-
-    /// <summary>Zapisuje elementy wszystkich instrumentów.</summary>
-    public static void Save(Dictionary<string, InstrumentDrawings> drawings)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(drawings, JsonOptions));
-    }
+    /// <summary>Zapisuje elementy wszystkich instrumentów (atomowo; błąd zapisu jest zgłaszany, nie rzucany).</summary>
+    public static void Save(Dictionary<string, InstrumentDrawings> drawings) =>
+        JsonFileStore.Write(FilePath, drawings, JsonOptions);
 }

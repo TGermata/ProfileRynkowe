@@ -40,11 +40,27 @@ public sealed class ProfileBuilder
     /// <summary>Przetwarza pojedynczy tick (transakcję na żywo).</summary>
     public void ProcessTick(Tick tick)
     {
+        // Strona transakcji: zmierzona (bid/ask) albo oszacowana regułą ticka – do profilu wolumenowego różnicowego (delta).
+        TradeSide side;
+        lock (_tickRule)
+        {
+            side = _tickRule.Classify(tick);
+            if (tick.Time > _tickRuleTime)
+            {
+                _tickRuleTime = tick.Time;
+            }
+        }
+
         if (TryResolve(tick.Time, out var profile, out var periodIndex, out var minute))
         {
-            profile.AddPriceRange(periodIndex, tick.Price, tick.Price, tick.Price, tick.Volume, minute: minute);
+            profile.AddPriceRange(periodIndex, tick.Price, tick.Price, tick.Price, tick.Volume, minute: minute, side: side);
         }
     }
+
+    private readonly TickRule _tickRule = new();
+
+    /// <summary>Czas najnowszych danych, które ustawiły punkt odniesienia reguły ticka (chronione blokadą _tickRule).</summary>
+    private DateTimeOffset _tickRuleTime = DateTimeOffset.MinValue;
 
     /// <summary>
     /// Przetwarza świecę historyczną. Świeca jest przypisywana do okresu TPO według czasu jej rozpoczęcia,
@@ -52,6 +68,17 @@ public sealed class ProfileBuilder
     /// </summary>
     public void ProcessBar(Bar bar)
     {
+        // Świeca nie ma stron transakcji – tylko punkt odniesienia reguły ticka. Tylko świeca nie starsza niż dotychczasowe
+        // dane: doczytywana starsza historia (np. sprzed tygodnia) nie może przestawić odniesienia dla ticków na żywo.
+        lock (_tickRule)
+        {
+            if (bar.Time >= _tickRuleTime)
+            {
+                _tickRule.Observe(bar.Close);
+                _tickRuleTime = bar.Time;
+            }
+        }
+
         if (TryResolve(bar.Time, out var profile, out var periodIndex, out var minute))
         {
             profile.AddPriceRange(periodIndex, bar.Low, bar.High, bar.Close, bar.Volume, bar.Open, minute);

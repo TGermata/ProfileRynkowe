@@ -30,6 +30,37 @@ public sealed class IndicatorsTests
     }
 
     [Fact]
+    public void Ema_StartZSma_PotemWygladzanieWykladnicze()
+    {
+        // Okres 3: k = 0,5. Start: SMA(10, 11, 12) = 11; potem 11 + 0,5 × (13 − 11) = 12; 12 + 0,5 × (16 − 12) = 14.
+        var ema = Indicators.Ema(Closes(10, 11, 12, 13, 16), 3);
+
+        Assert.Equal(5, ema.Length);
+        Assert.Null(ema[0]);
+        Assert.Null(ema[1]);
+        Assert.Equal(11m, ema[2]);
+        Assert.Equal(12m, ema[3]);
+        Assert.Equal(14m, ema[4]);
+    }
+
+    [Fact]
+    public void Ema_Okres1_ToZamkniecia_ZaMaloSwiec_SameNulle()
+    {
+        Assert.Equal([10m, 11m, 9m], Indicators.Ema(Closes(10, 11, 9), 1).Select(v => v!.Value));
+        Assert.All(Indicators.Ema(Closes(10, 11), 5), v => Assert.Null(v));
+        Assert.Empty(Indicators.Ema(Closes(), 8));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Indicators.Ema(Closes(10), 0));
+    }
+
+    [Fact]
+    public void MovingAverage_WybieraRodzaj()
+    {
+        var bars = Closes(10, 11, 12, 13, 16);
+        Assert.Equal(Indicators.Sma(bars, 3), Indicators.MovingAverage(bars, MovingAverageKind.Sma, 3));
+        Assert.Equal(Indicators.Ema(bars, 3), Indicators.MovingAverage(bars, MovingAverageKind.Ema, 3));
+    }
+
+    [Fact]
     public void SmaToday_PoprzednieZamknieciaPlusBiezacaCena_BezDzisiejszejIPozniejszych()
     {
         // Świece 1–5.01.2026 (zamknięcia 10..14); "dziś" = 4.01 → świece 4.01 i 5.01 pomijane.

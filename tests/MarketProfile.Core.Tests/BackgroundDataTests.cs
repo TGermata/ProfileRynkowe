@@ -36,7 +36,7 @@ public sealed class BackgroundDataTests : IDisposable
             new Bar(T0.AddMinutes(1), 200m, 201m, 199m, 200.5m, 40),
             new Bar(T0.AddMinutes(2), 300m, 301m, 299m, 300.5m, 40),
         ], MarketDataStore.SourceBroker);
-        _store.InsertTicks("ES", [new Tick(T0.AddMinutes(1).AddSeconds(10), 250m, 3)], MarketDataStore.SourceBroker);
+        _store.InsertTicks("ES", [new Tick(T0.AddMinutes(1).AddSeconds(10), 250m, 40)], MarketDataStore.SourceBroker);
 
         var items = BarAggregator.Replay(_store, "ES", T0, T0.AddMinutes(3)).ToList();
 
@@ -44,13 +44,28 @@ public sealed class BackgroundDataTests : IDisposable
         Assert.Equal(3, items.Count);
         Assert.Equal(new Bar(T0, 100m, 101m, 99m, 100.5m, 40), items[0].Bar);
         Assert.Equal(T0.AddMinutes(1), items[0].Time);
-        Assert.Equal(new Tick(T0.AddMinutes(1).AddSeconds(10), 250m, 3), items[1].Tick);
+        Assert.Equal(new Tick(T0.AddMinutes(1).AddSeconds(10), 250m, 40), items[1].Tick);
         Assert.Equal(T0.AddMinutes(2), items[2].Bar!.Value.Time);
         Assert.Equal(T0.AddMinutes(3), items[2].Time);
         Assert.Equal(items.OrderBy(i => i.Time).Select(i => i.Time), items.Select(i => i.Time)); // posortowane
 
         // Żadnych wymyślonych ticków: każdy tick to tick z bazy.
         Assert.Single(items, i => i.IsTick);
+    }
+
+    [Fact]
+    public void Replay_NiepelnaMinutaTickow_PelnaSwiecaBrokeraMaPierwszenstwo()
+    {
+        // Rejestrator zatrzymany w połowie minuty: 5 kontraktów z ticków, a pełna świeca brokera ma 40.
+        var bar = new Bar(T0, 200m, 201m, 199m, 200.5m, 40);
+        _store.InsertBars("ES", [bar], MarketDataStore.SourceBroker);
+        _store.InsertTicks("ES", [new Tick(T0.AddSeconds(5), 200m, 2), new Tick(T0.AddSeconds(9), 200.25m, 3)], MarketDataStore.SourceBroker);
+
+        var items = BarAggregator.Replay(_store, "ES", T0, T0.AddMinutes(1)).ToList();
+        var loaded = BarAggregator.LoadMinuteBars(_store, "ES", T0, T0.AddMinutes(1));
+
+        Assert.Equal(bar, Assert.Single(items).Bar);
+        Assert.Equal(bar, Assert.Single(loaded));
     }
 
     [Fact]

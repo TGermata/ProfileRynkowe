@@ -18,16 +18,32 @@ public static class OhlcBarUpdater
         return downloader.UpdateAsync(symbol, MarketDataStore.SourceBroker, DateTimeOffset.UtcNow, token);
     }
 
+    /// <summary>Uzupełnia świece 30 min (sesja kasowa) – rynek szeroki, wykres „Szeroki rynek”.</summary>
+    public static Task<OhlcDownloadResult> UpdateIntradayAsync(
+        IMarketDataFeed feed, string symbol, MarketDataStore store, CancellationToken token)
+    {
+        var downloader = new OhlcBarDownloader(store, (interval, duration, ct) => IbFeeds.GetOhlcBarsAsync(feed, interval, duration, ct));
+        return downloader.UpdateIntradayAsync(symbol, MarketDataStore.SourceBroker, DateTimeOffset.UtcNow,
+            (end, duration, ct) => IbFeeds.GetIntradayBarsAsync(feed, end, duration, ct), token);
+    }
+
     /// <summary>
     /// Jednorazowe uzupełnienie: łączy się z TWS (Client ID o 2 większy niż główny – nie koliduje z danymi
     /// na żywo ani z pobieraniem w tle), pobiera świece D/W/M i rozłącza się.
     /// </summary>
+    /// <param name="intraday">Także świece 30 min (sesja kasowa) – dla rynku szerokiego.</param>
     public static async Task<IReadOnlyList<OhlcDownloadResult>> ConnectAndUpdateAsync(
-        Instrument instrument, IbConnectionSettings mainConnection, MarketDataStore store, CancellationToken token)
+        Instrument instrument, IbConnectionSettings mainConnection, MarketDataStore store, CancellationToken token, bool intraday = false)
     {
         await using var feed = IbFeeds.Create(mainConnection with { ClientId = mainConnection.ClientId + 2 });
         await feed.ConnectAsync(instrument, token).ConfigureAwait(false);
-        return await UpdateAsync(feed, instrument.Symbol, store, token).ConfigureAwait(false);
+        var results = (await UpdateAsync(feed, instrument.Symbol, store, token).ConfigureAwait(false)).ToList();
+        if (intraday)
+        {
+            results.Add(await UpdateIntradayAsync(feed, instrument.Symbol, store, token).ConfigureAwait(false));
+        }
+
+        return results;
     }
 
     /// <summary>Opis błędów interwałów (null = bez błędów).</summary>

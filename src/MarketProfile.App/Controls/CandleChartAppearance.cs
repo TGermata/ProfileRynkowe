@@ -1,11 +1,16 @@
 using System.Windows.Media;
 using MarketProfile.App.Infrastructure;
 using MarketProfile.App.Settings;
+using MarketProfile.Core;
 
 namespace MarketProfile.App.Controls;
 
-/// <summary>Średnia krocząca do narysowania: okres i pióro linii.</summary>
-public sealed record MovingAverageLine(int Period, Pen Pen, Brush Brush);
+/// <summary>Średnia krocząca do narysowania: rodzaj (SMA/EMA), okres i pióro linii (kolor, grubość, styl).</summary>
+public sealed record MovingAverageLine(int Period, Pen Pen, Brush Brush, MovingAverageKind Kind = MovingAverageKind.Sma)
+{
+    /// <summary>Opis w pasku informacji, np. „SMA20”, „EMA8”.</summary>
+    public string Label => (Kind == MovingAverageKind.Ema ? "EMA" : "SMA") + Period;
+}
 
 /// <summary>
 /// Wygląd wykresu D/W/M przygotowany z ustawień (<see cref="CandleChartStyle"/>): zamrożone pędzle i pióra,
@@ -26,6 +31,40 @@ public sealed class CandleChartAppearance
     public Brush UpVolumeBrush { get; private init; } = Brushes.Green;
     public Brush DownVolumeBrush { get; private init; } = Brushes.Red;
     public IReadOnlyList<MovingAverageLine> MovingAverages { get; private init; } = [];
+
+    /// <summary>
+    /// Wygląd wykresu „Szeroki rynek”: świece (bez wolumenu – indeks go nie ma) i średnie SMA/EMA z własnym stylem linii.
+    /// </summary>
+    public static CandleChartAppearance Create(BroadMarketChartStyle style)
+    {
+        var up = ColorUtil.ToBrush(style.UpColor, 100, "#30C070");
+        var down = ColorUtil.ToBrush(style.DownColor, 100, "#E05050");
+
+        return new CandleChartAppearance
+        {
+            Type = CandleChartType.Candles,
+            UpBrush = Frozen(up),
+            DownBrush = Frozen(down),
+            UpPen = Frozen(new Pen(up, 1)),
+            DownPen = Frozen(new Pen(down, 1)),
+            UpThickPen = Frozen(new Pen(up, 2)),
+            DownThickPen = Frozen(new Pen(down, 2)),
+            ShowVolume = false,
+            MovingAverages = style.MovingAverages
+                .Where(m => m.Enabled && m.Period >= 1)
+                .Select(m =>
+                {
+                    var brush = Frozen(ColorUtil.ToBrush(m.Color, 100, "#FFFFFF"));
+                    var pen = Frozen(new Pen(brush, Math.Clamp(m.Thickness, 1, 10))
+                    {
+                        LineJoin = PenLineJoin.Round,
+                        DashStyle = ChartStyle.ToDashStyle(m.LineStyle),
+                    });
+                    return new MovingAverageLine(m.Period, pen, brush, m.Kind);
+                })
+                .ToList(),
+        };
+    }
 
     public static CandleChartAppearance Create(CandleChartStyle style)
     {

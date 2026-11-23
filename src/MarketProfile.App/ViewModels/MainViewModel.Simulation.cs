@@ -93,7 +93,7 @@ public sealed partial class MainViewModel
             NotifyDataSource();
             OnPropertyChanged(nameof(StartStopText));
             OnPropertyChanged(nameof(ShowStartStop));
-            _ = SwitchModeAsync(value);
+            RunSafely(SwitchModeAsync(value), "Nie udało się przełączyć trybu");
         }
     }
 
@@ -111,6 +111,7 @@ public sealed partial class MainViewModel
     /// </summary>
     private async Task SwitchModeAsync(bool simulation)
     {
+        CancelReconnect();
         if (!simulation)
         {
             RememberSimPoint(); // przed zatrzymaniem – potem symulacji już nie ma
@@ -268,7 +269,7 @@ public sealed partial class MainViewModel
         {
             if (SetProperty(ref _simStartDate, value) && !_settingSimTimeFromCode)
             {
-                _ = CommitSimTimeAsync(); // dzień zmieniony przez użytkownika – przejście do tego momentu
+                RunSafely(CommitSimTimeAsync()); // dzień zmieniony przez użytkownika – przejście do tego momentu
             }
         }
     }
@@ -570,15 +571,40 @@ public sealed partial class MainViewModel
             return true;
         }
 
+        // Wczytywanie już trwa (np. szybkie ▶ i ⏭) – czekamy na nie zamiast uruchamiać drugie równolegle.
+        if (_simLoadTask is { } pending)
+        {
+            return await pending;
+        }
+
         if (!TryGetSimStart(out var start))
         {
             return false;
         }
 
-        var loaded = await LoadSimulationAsync(start, paused, keepView: true);
-        SetViewCutoff(null);
-        return loaded;
+        var task = _simLoadTask = LoadAndShowAsync();
+        try
+        {
+            return await task;
+        }
+        finally
+        {
+            if (ReferenceEquals(_simLoadTask, task))
+            {
+                _simLoadTask = null;
+            }
+        }
+
+        async Task<bool> LoadAndShowAsync()
+        {
+            var loaded = await LoadSimulationAsync(start, paused, keepView: true);
+            SetViewCutoff(null);
+            return loaded;
+        }
     }
+
+    /// <summary>Trwające wczytywanie symulacji (<see cref="EnsureSimLoadedAsync"/>).</summary>
+    private Task<bool>? _simLoadTask;
 
     /// <summary>⏸ Pauza – zatrzymuje zegar symulacji (wykres zostaje w bieżącym stanie).</summary>
     private Task PauseAsync()
@@ -1248,9 +1274,42 @@ public sealed partial class MainViewModel
     private void OnReplayCompleted(object? sender, EventArgs e) =>
         System.Windows.Application.Current.Dispatcher.BeginInvoke(async () =>
         {
-            await StopAsync();
-            Hint("Symulacja zakończona – koniec danych w bazie");
-            _loadedSimStart = null;
+            // Zdarzenie z podmienionego (starego) źródła nie może zatrzymać nowej symulacji.
+            if (!ReferenceEquals(sender, _feed))
+            {
+                return;
+            }
+
+            try
+            {
+                await StopAsync();
+                Hint("Symulacja zakończona – koniec danych w bazie");
+                _loadedSimStart = null;
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Błąd przy zatrzymywaniu symulacji: {ex.Message}");
+            }
+        });
+
+    /// <summary>Odtwarzanie przerwane błędem – zatrzymujemy symulację i pokazujemy przyczynę.</summary>
+    private void OnReplayFailed(object? sender, Exception error) =>
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(async () =>
+        {
+            if (!ReferenceEquals(sender, _feed))
+            {
+                return;
+            }
+
+            try
+            {
+                await StopAsync();
+                _loadedSimStart = null;
+            }
+            finally
+            {
+                ShowError($"Symulacja przerwana – błąd: {error.Message}");
+            }
         });
 
     /// <summary>Odtwarzanie doszło do czasu końca – feed sam się wstrzymał; pokazujemy stan z tej chwili.</summary>

@@ -97,6 +97,69 @@ public sealed class OhlcBarDownloader
         }
     }
 
+    /// <summary>Ile miesięcy świec 30 min pobrać przy pierwszym pobraniu.</summary>
+    public const int IntradayHistoryMonths = 6;
+
+    /// <summary>Najwięcej zapytań o świece 30 min w jednym uzupełnieniu (IB: najwyżej ~1 miesiąc na zapytanie).</summary>
+    private const int MaxIntradayRequests = IntradayHistoryMonths + 2;
+
+    /// <summary>
+    /// Uzupełnia świece 30 min (tylko sesja kasowa): bez danych – <see cref="IntradayHistoryMonths"/> miesięcy wstecz,
+    /// z danymi – od ostatniej zapisanej świecy (ona też jest pobierana ponownie, bo mogła być niedomknięta).
+    /// Zapytania idą od teraz wstecz paczkami (najwyżej ok. miesiąc każda), aż do brakującego początku.
+    /// </summary>
+    /// <param name="fetch">Pobranie świec 30 min za okres (format IB) kończący się w podanej chwili (null = teraz).</param>
+    public async Task<OhlcDownloadResult> UpdateIntradayAsync(string symbol, string source, DateTimeOffset now,
+        Func<DateTimeOffset?, string, CancellationToken, Task<OhlcPage>> fetch, CancellationToken token)
+    {
+        const BarInterval interval = BarInterval.Minutes30;
+        var newest = _store.GetOhlcRange(symbol, interval)?.Newest;
+        var target = newest ?? now.AddMonths(-IntradayHistoryMonths);
+        DateTimeOffset? end = null;
+        var saved = 0;
+        string? error = null;
+        string? firstDuration = null;
+
+        for (var request = 0; request < MaxIntradayRequests; request++)
+        {
+            var from = end ?? now;
+            var days = (int)Math.Ceiling((from - target).TotalDays) + 1;
+            var duration = days <= 30 ? $"{Math.Max(1, days)} D" : "1 M";
+            firstDuration ??= duration;
+
+            OhlcPage page;
+            for (var attempt = 0; ; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                page = await fetch(end, duration, token).ConfigureAwait(false);
+                if (page.PacingViolation && attempt < MaxPacingRetries)
+                {
+                    await Task.Delay(_pacingWait, token).ConfigureAwait(false);
+                    continue;
+                }
+
+                break;
+            }
+
+            error ??= page.Error ?? (page.PacingViolation && page.Bars.Count == 0 ? "limit zapytań" : null);
+            if (page.Bars.Count == 0)
+            {
+                break;
+            }
+
+            saved += _store.SaveOhlcBars(symbol, interval, page.Bars, source);
+            var oldest = page.Bars.Min(b => b.Time);
+            if (oldest <= target || (end is { } previous && oldest >= previous))
+            {
+                break; // pobrano do brakującego początku (albo brak postępu)
+            }
+
+            end = oldest;
+        }
+
+        return new OhlcDownloadResult(interval, firstDuration, saved, error);
+    }
+
     /// <summary>
     /// Okres zapytania (format IB): bez danych – pełna głębokość; z danymi – od ostatniej zapisanej świecy
     /// do teraz z zapasem jednego okresu (ostatnia świeca też jest pobierana ponownie). Powyżej roku – w latach.

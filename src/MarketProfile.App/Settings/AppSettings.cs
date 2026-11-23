@@ -107,6 +107,16 @@ public sealed record AppSettings
     [JsonConverter(typeof(JsonStringEnumConverter<IbDataType>))]
     public IbDataType IbDataType { get; init; } = IbDataType.Delayed;
 
+    /// <summary>
+    /// IBKR Web API: przejmij sesję brokerską, gdy ten sam użytkownik jest zalogowany gdzie indziej (np. w TWS – zostanie rozłączony).
+    /// Klucze OAuth NIE są w ustawieniach – są zaszyfrowane w osobnym pliku (IbWebCredentialStore).
+    /// </summary>
+    public bool IbWebApiCompete { get; init; }
+
+    /// <summary>Czy źródłem danych jest Interactive Brokers (przez TWS API albo Web API).</summary>
+    [JsonIgnore]
+    public bool UsesInteractiveBrokers => LiveSource is LiveSourceKind.InteractiveBrokers or LiveSourceKind.InteractiveBrokersWebApi;
+
     /// <summary>Parametry połączenia z IB w postaci używanej przez źródło danych.</summary>
     public IbConnectionSettings ToIbSettings() => new()
     {
@@ -114,6 +124,8 @@ public sealed record AppSettings
         Port = IbPort,
         ClientId = IbClientId,
         DataType = IbDataType,
+        UseWebApi = LiveSource == LiveSourceKind.InteractiveBrokersWebApi,
+        WebApiCompete = IbWebApiCompete,
     };
 
     /// <summary>Czy zapisywać dane od brokera (ticki i świece) w lokalnej bazie do późniejszych symulacji.</summary>
@@ -166,6 +178,9 @@ public sealed record AppSettings
 
     /// <summary>Opisy analizy na profilach dziennych (menu „Wyświetlanie” nad wykresem TPO).</summary>
     public ChartNotesStyle Notes { get; init; } = new();
+
+    /// <summary>Alarmy dźwiękowe poziomów cenowych (menu „Wyświetlanie”).</summary>
+    public PriceAlertsSettings PriceAlerts { get; init; } = new();
 
     /// <summary>Położenie menu „Wyświetlanie” na wykresie TPO.</summary>
     public double DisplayPanelLeft { get; init; } = 12;
@@ -225,6 +240,7 @@ public sealed record AppSettings
         RecordToDatabase != other.RecordToDatabase ||
         LiveSource != other.LiveSource || IbApiPath != other.IbApiPath || IbHost != other.IbHost ||
         IbPort != other.IbPort || IbClientId != other.IbClientId || IbDataType != other.IbDataType ||
+        IbWebApiCompete != other.IbWebApiCompete ||
         !DownloadInstruments.SequenceEqual(other.DownloadInstruments) ||
         !Equals(BroadMarketInstrument, other.BroadMarketInstrument);
 
@@ -243,6 +259,10 @@ public sealed record AppSettings
     /// <summary>Dla których profili rysować profil wolumenowy.</summary>
     [JsonConverter(typeof(JsonStringEnumConverter<VolumeProfileMode>))]
     public VolumeProfileMode VolumeProfile { get; init; } = VolumeProfileMode.Current;
+
+    /// <summary>Rodzaj profilu wolumenowego: tradycyjny (wolumen całkowity) albo różnicowy (delta kupno − sprzedaż).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<VolumeDisplayKind>))]
+    public VolumeDisplayKind VolumeDisplay { get; init; } = VolumeDisplayKind.Total;
 
     /// <summary>Wygląd profilu wolumenowego (odległość, długość, kierunek, kolory).</summary>
     public VolumeProfileStyle VolumeStyle { get; init; } = new();
@@ -286,6 +306,9 @@ public sealed record AppSettings
     /// <summary>Średnie dzienne (wartości „na dziś”) jako linie na wykresie TPO.</summary>
     public TpoAveragesStyle TpoAverages { get; init; } = new();
 
+    /// <summary>Zakładka „Szeroki rynek”: dzienny wykres rynku szerokiego (SPX) – kolory świec i średnie kroczące.</summary>
+    public BroadMarketChartStyle BroadMarketChart { get; init; } = new();
+
     /// <summary>
     /// Symbol „rynku szerokiego” (domyślnie SPX) – na wykresie D/W/M można przełączyć się z instrumentu na ten
     /// instrument; jego świece D/W/M są pobierane w tle i zapisywane w bazie (do analiz).
@@ -309,7 +332,8 @@ public sealed record AppSettings
         ValueAreaPercent != other.ValueAreaPercent || HistoryDays != other.HistoryDays ||
         SimulatorSpeed != other.SimulatorSpeed || RecordToDatabase != other.RecordToDatabase ||
         LiveSource != other.LiveSource || IbApiPath != other.IbApiPath || IbHost != other.IbHost ||
-        IbPort != other.IbPort || IbClientId != other.IbClientId || IbDataType != other.IbDataType;
+        IbPort != other.IbPort || IbClientId != other.IbClientId || IbDataType != other.IbDataType ||
+        IbWebApiCompete != other.IbWebApiCompete;
 
     /// <summary>
     /// Ile dni historii trzeba wczytać, żeby było co najmniej <see cref="ProfilesOnScreen"/> profili:
@@ -467,6 +491,16 @@ public enum VolumeProfileMode
     All,
 }
 
+/// <summary>Rodzaj profilu wolumenowego.</summary>
+public enum VolumeDisplayKind
+{
+    /// <summary>Tradycyjny – wolumen całkowity w wierszu.</summary>
+    Total,
+
+    /// <summary>Różnicowy – delta: wolumen kupna − wolumen sprzedaży w wierszu.</summary>
+    Delta,
+}
+
 /// <summary>Skala długości słupków profilu wolumenowego.</summary>
 public enum VolumeScaleMode
 {
@@ -502,6 +536,12 @@ public sealed record VolumeProfileStyle
 
     /// <summary>Kolor słupka VPOC – wiersza z największym wolumenem (#RRGGBB).</summary>
     public string VpocColor { get; init; } = "#FF9E40";
+
+    /// <summary>Profil różnicowy: kolor przewagi kupna (delta dodatnia).</summary>
+    public string DeltaBuyColor { get; init; } = "#26A69A";
+
+    /// <summary>Profil różnicowy: kolor przewagi sprzedaży (delta ujemna).</summary>
+    public string DeltaSellColor { get; init; } = "#EF5350";
 
     /// <summary>Krycie słupków w procentach (100 = pełny kolor, mniej = przezroczyste).</summary>
     public int Opacity { get; init; } = 60;
@@ -666,6 +706,9 @@ public enum LiveSourceKind
 
     /// <summary>Interactive Brokers (przez TWS / IB Gateway).</summary>
     InteractiveBrokers,
+
+    /// <summary>Interactive Brokers przez IBKR Web API (api.ibkr.com, klucze OAuth) – bez TWS.</summary>
+    InteractiveBrokersWebApi,
 }
 
 /// <summary>Które poziomy sesji nocnej (ONH / ONL / ON POC) rysować na profilach dziennych.</summary>
@@ -679,6 +722,16 @@ public enum OvernightLevelsMode
 
     /// <summary>Wcale.</summary>
     None,
+}
+
+/// <summary>Globalne przełączniki alarmów dźwiękowych poziomów cenowych.</summary>
+public sealed record PriceAlertsSettings
+{
+    /// <summary>Czy alarmy dźwiękowe są włączone.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Czy alarmy działają także w symulacji (odtwarzaniu historii).</summary>
+    public bool InSimulation { get; init; } = true;
 }
 
 /// <summary>Opisy analizy na profilach dziennych – włączane osobno w menu „Wyświetlanie”.</summary>
@@ -777,6 +830,9 @@ public sealed record CandleChartStyle
     /// </summary>
     public int IbRefreshMinutes { get; init; } = 5;
 
+    /// <summary>Wolne miejsce za najnowszą świecą w % szerokości wykresu (przeciąganie znacznika na wykresie).</summary>
+    public int RightMarginPercent { get; init; } = 10;
+
     /// <summary>Średnie kroczące rysowane na wykresie (w kolejności z listy).</summary>
     public List<MovingAverageStyle> MovingAverages { get; init; } =
     [
@@ -784,6 +840,59 @@ public sealed record CandleChartStyle
         new() { Period = 50, Color = "#4FA3F7", Thickness = 2 },
         new() { Period = 200, Color = "#E040FB", Thickness = 2, Enabled = false },
     ];
+}
+
+/// <summary>
+/// Wygląd dziennego wykresu rynku szerokiego (zakładka „Szeroki rynek”): kolory świec i średnie kroczące SMA/EMA.
+/// Świece są tylko z sesji kasowej (rynek szeroki to indeks – patrz <see cref="AppSettings.BroadMarketSymbol"/>).
+/// </summary>
+public sealed record BroadMarketChartStyle
+{
+    /// <summary>Kolor świecy wzrostowej (zamknięcie ≥ otwarcie), #RRGGBB.</summary>
+    public string UpColor { get; init; } = "#30C070";
+
+    /// <summary>Kolor świecy spadkowej, #RRGGBB.</summary>
+    public string DownColor { get; init; } = "#E05050";
+
+    /// <summary>Średnie kroczące rysowane na wykresie (w kolejności z listy).</summary>
+    public List<BroadMovingAverageStyle> MovingAverages { get; init; } = DefaultMovingAverages();
+
+    /// <summary>Wolne miejsce za najnowszą świecą w % szerokości wykresu (przeciąganie znacznika na wykresie).</summary>
+    public int RightMarginPercent { get; init; } = 10;
+
+    /// <summary>„Oddech rynku”: oprócz liczby – wskaźnik graficzny (pasek zielony / czerwony z gradientem).</summary>
+    public bool ShowBreathGauge { get; init; } = true;
+
+    /// <summary>Domyślne średnie: EMA 8 (jasnoniebieska, kropkowana) i EMA 21 (biała, ciągła).</summary>
+    public static List<BroadMovingAverageStyle> DefaultMovingAverages() =>
+    [
+        new() { Kind = MovingAverageKind.Ema, Period = 8, Color = "#7FD4FF", Thickness = 1, LineStyle = LineStyle.Dotted },
+        new() { Kind = MovingAverageKind.Ema, Period = 21, Color = "#FFFFFF", Thickness = 1, LineStyle = LineStyle.Solid },
+    ];
+}
+
+/// <summary>Średnia krocząca (SMA albo EMA) cen zamknięcia na wykresie „Szeroki rynek”.</summary>
+public sealed record BroadMovingAverageStyle
+{
+    /// <summary>Czy rysować tę średnią.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Rodzaj średniej: wykładnicza (EMA) albo prosta (SMA).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<MovingAverageKind>))]
+    public MovingAverageKind Kind { get; init; } = MovingAverageKind.Ema;
+
+    /// <summary>Liczba świec średniej.</summary>
+    public int Period { get; init; } = 8;
+
+    /// <summary>Kolor linii, #RRGGBB.</summary>
+    public string Color { get; init; } = "#FFFFFF";
+
+    /// <summary>Grubość linii w pikselach.</summary>
+    public int Thickness { get; init; } = 1;
+
+    /// <summary>Styl linii: ciągła, kreskowana albo kropkowana.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<LineStyle>))]
+    public LineStyle LineStyle { get; init; } = LineStyle.Solid;
 }
 
 /// <summary>Prosta średnia krocząca (SMA) cen zamknięcia na wykresie D/W/M.</summary>
@@ -1004,27 +1113,19 @@ public static class SettingsStore
     /// <summary>Wczytuje ustawienia; jeśli plik nie istnieje lub jest uszkodzony – zwraca domyślne.</summary>
     public static AppSettings Load()
     {
+        // Lista instrumentów: uzupełniana przy pierwszym uruchomieniu nowej wersji (z przeniesieniem starych godzin sesji).
+        // Uszkodzony plik: kopia zapasowa + komunikat i ustawienia domyślne (patrz JsonFileStore).
         try
         {
-            if (File.Exists(FilePath))
-            {
-                // Lista instrumentów: uzupełniana przy pierwszym uruchomieniu nowej wersji (z przeniesieniem starych godzin sesji).
-                return (JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), JsonOptions) ?? new AppSettings())
-                    .WithInstrumentsInitialized();
-            }
+            return (JsonFileStore.Read<AppSettings>(FilePath, JsonOptions) ?? new AppSettings()).WithInstrumentsInitialized();
         }
         catch (Exception)
         {
-            // Uszkodzony plik – wracamy do ustawień domyślnych.
+            // Odczytany plik ma niepoprawne wartości (np. instrument bez sesji) – ustawienia domyślne.
+            return new AppSettings().WithInstrumentsInitialized();
         }
-
-        return new AppSettings().WithInstrumentsInitialized();
     }
 
-    /// <summary>Zapisuje ustawienia do pliku.</summary>
-    public static void Save(AppSettings settings)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(settings, JsonOptions));
-    }
+    /// <summary>Zapisuje ustawienia do pliku (atomowo; błąd zapisu jest zgłaszany, nie rzucany).</summary>
+    public static void Save(AppSettings settings) => JsonFileStore.Write(FilePath, settings, JsonOptions);
 }

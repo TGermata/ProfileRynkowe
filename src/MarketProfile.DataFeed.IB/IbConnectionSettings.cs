@@ -49,8 +49,20 @@ public sealed record IbConnectionSettings
     /// <summary>Rodzaj danych (na żywo / opóźnione / opóźnione zamrożone).</summary>
     public IbDataType DataType { get; init; } = IbDataType.Delayed;
 
+    /// <summary>
+    /// Połączenie przez IBKR Web API (api.ibkr.com, klucze OAuth) zamiast TWS / IB Gateway.
+    /// Wtedy Host, Port, ClientId i DataType nie są używane (rodzaj danych wynika z uprawnień konta).
+    /// </summary>
+    public bool UseWebApi { get; init; }
+
+    /// <summary>Web API: przejęcie sesji brokerskiej, gdy ten sam użytkownik jest zalogowany gdzie indziej (np. w TWS).</summary>
+    public bool WebApiCompete { get; init; }
+
+    /// <summary>Krótki opis połączenia do komunikatów (bez kluczy).</summary>
+    public string Endpoint => UseWebApi ? "IBKR Web API (api.ibkr.com)" : $"{Host}:{Port}";
+
     /// <summary>Opis rodzaju danych dla użytkownika.</summary>
-    public string DataTypeName => DataType switch
+    public string DataTypeName => UseWebApi ? "wg uprawnień konta" : DataType switch
     {
         IbDataType.Live => "na żywo",
         IbDataType.DelayedFrozen => "opóźnione zamrożone",
