@@ -13,6 +13,15 @@ public sealed record PriceLevel(decimal Price, IReadOnlyList<int> Periods, long 
 
     /// <summary>Litery TPO w wierszu, np. "ABDF".</summary>
     public string Letters => string.Concat(Periods.Select(TpoLetters.ForPeriod));
+
+    /// <summary>Wolumen kupna w wierszu (transakcje ze znaną / oszacowaną stroną).</summary>
+    public long BuyVolume { get; init; }
+
+    /// <summary>Wolumen sprzedaży w wierszu.</summary>
+    public long SellVolume { get; init; }
+
+    /// <summary>Delta wiersza: kupno − sprzedaż.</summary>
+    public long Delta => BuyVolume - SellVolume;
 }
 
 /// <summary>
@@ -27,6 +36,12 @@ public sealed record TpoPeriod(int Index, DateTime Start, DateTime End, decimal 
 {
     /// <summary>Litera okresu.</summary>
     public char Letter => TpoLetters.ForPeriod(Index);
+
+    /// <summary>Pierwsza cena w okresie (0 = nieznana).</summary>
+    public decimal Open { get; init; }
+
+    /// <summary>Ostatnia cena w okresie (0 = nieznana).</summary>
+    public decimal Close { get; init; }
 }
 
 /// <summary>
@@ -120,15 +135,44 @@ public sealed record ProfileSnapshot
     /// <summary>Numer wersji profilu – rośnie przy każdej zmianie danych (pozwala wykryć, czy trzeba odświeżyć widok).</summary>
     public long Version { get; init; }
 
-    /// <summary>Czy profil nie zawiera jeszcze żadnych danych.</summary>
     /// <summary>Numer ostatniego (bieżącego) okresu TPO w tej migawce (-1 = brak okresów).</summary>
     public int CurrentPeriodIndex { get; init; } = -1;
 
     /// <summary>Wolumen ostatniego okresu TPO według wierszy (cena wiersza → wolumen) – profil bieżącego słupka.</summary>
     public IReadOnlyDictionary<decimal, long> CurrentPeriodVolume { get; init; } = new Dictionary<decimal, long>();
 
+    /// <summary>
+    /// Największy wolumen wiersza w każdym zakończonym okresie (bez bieżącego), w kolejności okresów –
+    /// do wyliczenia typowej skali profilu wolumenowego bieżącego słupka.
+    /// </summary>
+    public IReadOnlyList<long> CompletedPeriodMaxVolumes { get; init; } = [];
+
     /// <summary>Największy wolumen wiersza w bieżącym okresie (0 = brak wolumenu).</summary>
     public long MaxCurrentPeriodVolume => CurrentPeriodVolume.Count > 0 ? CurrentPeriodVolume.Values.Max() : 0;
 
+    // --- Delta (kupno − sprzedaż) – profil wolumenowy różnicowy ---
+
+    /// <summary>Wolumen kupna (transakcje ze znaną / oszacowaną stroną).</summary>
+    public long TotalBuyVolume { get; init; }
+
+    /// <summary>Wolumen sprzedaży (transakcje ze znaną / oszacowaną stroną).</summary>
+    public long TotalSellVolume { get; init; }
+
+    /// <summary>Delta sesji: kupno − sprzedaż.</summary>
+    public long TotalDelta => TotalBuyVolume - TotalSellVolume;
+
+    /// <summary>Udział wolumenu ze stroną transakcji w całym wolumenie (0–1; świece historyczne nie mają strony).</summary>
+    public double ClassifiedShare => TotalVolume > 0 ? Math.Min(1, (double)(TotalBuyVolume + TotalSellVolume) / TotalVolume) : 0;
+
+    /// <summary>Największa bezwzględna delta wiersza (skala profilu różnicowego).</summary>
+    public long MaxRowAbsDelta { get; init; }
+
+    /// <summary>Delta wierszy bieżącego okresu TPO (cena wiersza → kupno − sprzedaż).</summary>
+    public IReadOnlyDictionary<decimal, long> CurrentPeriodDelta { get; init; } = new Dictionary<decimal, long>();
+
+    /// <summary>Największa bezwzględna delta wiersza w bieżącym okresie.</summary>
+    public long MaxCurrentPeriodAbsDelta => CurrentPeriodDelta.Count > 0 ? CurrentPeriodDelta.Values.Max(Math.Abs) : 0;
+
+    /// <summary>Czy profil nie zawiera jeszcze żadnych danych.</summary>
     public bool IsEmpty => Levels.Count == 0;
 }

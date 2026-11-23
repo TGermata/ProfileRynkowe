@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Połączenie z Interactive Brokers przez IBKR Web API (REST + WebSocket, api.ibkr.com) z kluczami OAuth 1.0a.
+    Nie wymaga uruchomionego TWS / IB Gateway ani biblioteki TWS API.
+    Klucze NIE są częścią repozytorium – są przechowywane zaszyfrowane (DPAPI) w %AppData%\MarketProfile.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\MarketProfile.Core\MarketProfile.Core.csproj" />
+    <ProjectReference Include="..\MarketProfile.DataFeed\MarketProfile.DataFeed.csproj" />
+    <!-- Wspólne rekordy (IbConnectionSettings, IbInstrumentInfo, CumulativeVolumeTracker) – bez typów TWS API. -->
+    <ProjectReference Include="..\MarketProfile.DataFeed.IB\MarketProfile.DataFeed.IB.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MarketProfile.Core.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,22 @@
+<Window x:Class="MarketProfile.App.SettleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Cena rozliczeniowa (SETTLE)" SizeToContent="WidthAndHeight" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+
+    <StackPanel Margin="14" MinWidth="300">
+        <TextBlock x:Name="HeaderText" FontWeight="SemiBold" Margin="0,0,0,8" />
+        <TextBlock x:Name="CurrentText" Foreground="#606060" TextWrapping="Wrap" Margin="0,0,0,8" MaxWidth="340" />
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="SETTLE:" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox x:Name="PriceBox" Width="120" />
+        </StackPanel>
+        <TextBlock x:Name="ErrorText" Foreground="#B00020" Margin="0,6,0,0" Visibility="Collapsed" TextWrapping="Wrap" MaxWidth="340" />
+        <TextBlock Foreground="#808080" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" MaxWidth="340"
+                   Text="Wpis ręczny zastępuje Close sesji. Oficjalne ceny rozliczeniowe: cmegroup.com → produkt → Settlements." />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Zapisz" Width="80" IsDefault="True" Click="OnSaveClick" />
+            <Button Content="Anuluj" Width="80" IsCancel="True" Margin="8,0,0,0" />
+        </StackPanel>
+    </StackPanel>
+</Window>

@@ -1,0 +1,18 @@
+<Window x:Class="MarketProfile.App.DetachedTabWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Height="700" Width="1100" Background="#14171C" ShowInTaskbar="True">
+    <!-- Zakładka okna głównego przeniesiona do osobnego okna (np. na drugi monitor).
+         Zamknięcie okna albo „Wróć do okna głównego” odkłada zakładkę z powrotem. -->
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#1E2229" Padding="8,3" BorderBrush="#2C313A" BorderThickness="0,0,0,1">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="⇱ Wróć do okna głównego" Padding="8,0" Height="24"
+                        Click="OnReturnClick"
+                        ToolTip="Odłóż tę zakładkę z powrotem do okna głównego (tak samo działa zamknięcie okna)" />
+                <TextBlock x:Name="Header" Foreground="#C8CDD4" FontSize="13" VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+        <ContentControl x:Name="Host" Focusable="False" />
+    </DockPanel>
+</Window>

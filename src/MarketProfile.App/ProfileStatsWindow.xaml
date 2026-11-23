@@ -1,0 +1,200 @@
+<Window x:Class="MarketProfile.App.ProfileStatsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Parametry profili" Width="1280" Height="560" MinWidth="700" MinHeight="300"
+        WindowStartupLocation="CenterOwner" PreviewKeyDown="OnWindowPreviewKeyDown">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#707070" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,6,0,0" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <!-- Filtry i akcje -->
+        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <TextBlock x:Name="SymbolText" FontWeight="SemiBold" Margin="0,0,16,0" />
+            <CheckBox x:Name="DayOnly" Content="Tylko profile dzienne" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,14,0"
+                      Checked="OnFilterChanged" Unchecked="OnFilterChanged"
+                      ToolTip="Pokazuj tylko profile sesji dziennych – najważniejszych w analizie (relacje wartości, luki, trend)" />
+            <TextBlock Text="Sesja:" Margin="0,0,4,0" />
+            <ComboBox x:Name="SessionFilter" Width="110" SelectedIndex="0" SelectionChanged="OnFilterChanged">
+                <ComboBoxItem Content="Wszystkie" />
+                <ComboBoxItem Content="Dzienna" />
+                <ComboBoxItem Content="Nocna" />
+            </ComboBox>
+            <TextBlock Text="Od:" Margin="12,0,4,0" />
+            <DatePicker x:Name="FromDate" Width="120" SelectedDateChanged="OnFilterChanged" />
+            <TextBlock Text="Do:" Margin="8,0,4,0" />
+            <DatePicker x:Name="ToDate" Width="120" SelectedDateChanged="OnFilterChanged" />
+            <Button Content="⟳ Odśwież" Padding="8,2" Margin="12,0,0,0" Click="OnRefreshClick" />
+            <CheckBox x:Name="AutoRefresh" Content="Odświeżaj na bieżąco" IsChecked="True" Margin="10,0,0,0" VerticalAlignment="Center" />
+            <Button Content="? Pomoc" Padding="8,2" Margin="12,0,0,0" Click="OnHelpClick"
+                    ToolTip="Opis parametrów po angielsku (wg J. Daltona) i po polsku (F1)" />
+            <Button Content="Eksport CSV…" Padding="8,2" Margin="16,0,0,0" Click="OnExportClick"
+                    ToolTip="Zapis widocznych wierszy do pliku CSV (separator ;, kropka dziesiętna) – np. dla algorytmu w Pythonie" />
+        </WrapPanel>
+
+        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Hint}" x:Name="FooterText" />
+
+        <!-- Informacja, gdy wybranego profilu nie ma na wykresie (zamiast okna komunikatu przy każdym kliknięciu). -->
+        <TextBlock DockPanel.Dock="Top" x:Name="NoticeText" Visibility="Collapsed" TextWrapping="Wrap" Margin="0,0,0,6"
+                   Padding="6,3" Background="#FFF4D6" Foreground="#6B4E00" />
+
+        <DataGrid x:Name="Grid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" AlternatingRowBackground="#F4F6F8"
+                  FrozenColumnCount="3" SelectionMode="Single" MouseDoubleClick="OnRowDoubleClick"
+                  SelectionChanged="OnSelectionChanged"
+                  EnableRowVirtualization="True" ContextMenuOpening="OnGridContextMenuOpening"
+                  PreviewMouseRightButtonDown="OnGridRightButtonDown">
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem x:Name="SettleMenuItem" Header="SETTLE – wpisz ręcznie (domyślnie Close)…" Click="OnEditSettleClick" />
+                    <MenuItem x:Name="RemoveSettleMenuItem" Header="SETTLE – usuń wpis ręczny (wróć do Close)" Click="OnRemoveSettleClick" />
+                </ContextMenu>
+            </DataGrid.ContextMenu>
+            <!-- Nagłówki: polskie opisy + skróty jak na wykresie (POC, VAH, IBH, ONH, HB, SETTLE, PBL/PBH, GAP); podpowiedź = definicja. -->
+            <DataGrid.Columns>
+                <DataGridTextColumn Binding="{Binding Date}">
+                    <DataGridTextColumn.Header><TextBlock Text="Data" ToolTip="Data handlowa (sesja nocna – data dnia, w którym się kończy)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Session}">
+                    <DataGridTextColumn.Header><TextBlock Text="Sesja" ToolTip="Dzienna albo nocna" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding State}">
+                    <DataGridTextColumn.Header><TextBlock Text="Stan" ToolTip="✓ – sesja zakończona (wartości ostateczne); „w toku (X)” – ostatnia litera X" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Shape}">
+                    <DataGridTextColumn.Header><TextBlock Text="Kształt" ToolTip="D – równowaga; P – VA i POC w górnej części; b – w dolnej; B – dwa skupiska TPO; Trend – dzień trendowy (interwałowanie)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding OpenVsPreviousValue}">
+                    <DataGridTextColumn.Header><TextBlock Text="Otwarcie vs VA poprz." ToolTip="Otwarcie dnia względem VA i zakresu poprzedniego dnia: nad High / nad VA / w VA / pod VA / pod Low" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding OpenType}">
+                    <DataGridTextColumn.Header><TextBlock Text="Typ otwarcia" ToolTip="Wg Daltona z liter A i B: Open-Drive, Open-Test-Drive, Open-Rejection-Reverse, Open-Auction (strzałka – kierunek)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Trend}">
+                    <DataGridTextColumn.Header><TextBlock Text="Trend (interwałowanie)" ToolTip="Najdłuższa seria liter, w której każda otwiera się wyżej (↑) / niżej (↓) niż poprzednia: litery i liczba okresów. „trend” = dzień trendowy (seria przez większą część sesji)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Pullback}">
+                    <DataGridTextColumn.Header><TextBlock Text="PBL / PBH" ToolTip="Pullback dnia trendowego: PBL – najniższy Low liter po końcu serii w górę, PBH – najwyższy High po końcu serii w dół (litera w nawiasie)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding ValueMigration}">
+                    <DataGridTextColumn.Header><TextBlock Text="Migracja VA" ToolTip="VA dnia względem VA poprzedniego dnia: wyżej / niżej / zachodzi wyżej / zachodzi niżej / węższa (wewnątrz) / szersza (obejmuje); w dniu trendowym VA pominięta" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding ValueAreaOverlap}">
+                    <DataGridTextColumn.Header><TextBlock Text="Nakładanie VA" ToolTip="Jaka część VA dnia pokrywa się z VA poprzedniego dnia" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding OpenVsOvernight}">
+                    <DataGridTextColumn.Header><TextBlock Text="Otwarcie vs noc" ToolTip="Otwarcie dnia względem zakresu sesji nocnej: nad ONH / w nocy (ONL–ONH) / pod ONL" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Gap}">
+                    <DataGridTextColumn.Header><TextBlock Text="GAP" ToolTip="Luka otwarcia względem zakresu poprzedniego dnia: Open − High (otwarcie nad High) albo Open − Low (pod Low); „–” = otwarcie w zakresie" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Inventory}">
+                    <DataGridTextColumn.Header><TextBlock Text="Inwentarz" ToolTip="Inwentarz na otwarciu względem SETTLE poprzedniego dnia: nad = długi, pod = krótki. Ok. 65% szans, że zostanie wyrównany (cena wróci do SETTLE) – litera, w której to nastąpiło" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding OpenVsPreviousHb}">
+                    <DataGridTextColumn.Header><TextBlock Text="Otwarcie vs HB poprz." ToolTip="Otwarcie dnia względem HB (halfback) poprzedniego dnia: nad / pod / na poziomie" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Open}">
+                    <DataGridTextColumn.Header><TextBlock Text="Open" ToolTip="Pierwsza cena sesji" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding High}">
+                    <DataGridTextColumn.Header><TextBlock Text="High" ToolTip="Najwyższa cena sesji" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Low}">
+                    <DataGridTextColumn.Header><TextBlock Text="Low" ToolTip="Najniższa cena sesji" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Close}">
+                    <DataGridTextColumn.Header><TextBlock Text="Close" ToolTip="Ostatnia cena sesji" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Settle}">
+                    <DataGridTextColumn.Header><TextBlock Text="SETTLE" ToolTip="Cena rozliczeniowa dnia: wpis ręczny (✎), a gdy go brak – Close sesji dziennej" /></DataGridTextColumn.Header>
+                    <DataGridTextColumn.CellStyle>
+                        <Style TargetType="DataGridCell">
+                            <Setter Property="ToolTip" Value="{Binding SettleToolTip}" />
+                        </Style>
+                    </DataGridTextColumn.CellStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Halfback}">
+                    <DataGridTextColumn.Header><TextBlock Text="HB" ToolTip="Halfback – połowa zakresu: (High + Low) / 2, zaokrąglona do ticka" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding PreviousClose}">
+                    <DataGridTextColumn.Header><TextBlock Text="Close poprz." ToolTip="Close poprzedniego dnia" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding PreviousSettle}">
+                    <DataGridTextColumn.Header><TextBlock Text="SETTLE poprz." ToolTip="SETTLE poprzedniego dnia (odniesienie dla inwentarza)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding OvernightHigh}">
+                    <DataGridTextColumn.Header><TextBlock Text="ONH" ToolTip="High sesji nocnej przed dniem" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding OvernightLow}">
+                    <DataGridTextColumn.Header><TextBlock Text="ONL" ToolTip="Low sesji nocnej przed dniem" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding OvernightPoc}">
+                    <DataGridTextColumn.Header><TextBlock Text="ONPOC" ToolTip="POC sesji nocnej przed dniem" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Range}">
+                    <DataGridTextColumn.Header><TextBlock Text="Zakres" ToolTip="High − Low" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding TotalTpo}">
+                    <DataGridTextColumn.Header><TextBlock Text="TPO" ToolTip="Łączna liczba TPO (liter) w profilu" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Poc}">
+                    <DataGridTextColumn.Header><TextBlock Text="POC" ToolTip="Point of Control – wiersz z największą liczbą TPO" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding VolumePoc}">
+                    <DataGridTextColumn.Header><TextBlock Text="VPOC" ToolTip="Volume POC – wiersz z największym wolumenem" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding ValueAreaHigh}">
+                    <DataGridTextColumn.Header><TextBlock Text="VAH" ToolTip="Górna granica obszaru wartości (VA) – % TPO z ustawień" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding ValueAreaLow}">
+                    <DataGridTextColumn.Header><TextBlock Text="VAL" ToolTip="Dolna granica obszaru wartości (VA)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding ValueAreaWidth}">
+                    <DataGridTextColumn.Header><TextBlock Text="Szer. VA" ToolTip="Szerokość VA: VAH − VAL + wysokość wiersza" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding PocPosition}">
+                    <DataGridTextColumn.Header><TextBlock Text="POC w zakresie" ToolTip="Położenie POC w zakresie sesji: 0 = na dole, 1 = na górze" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding TpoBalance}">
+                    <DataGridTextColumn.Header><TextBlock Text="TPO nad / pod POC" ToolTip="Liczba TPO powyżej / poniżej wiersza POC" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding IbHigh}">
+                    <DataGridTextColumn.Header><TextBlock Text="IBH" ToolTip="Górna granica Initial Balance (IB) – pierwszych okresów sesji (liczba okresów w ustawieniach)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding IbLow}">
+                    <DataGridTextColumn.Header><TextBlock Text="IBL" ToolTip="Dolna granica Initial Balance (IB)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding IbWidth}">
+                    <DataGridTextColumn.Header><TextBlock Text="Szer. IB" ToolTip="Szerokość IB: IBH − IBL" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding IbExtension}">
+                    <DataGridTextColumn.Header><TextBlock Text="Wybicie z IB" ToolTip="O ile cena wyszła ponad IBH (↑) / poniżej IBL (↓) i pierwsza litera, która wyszła poza IB" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Tails}">
+                    <DataGridTextColumn.Header><TextBlock Text="Ogony / poor" ToolTip="Ogon (excess) – co najmniej 2 wiersze z jedną literą na krańcu profilu (długość w cenie); poor high / poor low – płaski szczyt / dołek bez ogona" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding SinglePrints}">
+                    <DataGridTextColumn.Header><TextBlock Text="Single printy" ToolTip="Odcinki co najmniej 2 wierszy z jedną literą wewnątrz profilu (bez ogonów)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding NakedPocs}">
+                    <DataGridTextColumn.Header><TextBlock Text="Nietknięte POC" ToolTip="POC poprzednich dni, do których cena jeszcze nie wróciła (ostatnie 20 dni)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding NakedVolumePocs}">
+                    <DataGridTextColumn.Header><TextBlock Text="Nietknięte VPOC" ToolTip="VPOC poprzednich dni, do których cena jeszcze nie wróciła (ostatnie 20 dni)" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+                <DataGridTextColumn Binding="{Binding Volume}">
+                    <DataGridTextColumn.Header><TextBlock Text="Wolumen" ToolTip="Łączny wolumen sesji" /></DataGridTextColumn.Header>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>

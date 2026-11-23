@@ -138,11 +138,18 @@ public sealed class ChartStyle
     public FontWeight TimerFontWeight { get; init; } = FontWeights.Bold;
     public Brush TimerBrush { get; init; } = Brushes.LightGreen;
 
+    // --- Wskaźnik tempa budowania TPO ---
+    public bool TempoGaugeEnabled { get; init; } = true;
+    public TempoGaugePosition TempoGaugePosition { get; init; } = TempoGaugePosition.UnderTimer;
+
     /// <summary>Pióro kreski połowy zakończonego okresu w trybie Split (null = kreska wyłączona).</summary>
     public Pen? SplitMidlinePen { get; init; }
 
     /// <summary>Pióro linii HalfBack – połowy wysokości profilu (null = linia wyłączona).</summary>
     public Pen? HalfBackPen { get; init; }
+
+    /// <summary>Tło profilu wybranego w tabeli „Parametry profili”.</summary>
+    public Brush SelectedProfileBrush { get; init; } = Brushes.Transparent;
 
     /// <summary>Wzór kreskowania dla stylu linii (wspólny dla linii cenowych i HalfBack).</summary>
     public static DashStyle ToDashStyle(LineStyle style) => style switch
@@ -154,6 +161,20 @@ public sealed class ChartStyle
 
     public required Brush VolumeBrush { get; init; }
     public required Brush VolumePocBrush { get; init; }
+
+    // --- Profil różnicowy (delta) ---
+
+    /// <summary>Profil wolumenowy różnicowy (delta kupno − sprzedaż) zamiast tradycyjnego.</summary>
+    public bool VolumeDelta { get; init; }
+
+    public Brush DeltaBuyBrush { get; init; } = Brushes.SeaGreen;
+    public Brush DeltaSellBrush { get; init; } = Brushes.IndianRed;
+
+    /// <summary>Wiersz z największą |deltą| – pełny kolor (jak VPOC w profilu tradycyjnym).</summary>
+    public Brush DeltaBuyStrongBrush { get; init; } = Brushes.SeaGreen;
+    public Brush DeltaSellStrongBrush { get; init; } = Brushes.IndianRed;
+    public Pen? DeltaBuyOutlinePen { get; init; }
+    public Pen? DeltaSellOutlinePen { get; init; }
 
     /// <summary>
     /// Obrys słupków wolumenu – w kolorze słupków, ale wyraźniejszy (min. 70% krycia), żeby profil wolumenowy
@@ -252,8 +273,12 @@ public sealed class ChartStyle
                 _ => FontWeights.Normal,
             },
             TimerBrush = ColorUtil.ToBrush(timer.Color),
+            TempoGaugeEnabled = settings.TempoGauge,
+            TempoGaugePosition = settings.TempoGaugePosition,
             SplitMidlinePen = midlinePen,
             HalfBackPen = halfBackPen,
+            SelectedProfileBrush = ColorUtil.ToBrush(settings.SelectedProfileHighlight.Color,
+                Math.Clamp(settings.SelectedProfileHighlight.Opacity, 5, 100)),
             VolumeGap = volume.Gap,
             VolumeWidth = volume.Width,
             VolumeMirrored = volume.Mirrored,
@@ -262,6 +287,13 @@ public sealed class ChartStyle
             VolumeBrush = ColorUtil.ToBrush(volume.BarColor, volume.Opacity),
             VolumeOutlinePen = CreateOutline(volume.BarColor, Math.Max(volume.Opacity, 70)),
             VolumePocBrush = ColorUtil.ToBrush(volume.VpocColor, Math.Max(volume.Opacity, 80)),
+            VolumeDelta = settings.VolumeDisplay == VolumeDisplayKind.Delta,
+            DeltaBuyBrush = ColorUtil.ToBrush(volume.DeltaBuyColor, volume.Opacity),
+            DeltaSellBrush = ColorUtil.ToBrush(volume.DeltaSellColor, volume.Opacity),
+            DeltaBuyStrongBrush = ColorUtil.ToBrush(volume.DeltaBuyColor, Math.Max(volume.Opacity, 90)),
+            DeltaSellStrongBrush = ColorUtil.ToBrush(volume.DeltaSellColor, Math.Max(volume.Opacity, 90)),
+            DeltaBuyOutlinePen = CreateOutline(volume.DeltaBuyColor, Math.Max(volume.Opacity, 70)),
+            DeltaSellOutlinePen = CreateOutline(volume.DeltaSellColor, Math.Max(volume.Opacity, 70)),
             VolumeLabelsOnSession = settings.VolumeLabels.ShowOnSessionVolume,
             VolumeLabelsOnPeriod = settings.VolumeLabels.ShowOnPeriodVolume,
             VolumeLabelPosition = settings.VolumeLabels.Position,

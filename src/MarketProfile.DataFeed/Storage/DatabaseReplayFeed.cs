@@ -6,8 +6,10 @@ namespace MarketProfile.DataFeed.Storage;
 /// <summary>
 /// Symulacja: odtwarza zapisane dane z lokalnej bazy tak, jakby przychodziły na żywo.
 ///
-///  - historia (<see cref="GetHistoryAsync"/>) – dane sprzed początku symulacji, ładowane od razu,
-///  - odtwarzanie (<see cref="StartLiveAsync"/>) – ticki od <see cref="From"/> do <see cref="To"/>.
+///  - historia (<see cref="GetHistoryAsync"/>) – świece 1-min sprzed początku bieżącego profilu (<see cref="TicksFrom"/>),
+///    tak jak w trybie na żywo,
+///  - odtwarzanie (<see cref="StartLiveAsync"/>) – ticki z bazy od <see cref="TicksFrom"/>: odcinek do <see cref="From"/>
+///    oddawany od razu (bieżący profil powstaje w całości z ticków), dalej w tempie symulacji aż do <see cref="To"/>.
 ///
 /// Sterowanie w trakcie odtwarzania (jak w odtwarzaczu):
 ///  - <see cref="Pause"/> / <see cref="Resume"/> – zatrzymanie i wznowienie zegara symulacji,
@@ -27,21 +29,37 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     private readonly MarketDataStore _store;
     private readonly TimeZoneInfo _displayZone;
     private string? _symbol;
+    private string? _source;   // źródło danych do odtworzenia (broker albo testowe – bez mieszania)
     private CancellationTokenSource? _liveCts;
     private Task? _liveTask;
 
     private volatile bool _paused;
     private long _speedBits;          // prędkość (double) zapisana jako bity – bezpieczny odczyt/zapis z różnych wątków
     private long _pendingStepTicks;   // zlecone przesunięcie czasu (w tickach .NET), wykonywane przez pętlę
+    private long _pendingSeekTicks;   // zlecony przeskok do momentu (UTC, w tickach .NET); 0 = brak
     private long _currentTimeTicks;   // bieżący czas symulacji (UTC, w tickach .NET)
+    private long _stopAtTicks;        // czas końca odtwarzania (UTC, w tickach .NET); 0 = bez ograniczeń
+    private readonly TaskCompletionSource _caughtUp = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Kończy się, gdy odcinek [<see cref="TicksFrom"/>, <see cref="From"/>] został oddany w całości – bieżący profil
+    /// jest już zbudowany do momentu startu (także gdy odtwarzanie skończyło się wcześniej albo zostało przerwane).
+    /// </summary>
+    public Task CaughtUp => _caughtUp.Task;
 
     /// <param name="store">Baza danych.</param>
     /// <param name="from">Początek odtwarzania.</param>
     /// <param name="to">Koniec odtwarzania.</param>
     /// <param name="speed">Przyspieszenie (60 = 1 s rzeczywista to 1 minuta danych).</param>
     /// <param name="displayZone">Strefa czasowa, w której pokazujemy czas odtwarzania w komunikatach.</param>
-    public DatabaseReplayFeed(MarketDataStore store, DateTimeOffset from, DateTimeOffset to, double speed, TimeZoneInfo displayZone)
+    /// <param name="ticksFrom">
+    /// Początek profilu rysowanego w chwili <paramref name="from"/> (otwarcie sesji): od tego momentu profil budowany jest
+    /// z ticków, a wcześniejsze dane – ze świec 1-min (historia). Null = od <paramref name="from"/>.
+    /// </param>
+    public DatabaseReplayFeed(MarketDataStore store, DateTimeOffset from, DateTimeOffset to, double speed, TimeZoneInfo displayZone,
+        DateTimeOffset? ticksFrom = null)
     {
+        TicksFrom = ticksFrom is { } t && t < from ? t : from;
         _store = store;
         From = from;
         To = to;
@@ -51,6 +69,9 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     }
 
     public DateTimeOffset From { get; }
+
+    /// <summary>Od tego momentu (początek bieżącego profilu) dane są odtwarzane z ticków; wcześniej – historia ze świec.</summary>
+    public DateTimeOffset TicksFrom { get; }
     public DateTimeOffset To { get; }
 
     /// <summary>Prędkość odtwarzania – można ją zmieniać w trakcie (działa od razu).</summary>
@@ -60,13 +81,27 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
         set => Interlocked.Exchange(ref _speedBits, BitConverter.DoubleToInt64Bits(Math.Max(0.1, value)));
     }
 
+    /// <summary>
+    /// Czas końca symulacji (null = bez ograniczeń). Gdy odtwarzanie dojdzie do tego momentu, zegar zatrzymuje się
+    /// dokładnie na nim i włącza się pauza (<see cref="StopReached"/>). Działa tylko na samoczynny upływ czasu –
+    /// ręczne kroki i przeskoki mogą wyjść poza koniec. Można go zmieniać w trakcie odtwarzania.
+    /// </summary>
+    public DateTimeOffset? StopAt
+    {
+        get => Interlocked.Read(ref _stopAtTicks) is var t and > 0 ? new DateTimeOffset(t, TimeSpan.Zero) : null;
+        set => Interlocked.Exchange(ref _stopAtTicks, value?.UtcTicks ?? 0);
+    }
+
+    /// <summary>Odtwarzanie doszło do <see cref="StopAt"/> i zostało wstrzymane (argument – czas końca).</summary>
+    public event EventHandler<DateTimeOffset>? StopReached;
+
     /// <summary>Czy odtwarzanie jest wstrzymane.</summary>
     public bool IsPaused => _paused;
 
     /// <summary>Bieżący czas symulacji.</summary>
     public DateTimeOffset CurrentTime => new(Interlocked.Read(ref _currentTimeTicks), TimeSpan.Zero);
 
-    public string Name => "Symulacja (baza danych)";
+    public string Name => _source == MarketDataStore.SourceTest ? "Symulacja (dane testowe)" : "Symulacja (baza danych)";
 
     public event EventHandler<Tick>? TickReceived;
     public event EventHandler<string>? StatusChanged;
@@ -74,8 +109,26 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     /// <summary>Zdarzenie z bieżącym czasem symulacji (ok. 10 razy na sekundę) – do wyświetlenia zegara.</summary>
     public event EventHandler<DateTimeOffset>? TimeChanged;
 
+    /// <summary>
+    /// Świeca 1-min dla minuty, z której w bazie nie ma ticków – wysyłana w chwili zamknięcia minuty
+    /// (zamiast wymyślania ticków; cała minuta trafia do profilu naraz).
+    /// </summary>
+    public event EventHandler<Bar>? BarReceived;
+
+    /// <summary>
+    /// Zmiana rodzaju odtwarzanych danych: true = prawdziwe ticki z giełdy, false = tylko świece 1-min
+    /// (brak ticków w bazie dla tego okresu). Wywoływane przy pierwszym zdarzeniu i przy każdej zmianie.
+    /// </summary>
+    public event EventHandler<bool>? DataKindChanged;
+
+    /// <summary>Czy ostatnio odtwarzane dane to prawdziwe ticki (null = jeszcze nic nie odtworzono).</summary>
+    public bool? IsReplayingTicks { get; private set; }
+
     /// <summary>Zdarzenie wywoływane po odtworzeniu wszystkich danych z zakresu.</summary>
     public event EventHandler? Completed;
+
+    /// <summary>Odtwarzanie przerwane błędem (np. odczytu bazy) – wywoływane z wątku w tle.</summary>
+    public event EventHandler<Exception>? Failed;
 
     /// <summary>Wstrzymuje odtwarzanie (zegar symulacji stoi).</summary>
     public void Pause() => _paused = true;
@@ -89,14 +142,22 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     /// </summary>
     public void Step(TimeSpan span) => Interlocked.Add(ref _pendingStepTicks, Math.Max(0, span.Ticks));
 
+    /// <summary>
+    /// Przeskok do przodu dokładnie do podanego momentu (działa także w pauzie) – wszystkie ticki
+    /// do tego momentu zostaną natychmiast przekazane dalej. Moment wcześniejszy niż bieżący czas jest ignorowany.
+    /// W przeciwieństwie do <see cref="Step"/> nie przeskakuje przerw w danych, więc nie wyjdzie poza cel.
+    /// </summary>
+    public void SeekTo(DateTimeOffset target) => Interlocked.Exchange(ref _pendingSeekTicks, target.UtcTicks);
+
     public Task ConnectAsync(Instrument instrument, CancellationToken cancellationToken = default)
     {
         _symbol = instrument.Symbol;
+        _source = _store.SimulationSource(_symbol);
 
         // Sprawdzamy, czy w bazie są dane do odtworzenia – jeśli nie, podpowiadamy dostępny zakres.
-        if (_store.CountTicks(_symbol, From, To) == 0 && !_store.ReadBars(_symbol, From, To).Any())
+        if (_source is null || !_store.HasData(_symbol, From, To, _source))
         {
-            var range = _store.GetDataRange(_symbol);
+            var range = _source is null ? null : _store.GetDataRange(_symbol, _source);
             var available = range is { } r
                 ? $"Dostępne dane: {Format(r.From)} – {Format(r.To)}."
                 : "Baza nie zawiera jeszcze danych tego instrumentu – wygeneruj dane testowe w ustawieniach.";
@@ -110,7 +171,8 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     public Task<IReadOnlyList<Bar>> GetHistoryAsync(TimeSpan lookback, CancellationToken cancellationToken = default)
     {
         var symbol = EnsureConnected();
-        var bars = BarAggregator.LoadMinuteBars(_store, symbol, From - lookback, From);
+        // Historia jak w trybie na żywo – świece 1-min, ale tylko do początku bieżącego profilu (ten powstaje z ticków).
+        var bars = BarAggregator.LoadMinuteBars(_store, symbol, From - lookback, TicksFrom, _source);
         StatusChanged?.Invoke(this, $"Symulacja: wczytano {bars.Count} świec historii");
         return Task.FromResult(bars);
     }
@@ -119,7 +181,7 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     public Task<IReadOnlyList<Bar>> GetHistoryRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken cancellationToken = default)
     {
         var symbol = EnsureConnected();
-        return Task.FromResult(BarAggregator.LoadMinuteBars(_store, symbol, from, to));
+        return Task.FromResult(BarAggregator.LoadMinuteBars(_store, symbol, from, to, _source));
     }
 
     public Task StartLiveAsync(CancellationToken cancellationToken = default)
@@ -137,20 +199,39 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
     /// </summary>
     private async Task ReplayAsync(string symbol, CancellationToken token)
     {
-        // Jeśli w zakresie są ticki – odtwarzamy ticki; jeśli tylko świece – zamieniamy je na ticki.
-        var source = _store.CountTicks(symbol, From, To) > 0
-            ? _store.ReadTicks(symbol, From, To)
-            : _store.ReadBars(symbol, From, To).SelectMany(BarAggregator.ToTicks);
+        try
+        {
+            await ReplayLoopAsync(symbol, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            // Zatrzymanie odtwarzania.
+        }
+        catch (Exception ex)
+        {
+            // Np. błąd odczytu bazy albo wyjątek w obsłudze ticka – bez tego zegar symulacji stanąłby bez słowa.
+            StatusChanged?.Invoke(this, $"Symulacja przerwana – błąd: {ex.Message}");
+            Failed?.Invoke(this, ex);
+        }
+        finally
+        {
+            _caughtUp.TrySetResult(); // koniec danych, przerwanie albo błąd – nikt nie czeka w nieskończoność
+        }
+    }
 
-        using var ticks = source.GetEnumerator();
-        var hasTick = ticks.MoveNext();
+    private async Task ReplayLoopAsync(string symbol, CancellationToken token)
+    {
+        // Minuty z zapisanymi tickami odtwarzamy tick po ticku, pozostałe (np. historia od brokera) – całymi świecami.
+        // Od początku bieżącego profilu; zegar startuje od From, więc odcinek [TicksFrom, From] jest oddany od razu.
+        using var items = BarAggregator.Replay(_store, symbol, TicksFrom, To, _source).GetEnumerator();
+        var hasItem = items.MoveNext();
 
         var simNow = From;
         var clock = Stopwatch.StartNew();
         var lastElapsed = TimeSpan.Zero;
         var lastNotify = TimeSpan.Zero;
 
-        while (hasTick)
+        while (hasItem)
         {
             token.ThrowIfCancellationRequested();
 
@@ -158,7 +239,9 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
             var elapsed = clock.Elapsed;
             if (!_paused)
             {
+                var before = simNow;
                 simNow += (elapsed - lastElapsed) * Speed;
+                simNow = ClampToStop(before, simNow);
             }
 
             lastElapsed = elapsed;
@@ -168,27 +251,55 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
             var step = Interlocked.Exchange(ref _pendingStepTicks, 0);
             if (step > 0)
             {
-                if (ticks.Current.Time - simNow > GapToSkip)
+                if (items.Current.Time - simNow > GapToSkip)
                 {
-                    simNow = ticks.Current.Time;
+                    simNow = items.Current.Time;
                 }
 
                 simNow += TimeSpan.FromTicks(step);
             }
 
-            // 3. Długa przerwa w danych (noc, weekend) – przeskakujemy ją od razu.
-            if (!_paused && ticks.Current.Time - simNow > GapToSkip)
+            // 2a. Przeskok do konkretnego momentu (np. początek następnego profilu) – bez przeskakiwania przerw.
+            var seek = Interlocked.Exchange(ref _pendingSeekTicks, 0);
+            if (seek > simNow.UtcTicks)
             {
-                simNow = ticks.Current.Time;
-                StatusChanged?.Invoke(this, $"Symulacja: przeskok przerwy do {Format(simNow)}");
+                simNow = new DateTimeOffset(seek, TimeSpan.Zero);
             }
 
-            // 4. Wysyłamy wszystkie ticki, których czas już minął.
-            while (hasTick && ticks.Current.Time <= simNow)
+            // 3. Długa przerwa w danych (noc, weekend) – przeskakujemy ją od razu.
+            if (!_paused && items.Current.Time - simNow > GapToSkip)
             {
-                TickReceived?.Invoke(this, ticks.Current);
-                hasTick = ticks.MoveNext();
+                simNow = ClampToStop(simNow, items.Current.Time); // czas końca w przerwie – zatrzymanie na nim
+                if (!_paused)
+                {
+                    StatusChanged?.Invoke(this, $"Symulacja: przeskok przerwy do {Format(simNow)}");
+                }
             }
+
+            // 4. Wysyłamy wszystkie zdarzenia, których czas już minął.
+            while (hasItem && items.Current.Time <= simNow)
+            {
+                var item = items.Current;
+                if (IsReplayingTicks != item.IsTick)
+                {
+                    IsReplayingTicks = item.IsTick;
+                    DataKindChanged?.Invoke(this, item.IsTick);
+                }
+
+                if (item.Tick is { } tick)
+                {
+                    TickReceived?.Invoke(this, tick);
+                }
+                else if (item.Bar is { } bar)
+                {
+                    BarReceived?.Invoke(this, bar);
+                }
+
+                hasItem = items.MoveNext();
+            }
+
+            // Pierwsze przejście oddało cały odcinek do momentu startu – bieżący profil jest gotowy do pokazania.
+            _caughtUp.TrySetResult();
 
             // 5. Zegar dla widoku – ok. 10 razy na sekundę.
             Interlocked.Exchange(ref _currentTimeTicks, simNow.UtcTicks);
@@ -204,6 +315,23 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
         TimeChanged?.Invoke(this, CurrentTime);
         StatusChanged?.Invoke(this, $"Symulacja zakończona – koniec danych ({Format(CurrentTime)})");
         Completed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Samoczynny upływ czasu z <paramref name="from"/> do <paramref name="to"/>: jeśli po drodze jest czas końca
+    /// (<see cref="StopAt"/>), zegar zatrzymuje się dokładnie na nim, włącza się pauza i wywoływane jest <see cref="StopReached"/>.
+    /// </summary>
+    private DateTimeOffset ClampToStop(DateTimeOffset from, DateTimeOffset to)
+    {
+        if (StopAt is not { } stop || from >= stop || to < stop)
+        {
+            return to;
+        }
+
+        _paused = true;
+        StatusChanged?.Invoke(this, $"Symulacja wstrzymana – osiągnięto czas końca {Format(stop)}");
+        StopReached?.Invoke(this, stop);
+        return stop;
     }
 
     public async Task DisconnectAsync()
@@ -223,10 +351,16 @@ public sealed class DatabaseReplayFeed : IMarketDataFeed
             {
                 // Oczekiwane przy zatrzymaniu.
             }
-
-            _liveCts.Dispose();
-            _liveCts = null;
-            _liveTask = null;
+            catch (Exception)
+            {
+                // Błąd pętli został już zgłoszony (StatusChanged / Failed) – rozłączenie i tak musi się udać.
+            }
+            finally
+            {
+                _liveCts.Dispose();
+                _liveCts = null;
+                _liveTask = null;
+            }
         }
     }
 

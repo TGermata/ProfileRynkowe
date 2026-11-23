@@ -59,7 +59,14 @@ public sealed class InstrumentEditorViewModel : ObservableObject
     public string NightStart { get; set; } = string.Empty;
     public string NightEnd { get; set; } = string.Empty;
     public string ContractMonth { get; set; } = string.Empty;
+
+    /// <summary>Kod produktu na stronie CME (do pobierania SETTLE); puste = nie pobieramy.</summary>
+    public string CmeProductId { get; set; } = string.Empty;
+
     public string ReferencePrice { get; set; } = string.Empty;
+
+    /// <summary>Czy pobierać w tle historię tego instrumentu do bazy.</summary>
+    public bool DownloadData { get; set; }
 
     /// <summary>Wypełnia pola wartościami instrumentu.</summary>
     public void Load(Instrument i)
@@ -81,7 +88,9 @@ public sealed class InstrumentEditorViewModel : ObservableObject
         NightStart = Time(i.NightStart);
         NightEnd = Time(i.NightEnd);
         ContractMonth = i.ContractMonth;
+        CmeProductId = i.CmeProductId > 0 ? i.CmeProductId.ToString(CultureInfo.InvariantCulture) : string.Empty;
         ReferencePrice = i.ReferencePrice.ToString(CultureInfo.InvariantCulture);
+        DownloadData = i.DownloadData;
         OnPropertyChanged(string.Empty); // odśwież wszystkie pola w oknie
     }
 
@@ -166,6 +175,13 @@ public sealed class InstrumentEditorViewModel : ObservableObject
             return $"{name}: miesiąc kontraktu podaj jako RRRRMM (np. 202612) albo zostaw puste.";
         }
 
+        var cmeProductId = 0;
+        if (!string.IsNullOrWhiteSpace(CmeProductId) &&
+            (!int.TryParse(CmeProductId.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out cmeProductId) || cmeProductId <= 0))
+        {
+            return $"{name}: kod produktu CME podaj jako liczbę (np. 133 dla ES) albo zostaw puste.";
+        }
+
         if (!decimal.TryParse(ReferencePrice?.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var refPrice) || refPrice <= 0)
         {
             return $"{name}: cena odniesienia (dla generatora) musi być liczbą większą od 0.";
@@ -190,7 +206,9 @@ public sealed class InstrumentEditorViewModel : ObservableObject
             NightStart = nightStart,
             NightEnd = nightEnd,
             ContractMonth = month,
+            CmeProductId = cmeProductId,
             ReferencePrice = refPrice,
+            DownloadData = DownloadData,
         };
         return null;
     }

@@ -13,4 +13,13 @@ namespace MarketProfile.App.Controls;
 /// </param>
 /// <param name="ShowVolume">Czy rysować profil wolumenowy (histogram) obok liter.</param>
 /// <param name="ShowPeriodVolume">Czy rysować profil wolumenowy aktualnie budowanego słupka TPO (tylko bieżący profil).</param>
-public sealed record ProfileView(ProfileSnapshot Snapshot, bool IsVisible, bool IsExpanded, bool ShowVolume, bool ShowPeriodVolume = false);
+/// <param name="PeriodVolumeReference">
+/// Wolumen odpowiadający pełnej długości słupka bieżącego okresu (typowy z poprzednich słupków; 0 = własne maksimum).
+/// </param>
+public sealed record ProfileView(
+    ProfileSnapshot Snapshot,
+    bool IsVisible,
+    bool IsExpanded,
+    bool ShowVolume,
+    bool ShowPeriodVolume = false,
+    long PeriodVolumeReference = 0);

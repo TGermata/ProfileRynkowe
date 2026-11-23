@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using MarketProfile.App.Settings;
+using MarketProfile.App.ViewModels;
 using MarketProfile.Core;
 
 namespace MarketProfile.App.Controls;
@@ -24,7 +25,7 @@ namespace MarketProfile.App.Controls;
 ///  - prawy przycisk – menu: dodaj/edytuj/zablokuj/usuń linię, rozbij profil, połącz części,
 ///    rozwiń/zwiń profil (tryb Split).
 /// </summary>
-public sealed class ProfileChartControl : FrameworkElement
+public sealed partial class ProfileChartControl : FrameworkElement
 {
     /// <summary>Lista profili do narysowania (w kolejności chronologicznej) wraz ze sposobem wyświetlania.</summary>
     public static readonly DependencyProperty ProfilesProperty = DependencyProperty.Register(
@@ -50,6 +51,60 @@ public sealed class ProfileChartControl : FrameworkElement
     {
         get => (IReadOnlyList<PriceLine>?)GetValue(LinesProperty);
         set => SetValue(LinesProperty, value);
+    }
+
+    /// <summary>Tryb symulacji – menu podręczne profilu ma pozycje „Symulacja od początku profilu / od słupka”.</summary>
+    public static readonly DependencyProperty SimulationMenuProperty = DependencyProperty.Register(
+        nameof(SimulationMenu), typeof(bool), typeof(ProfileChartControl), new PropertyMetadata(false));
+
+    public bool SimulationMenu
+    {
+        get => (bool)GetValue(SimulationMenuProperty);
+        set => SetValue(SimulationMenuProperty, value);
+    }
+
+    /// <summary>
+    /// Prośba o cofnięcie symulacji do początku profilu albo klikniętego słupka (czas lokalny giełdy) –
+    /// bez zmiany widoku wykresu.
+    /// </summary>
+    public event Action<DateTime>? SimulateBackToRequested;
+
+    /// <summary>
+    /// Tempo budowania TPO (× normy, ze znakiem; NaN = brak) – wskaźnik ze wskazówką i kolor drugiej linii zegara.
+    /// </summary>
+    public static readonly DependencyProperty TempoValueProperty = DependencyProperty.Register(
+        nameof(TempoValue), typeof(double), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(double.NaN, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public double TempoValue
+    {
+        get => (double)GetValue(TempoValueProperty);
+        set => SetValue(TempoValueProperty, value);
+    }
+
+    /// <summary>
+    /// Czy wskaźnik tempa jest aktywny. Nieaktywny (np. początek sesji – za wcześnie na pomiar) jest rysowany na szaro,
+    /// z opisem stanu pod spodem.
+    /// </summary>
+    public static readonly DependencyProperty TempoActiveProperty = DependencyProperty.Register(
+        nameof(TempoActive), typeof(bool), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public bool TempoActive
+    {
+        get => (bool)GetValue(TempoActiveProperty);
+        set => SetValue(TempoActiveProperty, value);
+    }
+
+    /// <summary>Opis stanu tempa pod wskaźnikiem (np. „Zwalnia ↑”, „Zatrzymanie przy 7674.75”).</summary>
+    public static readonly DependencyProperty TempoStateTextProperty = DependencyProperty.Register(
+        nameof(TempoStateText), typeof(string), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(string.Empty, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public string TempoStateText
+    {
+        get => (string)GetValue(TempoStateTextProperty);
+        set => SetValue(TempoStateTextProperty, value);
     }
 
     /// <summary>
@@ -81,7 +136,10 @@ public sealed class ProfileChartControl : FrameworkElement
         {
             var chart = (ProfileChartControl)d;
             chart._manualLetterWidth = false;
+            chart._manualRowHeight = false;
+            chart._manualCenter = null;
             chart._panX = 0;
+            chart.ClearPin();
         }));
 
     public int ProfilesToFit
@@ -112,6 +170,92 @@ public sealed class ProfileChartControl : FrameworkElement
         set => SetValue(AppearanceProperty, value);
     }
 
+    /// <summary>
+    /// Poziomy średnich kroczących z wykresu dziennego (wartości „na dziś” dla bieżącego profilu) – linie poziome
+    /// przez cały wykres z opisem (np. „SMA20 D”). Tylko do odczytu – nie da się ich przeciągać ani edytować.
+    /// </summary>
+    public static readonly DependencyProperty AveragesProperty = DependencyProperty.Register(
+        nameof(Averages), typeof(TpoAverageOverlay), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(TpoAverageOverlay.Empty, FrameworkPropertyMetadataOptions.AffectsRender,
+            (d, e) => ((ProfileChartControl)d).UpdateBlinkTimer((TpoAverageOverlay?)e.NewValue)));
+
+    /// <summary>Poziomy alarmowe, które właśnie zadziałały – migają (identyfikatory linii).</summary>
+    public static readonly DependencyProperty FlashingAlertsProperty = DependencyProperty.Register(
+        nameof(FlashingAlerts), typeof(IReadOnlySet<Guid>), typeof(ProfileChartControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender,
+            (d, e) => ((ProfileChartControl)d).UpdateAlertFlashTimer((IReadOnlySet<Guid>?)e.NewValue)));
+
+    public IReadOnlySet<Guid>? FlashingAlerts
+    {
+        get => (IReadOnlySet<Guid>?)GetValue(FlashingAlertsProperty);
+        set => SetValue(FlashingAlertsProperty, value);
+    }
+
+    // Miganie poziomów alarmowych: zegar działa tylko, gdy któryś poziom miga.
+    private System.Windows.Threading.DispatcherTimer? _alertFlashTimer;
+    private bool _alertFlashOn = true;
+
+    private void UpdateAlertFlashTimer(IReadOnlySet<Guid>? flashing)
+    {
+        if (flashing is not { Count: > 0 })
+        {
+            _alertFlashTimer?.Stop();
+            _alertFlashOn = true;
+            return;
+        }
+
+        if (_alertFlashTimer is null)
+        {
+            _alertFlashTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            _alertFlashTimer.Tick += (_, _) =>
+            {
+                _alertFlashOn = !_alertFlashOn;
+                InvalidateVisual();
+            };
+        }
+
+        if (!_alertFlashTimer.IsEnabled)
+        {
+            _alertFlashTimer.Start();
+        }
+    }
+
+    // Miganie linii średnich, do których zbliżyła się cena: zegar działa tylko, gdy któraś linia miga.
+    private System.Windows.Threading.DispatcherTimer? _blinkTimer;
+    private bool _blinkVisible = true;
+
+    private void UpdateBlinkTimer(TpoAverageOverlay? overlay)
+    {
+        if (overlay is not { AnyBlink: true })
+        {
+            _blinkTimer?.Stop();
+            _blinkVisible = true;
+            return;
+        }
+
+        if (_blinkTimer is null)
+        {
+            _blinkTimer = new System.Windows.Threading.DispatcherTimer();
+            _blinkTimer.Tick += (_, _) =>
+            {
+                _blinkVisible = !_blinkVisible;
+                InvalidateVisual();
+            };
+        }
+
+        _blinkTimer.Interval = TimeSpan.FromMilliseconds(overlay.BlinkIntervalMs);
+        if (!_blinkTimer.IsEnabled)
+        {
+            _blinkTimer.Start();
+        }
+    }
+
+    public TpoAverageOverlay Averages
+    {
+        get => (TpoAverageOverlay)GetValue(AveragesProperty);
+        set => SetValue(AveragesProperty, value);
+    }
+
     // --- Zdarzenia zgłaszane do okna / modelu widoku ---
 
     /// <summary>Użytkownik chce dodać linię na podanej cenie.</summary>
@@ -137,6 +281,18 @@ public sealed class ProfileChartControl : FrameworkElement
 
     /// <summary>Użytkownik chce zablokować/odblokować linię.</summary>
     public event Action<PriceLine>? ToggleLockRequested;
+
+    /// <summary>Użytkownik chce dodać poziom alarmowy na podanej cenie.</summary>
+    public event Action<decimal>? AddAlertRequested;
+
+    /// <summary>Użytkownik chce zamienić zwykłą linię w poziom alarmowy.</summary>
+    public event Action<PriceLine>? ConvertToAlertRequested;
+
+    /// <summary>Użytkownik chce ponownie uzbroić poziom alarmowy, który zadziałał.</summary>
+    public event Action<PriceLine>? RearmAlertRequested;
+
+    /// <summary>Użytkownik chce włączyć / wyłączyć alarm poziomu.</summary>
+    public event Action<PriceLine>? ToggleAlertRequested;
 
     /// <summary>Użytkownik chce zablokować (true) lub odblokować (false) wszystkie linie.</summary>
     public event Action<bool>? LockAllRequested;
@@ -170,7 +326,10 @@ public sealed class ProfileChartControl : FrameworkElement
     private static readonly Typeface SymbolTypeface = new("Segoe UI Emoji, Segoe UI"); // obsługuje ikonę kłódki
 
     // --- Stan widoku ---
-    private double _rowPx = 14;       // wysokość wiersza w pikselach
+    private const double DefaultRowPx = 14;
+    private double _rowPx = DefaultRowPx; // wysokość wiersza w pikselach
+    private bool _manualRowHeight;    // użytkownik sam ustawił wysokość wierszy (powiększenie) – bez dopasowania w pionie
+    private decimal? _fitCenter;      // cena na środku przy dopasowaniu w pionie (środek zakresu dopasowanych profili)
     private double _letterPx = 10;    // szerokość litery w pikselach
     private bool _manualLetterWidth;  // użytkownik sam ustawił szerokość liter (Ctrl + kółko) – bez dopasowania
     private double _minColumnWidth = MinColumnWidth; // minimalna szerokość kolumny (mniejsza przy wielu profilach)
@@ -203,6 +362,11 @@ public sealed class ProfileChartControl : FrameworkElement
         return period + session;
     }
     private double _panX;             // przesunięcie w poziomie (0 = najnowszy profil przy prawej krawędzi)
+    private double? _pinFraction;     // przypięcie profilu: jego lewa krawędź w tym ułamku szerokości wykresu (null = brak)
+    private string? _pinKey;          // klucz przypiętego profilu (null przy _pinFraction = przypnij najnowszy przy rysowaniu)
+    private bool _pinAnywhere;        // przypięcie wybranego profilu (z tabeli parametrów) – także daleko w historii
+    private double? _pinStartFraction; // jednorazowo: prawa krawędź najnowszej kolumny w tym ułamku szerokości (start symulacji)
+    private (string Session, DateTime Start)? _highlight; // profil podświetlony (wybrany w tabeli parametrów)
     private decimal? _manualCenter;   // cena na środku ekranu ustawiona ręcznie (null = śledzenie ceny)
     private decimal? _autoCenter;     // cena na środku ekranu w trybie śledzenia
     private decimal _lastCenter;      // środek użyty w ostatnim rysowaniu
@@ -245,7 +409,8 @@ public sealed class ProfileChartControl : FrameworkElement
         _hasData = all is { Count: > 0 };
         if (!_hasData)
         {
-            DrawText(dc, "Brak danych – kliknij „Start”, aby rozpocząć.", 14, DimTextBrush, new Point(20, 20));
+            DrawText(dc, "Brak danych", 14, DimTextBrush, new Point(20, 20)); // przyczyna – w polu informacji
+            UpdateCrosshair();
             return;
         }
 
@@ -253,14 +418,15 @@ public sealed class ProfileChartControl : FrameworkElement
         var latest = all![^1].Snapshot;
         _lastRowHeight = latest.RowHeight;
         _lastTickSize = latest.TickSize;
-        _lastCenter = GetCenterPrice(latest);
 
         var profiles = all.Where(p => p.IsVisible).ToList();
         var chartRight = ActualWidth - AxisWidth;
 
-        // Dopasowanie szerokości liter, żeby ostatnie N profili zmieściło się na ekranie
-        // (gdy użytkownik nie ustawił powiększenia ręcznie).
+        // Dopasowanie szerokości liter i wysokości wierszy, żeby ostatnie N profili zmieściło się na ekranie
+        // (gdy użytkownik nie ustawił powiększenia ręcznie). Środek ceny – po dopasowaniu (zależy od niego).
         FitProfilesToScreen(profiles, chartRight - 10);
+        FitRowsToScreen(profiles);
+        _lastCenter = GetCenterPrice(latest);
         UpdateZoomDerived();
 
         // 1. Układ: pozycje wszystkich kolumn – od najnowszej (przy prawej krawędzi) do najstarszych (w lewo).
@@ -278,12 +444,46 @@ public sealed class ProfileChartControl : FrameworkElement
             }
         }
 
+        // Start symulacji z menu: prawa krawędź najnowszej (uciętej) kolumny w ustalonym miejscu – zamieniamy to na zwykłe
+        // przypięcie lewej krawędzi tej kolumny, żeby przy dorysowywaniu w prawo obraz nie skakał.
+        if (_pinStartFraction is { } startFraction && layout.Count > 0 && chartRight > 0)
+        {
+            var startColumn = layout[^1];
+            _pinKey = ProfileKey(startColumn.View.Snapshot);
+            _pinFraction = startFraction - startColumn.Width / chartRight;
+            _pinAnywhere = false;
+            _pinStartFraction = null;
+        }
+
+        // Przypięty profil (np. po cofnięciu czasu symulacji) – jego lewa krawędź w ustalonym miejscu ekranu.
+        if (_pinFraction is { } fraction && layout.Count > 0)
+        {
+            _pinKey ??= ProfileKey(layout[^1].View.Snapshot);
+            var pinned = layout.FirstOrDefault(c => ProfileKey(c.View.Snapshot) == _pinKey);
+            if (pinned is not null)
+            {
+                // Najwyżej 0: gdy nowe profile dojdą do prawej krawędzi, wykres przesuwa się jak zwykle.
+                var pan = _panX + (chartRight * fraction - pinned.X);
+                if (!_pinAnywhere)
+                {
+                    pan = Math.Min(0, pan);
+                }
+
+                if (Math.Abs(pan - _panX) > 0.01)
+                {
+                    _panX = pan;
+                    layout = ComputeLayout(profiles, chartRight);
+                }
+            }
+        }
+
         // Widać lewą krawędź najstarszego wczytanego profilu → prosimy o starszą historię.
         RequestOlderHistoryIfNeeded(layout, all.Count);
 
         // 2. Rysowanie widocznych kolumn.
         dc.PushClip(new RectangleGeometry(new Rect(0, 0, Math.Max(0, chartRight), ActualHeight)));
 
+        var latestDayStart = LatestDayStart();
         foreach (var column in layout)
         {
             if (column.X > chartRight || column.X + column.Width < 0)
@@ -292,16 +492,26 @@ public sealed class ProfileChartControl : FrameworkElement
             }
 
             var profile = column.View.Snapshot;
+
+            // Profil wybrany w tabeli parametrów – podświetlone tło (pod literami; wszystkie części rozbitego profilu).
+            if (_highlight is { } h && profile.Session.Name == h.Session && profile.SessionStart == h.Start)
+            {
+                dc.DrawRectangle(Appearance.SelectedProfileBrush, null, new Rect(column.X, 0, column.Width, ActualHeight));
+            }
+
             _columns.Add(new ColumnLayout(profile, column.View.IsExpanded, column.X, column.Width, column.X + OpenSpace + IbBarWidth + IbGap));
             DrawProfile(dc, column.View, column.X, column.Width, LetterColumns(column.View) * _letterPx,
                 isLatest: ReferenceEquals(profile, latest));
+            DrawProfileNotes(dc, profile, column.X, column.Width, latestDayStart);
         }
 
+        DrawAverageLines(dc, chartRight);
         DrawPriceLines(dc, chartRight);
         dc.Pop();
 
         DrawPriceAxis(dc, chartRight, latest);
-        DrawPeriodTimer(dc, chartRight);
+        DrawTempoGauge(dc, chartRight, DrawPeriodTimer(dc, chartRight));
+        UpdateCrosshair(); // nowe dane / przesunięcie – etykiety kursora (cena, słupek) na nowo
     }
 
     /// <summary>Pozycja kolumny profilu w układzie (także poza ekranem).</summary>
@@ -414,6 +624,42 @@ public sealed class ProfileChartControl : FrameworkElement
     }
 
     /// <summary>
+    /// Dopasowanie w pionie: wysokość wierszy tak, żeby cały zakres cen (High–Low) ostatnich
+    /// <see cref="ProfilesToFit"/> profili mieścił się na ekranie, a środek ekranu = środek tego zakresu.
+    /// Nie większa niż domyślna (14 px) – wąski zakres nie daje olbrzymich liter. Nie działa, gdy użytkownik
+    /// sam powiększył wykres w pionie albo przesunął go w górę/dół – do czasu „Dopasuj” lub zmiany liczby profili.
+    /// </summary>
+    private void FitRowsToScreen(IReadOnlyList<ProfileView> profiles)
+    {
+        _fitCenter = null;
+        var count = ProfilesToFit;
+        if (_manualRowHeight || _manualCenter is not null || count <= 0)
+        {
+            return;
+        }
+
+        var fitted = profiles.Skip(Math.Max(0, profiles.Count - count)).Select(p => p.Snapshot).Where(s => !s.IsEmpty).ToList();
+        var available = (ActualHeight - HeaderHeight) * 0.92; // trochę miejsca nad i pod profilami
+        if (fitted.Count == 0 || available <= 0)
+        {
+            return;
+        }
+
+        var high = fitted.Max(s => s.High);
+        var low = fitted.Min(s => s.Low);
+        var rowHeight = fitted[^1].RowHeight;
+        var rows = (double)((high - low) / rowHeight) + 2;
+        var rowPx = Math.Clamp(Math.Floor(available / rows * 100) / 100, ChartZoom.MinRowPx, DefaultRowPx);
+        if (Math.Abs(rowPx - _rowPx) > 0.005)
+        {
+            _rowPx = rowPx;
+            _letterCache.Clear();
+        }
+
+        _fitCenter = ToRow((high + low) / 2, rowHeight);
+    }
+
+    /// <summary>
     /// Wyszukiwanie połówkowe: największa wartość z przedziału [low, high], dla której warunek jest spełniony
     /// (zakładamy, że dla <paramref name="low"/> jest spełniony, a im większa wartość, tym trudniej).
     /// </summary>
@@ -444,12 +690,13 @@ public sealed class ProfileChartControl : FrameworkElement
     /// Zegar bieżącego okresu TPO – rysowany na wierzchu, pod paskiem nagłówków profili,
     /// w lewym górnym rogu, na środku u góry albo w prawym górnym rogu wykresu (wg ustawień).
     /// </summary>
-    private void DrawPeriodTimer(DrawingContext dc, double chartRight)
+    /// <returns>Prostokąt zegara (null = zegar niewidoczny) – pod nim rysowany jest wskaźnik tempa.</returns>
+    private Rect? DrawPeriodTimer(DrawingContext dc, double chartRight)
     {
         var style = Appearance;
         if (!style.TimerEnabled || string.IsNullOrEmpty(PeriodTimerText))
         {
-            return;
+            return null;
         }
 
         var text = new FormattedText(PeriodTimerText, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
@@ -470,14 +717,162 @@ public sealed class ProfileChartControl : FrameworkElement
         var y = HeaderHeight + margin;
 
         // Półprzezroczyste tło – zegar jest czytelny także nad literami profili.
-        dc.DrawRoundedRectangle(TimerBackgroundBrush, null, new Rect(x, y, boxWidth, boxHeight), 4, 4);
+        var box = new Rect(x, y, boxWidth, boxHeight);
+        dc.DrawRoundedRectangle(TimerBackgroundBrush, null, box, 4, 4);
         dc.DrawText(text, new Point(x + padding, y + padding / 2));
+        return box;
     }
 
-    /// <summary>Profil wolumenowy bieżącego okresu TPO: słupki od <paramref name="left"/> w prawo.</summary>
-    private void DrawPeriodVolume(DrawingContext dc, ProfileSnapshot profile, double left)
+    // --- Wskaźnik tempa budowania TPO (jak prędkościomierz): łuk w kolorach „temperatury” i wskazówka. ---
+
+    private const double GaugeRadius = 58;
+    private const double GaugeArcThickness = 9;
+    private const int GaugeSegments = 72;
+    private static readonly Pen[] GaugeArcPens = CreateGaugeArcPens();
+    private static readonly Pen GaugeTickPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0xC8, 0xCD, 0xD4)), 1.5));
+    private static readonly Pen GaugeNeedlePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0xF2, 0xF4, 0xF7)), 3)
     {
-        var max = profile.MaxCurrentPeriodVolume;
+        StartLineCap = PenLineCap.Round,
+        EndLineCap = PenLineCap.Triangle,
+    });
+    private static readonly Brush GaugeHubBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xF2, 0xF4, 0xF7)));
+    private static readonly Brush GaugeLabelBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x90, 0x98, 0xA4)));
+
+    // Wskaźnik nieaktywny (początek sesji – za wcześnie na pomiar): wszystko w szarościach.
+    private static readonly Brush GaugeInactiveBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x5A, 0x60, 0x6A)));
+    private static readonly Pen GaugeInactiveArcPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x3E, 0x44, 0x4D)), GaugeArcThickness));
+    private static readonly Pen GaugeInactiveTickPen = Frozen(new Pen(GaugeInactiveBrush, 1.5));
+    private static readonly Pen GaugeInactiveNeedlePen = Frozen(new Pen(GaugeInactiveBrush, 3)
+    {
+        StartLineCap = PenLineCap.Round,
+        EndLineCap = PenLineCap.Triangle,
+    });
+
+    private static Pen[] CreateGaugeArcPens()
+    {
+        var pens = new Pen[GaugeSegments];
+        for (var i = 0; i < GaugeSegments; i++)
+        {
+            // Kolor środka odcinka skali.
+            var value = TempoColors.ValueAt((i + 0.5) / GaugeSegments);
+            var pen = new Pen(new SolidColorBrush(TempoColors.ColorFor(value)), GaugeArcThickness);
+            pen.Freeze();
+            pens[i] = pen;
+        }
+
+        return pens;
+    }
+
+    /// <summary>Punkt na łuku wskaźnika dla położenia na skali (0 = lewa strona, 1 = prawa).</summary>
+    private static Point GaugePoint(Point center, double radius, double position)
+    {
+        var angle = Math.PI * (1 - Math.Clamp(position, 0, 1));
+        return new Point(center.X + radius * Math.Cos(angle), center.Y - radius * Math.Sin(angle));
+    }
+
+    /// <summary>
+    /// Wskaźnik tempa: półokrągła skala 0–3 × normy (niebieski → zielony → czerwony), wskazówka na wielkości tempa,
+    /// pod nią wartość ze strzałką kierunku w kolorze tempa i opis stanu. Rysowany pod zegarem TPO (albo w jego miejscu).
+    /// </summary>
+    private void DrawTempoGauge(DrawingContext dc, double chartRight, Rect? timer)
+    {
+        var tempo = TempoValue;
+        if (double.IsNaN(tempo) || !Appearance.TempoGaugeEnabled)
+        {
+            return;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var regular = new Typeface(SymbolTypeface.FontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        var bold = new Typeface(SymbolTypeface.FontFamily, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+        var active = TempoActive;
+        var arrow = tempo > 0 ? " ↑" : tempo < 0 ? " ↓" : string.Empty;
+        var valueText = new FormattedText(
+            active ? Math.Abs(tempo).ToString("0.0", CultureInfo.CurrentCulture) + "×" + arrow : "—",
+            CultureInfo.CurrentCulture, FlowDirection.LeftToRight, bold, 16,
+            active ? TempoColors.BrushFor(tempo) : GaugeInactiveBrush, dpi);
+        var stateText = new FormattedText(TempoStateText ?? string.Empty, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+            regular, 11, GaugeLabelBrush, dpi);
+
+        const double margin = 10;
+        const double padding = 10;
+        var width = Math.Max(2 * (GaugeRadius + GaugeArcThickness + 14) + 2 * padding, stateText.Width + 2 * padding);
+        var height = padding + 12 + GaugeArcThickness / 2 + GaugeRadius + 6 + valueText.Height + stateText.Height + padding / 2;
+
+        // Położenie wg ustawień. „Pod zegarem” – wyrównany do zegara, a bez zegara – w jego miejscu.
+        // W rogach górnych omijamy zegar, jeśli stoi w tym samym miejscu.
+        var top = HeaderHeight + margin;
+        var bottom = ActualHeight - height - margin;
+        var left = margin;
+        var middle = (chartRight - width) / 2;
+        var right = chartRight - width - margin;
+        double TopBelowTimer(TimerPosition corner) =>
+            timer is { } r && Appearance.TimerPosition == corner ? r.Bottom + 6 : top;
+
+        var (x, y) = Appearance.TempoGaugePosition switch
+        {
+            TempoGaugePosition.TopLeft => (left, TopBelowTimer(TimerPosition.TopLeft)),
+            TempoGaugePosition.TopCenter => (middle, TopBelowTimer(TimerPosition.TopCenter)),
+            TempoGaugePosition.TopRight => (right, TopBelowTimer(TimerPosition.TopRight)),
+            TempoGaugePosition.BottomLeft => (left, bottom),
+            TempoGaugePosition.BottomRight => (right, bottom),
+            _ when timer is { } t => (Appearance.TimerPosition switch
+            {
+                TimerPosition.TopLeft => t.Left,
+                TimerPosition.TopCenter => t.Left + (t.Width - width) / 2,
+                _ => t.Right - width,
+            }, t.Bottom + 6),
+            _ => (Appearance.TimerPosition switch
+            {
+                TimerPosition.TopLeft => left,
+                TimerPosition.TopCenter => middle,
+                _ => right,
+            }, top),
+        };
+
+        dc.DrawRoundedRectangle(TimerBackgroundBrush, null, new Rect(x, y, width, height), 6, 6);
+
+        var center = new Point(x + width / 2, y + padding + 12 + GaugeArcThickness / 2 + GaugeRadius); // 12 – miejsce na podpisy nad łukiem
+
+        // Łuk skali – odcinki w kolorach gradientu (z lekką zakładką, żeby nie było szczelin).
+        for (var i = 0; i < GaugeSegments; i++)
+        {
+            var from = (double)i / GaugeSegments;
+            var to = Math.Min((double)(i + 1) / GaugeSegments + 0.002, 1);
+            dc.DrawLine(active ? GaugeArcPens[i] : GaugeInactiveArcPen, GaugePoint(center, GaugeRadius, from), GaugePoint(center, GaugeRadius, to));
+        }
+
+        // Podziałka 0, 1, 2, 5, 10, 20, 30+ (skala logarytmiczna).
+        foreach (var mark in TempoColors.ScaleMarks)
+        {
+            var position = TempoColors.Position(mark);
+            dc.DrawLine(active ? GaugeTickPen : GaugeInactiveTickPen, GaugePoint(center, GaugeRadius - GaugeArcThickness / 2 - 1, position),
+                GaugePoint(center, GaugeRadius - GaugeArcThickness / 2 - 6, position));
+            var text = mark.ToString("0", CultureInfo.CurrentCulture) + (mark >= TempoColors.ScaleMax ? "+" : string.Empty);
+            var label = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, regular, 9,
+                active ? GaugeLabelBrush : GaugeInactiveBrush, dpi);
+            var at = GaugePoint(center, GaugeRadius + GaugeArcThickness / 2 + 10, position); // podpisy na zewnątrz łuku – wskazówka ich nie zasłania
+            dc.DrawText(label, new Point(at.X - label.Width / 2, at.Y - label.Height / 2));
+        }
+
+        // Wskazówka na wielkości tempa (kierunek pokazuje strzałka przy wartości).
+        dc.DrawLine(active ? GaugeNeedlePen : GaugeInactiveNeedlePen, center, GaugePoint(center, GaugeRadius - 4, TempoColors.Position(tempo)));
+        dc.DrawEllipse(active ? GaugeHubBrush : GaugeInactiveBrush, null, center, 4.5, 4.5);
+
+        var textY = center.Y + 6;
+        dc.DrawText(valueText, new Point(center.X - valueText.Width / 2, textY));
+        dc.DrawText(stateText, new Point(center.X - stateText.Width / 2, textY + valueText.Height));
+    }
+
+    /// <summary>
+    /// Profil wolumenowy bieżącego okresu TPO: słupki od <paramref name="left"/> w prawo.
+    /// Skala = większa z wartości: maksimum bieżącego słupka albo typowy wolumen poprzednich słupków
+    /// (<paramref name="reference"/>) – dzięki temu na początku okresu słupki są krótkie i rosną z wolumenem,
+    /// zamiast od razu mieć pełną długość przy kilku kontraktach.
+    /// </summary>
+    private void DrawPeriodVolume(DrawingContext dc, ProfileSnapshot profile, double left, long reference)
+    {
+        var max = Math.Max(profile.MaxCurrentPeriodVolume, reference);
         if (max <= 0)
         {
             return;
@@ -539,9 +934,109 @@ public sealed class ProfileChartControl : FrameworkElement
         dc.DrawText(text, new Point(x, y));
     }
 
+    // =====================================================================
+    // Profil różnicowy (delta = kupno − sprzedaż)
+    // =====================================================================
+
+    /// <summary>
+    /// Słupek delty wiersza: długość ∝ |delta| (ta sama skala, limit i kierunek co profil tradycyjny), kolor wg znaku –
+    /// przewaga kupna albo sprzedaży. Wiersz z największą |deltą| ma pełny kolor (jak VPOC).
+    /// </summary>
+    private void DrawDeltaBar(DrawingContext dc, ProfileSnapshot profile, PriceLevel level, double y, double areaLeft)
+    {
+        var style = Appearance;
+        var delta = level.Delta;
+        if (delta == 0 || profile.MaxRowAbsDelta <= 0)
+        {
+            return;
+        }
+
+        var (barLength, clipped) = style.VolumeBarLength(Math.Abs(delta), profile.MaxRowAbsDelta);
+        barLength *= _compact;
+        var barLeft = style.VolumeMirrored ? areaLeft + VolWidth - barLength : areaLeft;
+        var barRect = new Rect(barLeft, y - _rowPx / 2 + 1, barLength, Math.Max(1, _rowPx - 2));
+        var isMax = Math.Abs(delta) == profile.MaxRowAbsDelta;
+        var brush = delta > 0
+            ? isMax ? style.DeltaBuyStrongBrush : style.DeltaBuyBrush
+            : isMax ? style.DeltaSellStrongBrush : style.DeltaSellBrush;
+        var outline = barRect.Height >= 3 ? delta > 0 ? style.DeltaBuyOutlinePen : style.DeltaSellOutlinePen : null;
+        dc.DrawRectangle(brush, outline, barRect);
+
+        if (style.VolumeLabelsOnSession)
+        {
+            DrawVolumeLabel(dc, delta, barRect, style.VolumeMirrored);
+        }
+
+        if (clipped)
+        {
+            var markerX = style.VolumeMirrored ? barRect.Left : barRect.Right - 2;
+            dc.DrawRectangle(Brushes.White, null, new Rect(markerX, barRect.Top, 2, barRect.Height));
+        }
+    }
+
+    /// <summary>Delta bieżącego słupka TPO (skala: największa |delta| wiersza w tym słupku).</summary>
+    private void DrawPeriodDelta(DrawingContext dc, ProfileSnapshot profile, double left)
+    {
+        var style = Appearance;
+        var max = profile.MaxCurrentPeriodAbsDelta;
+        if (max <= 0)
+        {
+            return;
+        }
+
+        foreach (var (row, delta) in profile.CurrentPeriodDelta)
+        {
+            if (delta == 0)
+            {
+                continue;
+            }
+
+            var y = PriceToY(row);
+            var length = Math.Max(1, PvWidth * Math.Abs(delta) / max);
+            var rect = new Rect(left, y - _rowPx / 2 + 1, length, Math.Max(1, _rowPx - 2));
+            dc.DrawRectangle(delta > 0 ? style.DeltaBuyBrush : style.DeltaSellBrush,
+                rect.Height >= 3 ? delta > 0 ? style.DeltaBuyOutlinePen : style.DeltaSellOutlinePen : null, rect);
+
+            if (style.VolumeLabelsOnPeriod)
+            {
+                DrawVolumeLabel(dc, delta, rect, mirrored: false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Podpis pod profilem różnicowym: „Δ +1 234 · 82% wol.” – delta sesji i jaka część wolumenu ma ustaloną stronę
+    /// (świece 1-min z historii jej nie mają). Przy małym pokryciu podpis jest przygaszony.
+    /// </summary>
+    private void DrawDeltaSummary(DrawingContext dc, ProfileSnapshot profile, double left)
+    {
+        if (profile.TotalVolume <= 0)
+        {
+            return;
+        }
+
+        var style = Appearance;
+        var delta = profile.TotalDelta;
+        var share = profile.ClassifiedShare;
+        var text = $"Δ {(delta > 0 ? "+" : string.Empty)}{FormatVolume(delta)} · {share:0%} wol.";
+        Brush brush = delta > 0 ? style.DeltaBuyStrongBrush : delta < 0 ? style.DeltaSellStrongBrush : DimTextBrush;
+        if (share < 0.5)
+        {
+            brush = DimTextBrush; // większość wolumenu bez strony transakcji – delta mało wiarygodna
+        }
+
+        var label = CreateText(text, 10, brush, UiTypeface);
+        var y = PriceToY(ToRow(profile.Low, profile.RowHeight)) + _rowPx / 2 + 2;
+        if (y + label.Height <= ActualHeight && y >= HeaderHeight)
+        {
+            dc.DrawText(label, new Point(left, y));
+        }
+    }
+
     /// <summary>Wolumen w krótkiej postaci: do 99 999 pełna liczba, potem tysiące (k) i miliony (M).</summary>
     internal static string FormatVolume(long volume) => volume switch
     {
+        < 0 => "−" + FormatVolume(-volume), // delta ujemna (profil różnicowy)
         >= 10_000_000 => (volume / 1_000_000.0).ToString("0.#", CultureInfo.InvariantCulture) + "M",
         >= 100_000 => (volume / 1000.0).ToString("0", CultureInfo.InvariantCulture) + "k",
         _ => volume.ToString(CultureInfo.InvariantCulture),
@@ -652,7 +1147,13 @@ public sealed class ProfileChartControl : FrameworkElement
             //   Odwrócony:  słupki zaczynają się przy prawej krawędzi i rosną w lewo – w stronę liter TPO.
             //   Długość zależy od wybranej skali (liniowa/pierwiastkowa/logarytmiczna) i limitu –
             //   słupki powyżej limitu mają pełną długość i znacznik obcięcia na końcu.
-            if (view.ShowVolume && level.Volume > 0 && profile.MaxRowVolume > 0)
+            if (view.ShowVolume && style.VolumeDelta)
+            {
+                DrawDeltaBar(dc, profile, level, y, view.ShowPeriodVolume
+                    ? lettersRight + CloseSpace + PvGapFromTpo + PvWidth + PvGapToSession
+                    : lettersRight + CloseSpace + VolGap);
+            }
+            else if (view.ShowVolume && level.Volume > 0 && profile.MaxRowVolume > 0)
             {
                 var (barLength, clipped) = style.VolumeBarLength(level.Volume, profile.MaxRowVolume);
                 var areaLeft = view.ShowPeriodVolume
@@ -692,7 +1193,22 @@ public sealed class ProfileChartControl : FrameworkElement
         // to właśnie bieżący słupek), przed profilem wolumenowym sesji. Skala: własne maksimum bieżącego okresu.
         if (view.ShowPeriodVolume)
         {
-            DrawPeriodVolume(dc, profile, lettersRight + CloseSpace + PvGapFromTpo);
+            if (style.VolumeDelta)
+            {
+                DrawPeriodDelta(dc, profile, lettersRight + CloseSpace + PvGapFromTpo);
+            }
+            else
+            {
+                DrawPeriodVolume(dc, profile, lettersRight + CloseSpace + PvGapFromTpo, view.PeriodVolumeReference);
+            }
+        }
+
+        // Profil różnicowy: delta sesji i udział wolumenu ze stroną transakcji – pod profilem wolumenowym.
+        if (view.ShowVolume && style.VolumeDelta)
+        {
+            DrawDeltaSummary(dc, profile, view.ShowPeriodVolume
+                ? lettersRight + CloseSpace + PvGapFromTpo + PvWidth + PvGapToSession
+                : lettersRight + CloseSpace + VolGap);
         }
 
         // Strzałki początku i końca rysowania profilu – obie skierowane w stronę profilu.
@@ -831,6 +1347,73 @@ public sealed class ProfileChartControl : FrameworkElement
         }
     }
 
+    /// <summary>
+    /// Linie średnich kroczących (z wykresu dziennego) przez całą szerokość wykresu, pod liniami użytkownika.
+    /// Opisy nad liniami przy lewej albo prawej krawędzi; opisy linii leżących blisko siebie są rozsuwane w pionie.
+    /// </summary>
+    private void DrawAverageLines(DrawingContext dc, double chartRight)
+    {
+        var overlay = Averages ?? TpoAverageOverlay.Empty;
+        if (overlay.Lines.Count == 0)
+        {
+            return;
+        }
+
+        var labels = new List<(FormattedText Text, double LineY)>();
+        foreach (var line in overlay.Lines)
+        {
+            // Miganie: w fazie wygaszonej linia / pasek znika (opis i cena na osi zostają),
+            // w fazie widocznej jest wyróżniony – grubsza linia, pełniejszy pasek.
+            var hidden = line.Blink && !_blinkVisible;
+
+            if (line.BandBrush is { } bandBrush)
+            {
+                // Pasek: strefa wokół średniej, wyśrodkowana na jej cenie (wyrównana do pikseli).
+                var center = PriceToY(line.Price);
+                var top = Math.Round(center - line.BandHeight / 2);
+                if (top + line.BandHeight < HeaderHeight || top > ActualHeight)
+                {
+                    continue;
+                }
+
+                if (!hidden)
+                {
+                    dc.DrawRectangle(line.Blink ? line.AxisBrush : bandBrush, null,
+                        new Rect(0, top, Math.Max(0, chartRight), line.BandHeight));
+                }
+
+                labels.Add((CreateText(line.Label, overlay.FontSize, line.Brush, UiTypeface), top - 1));
+                continue;
+            }
+
+            var y = Math.Round(PriceToY(line.Price)) + (line.Pen.Thickness % 2 == 1 ? 0.5 : 0);
+            if (y < HeaderHeight || y > ActualHeight)
+            {
+                continue;
+            }
+
+            if (!hidden)
+            {
+                var pen = line.Blink ? Frozen(new Pen(line.AxisBrush, line.Pen.Thickness + 1) { DashStyle = line.Pen.DashStyle }) : line.Pen;
+                dc.DrawLine(pen, new Point(0, y), new Point(chartRight, y));
+            }
+
+            labels.Add((CreateText(line.Label, overlay.FontSize, line.Brush, UiTypeface), y - line.Pen.Thickness / 2 - 1));
+        }
+
+        // Od góry: opis tuż nad linią, ale nie wyżej niż koniec poprzedniego opisu (bez nakładania).
+        var previousBottom = double.NegativeInfinity;
+        foreach (var (text, lineY) in labels.OrderBy(l => l.LineY))
+        {
+            var top = Math.Max(lineY - text.Height, previousBottom);
+            var x = overlay.LabelPosition == LabelPosition.Left ? 8 : chartRight - text.Width - 8;
+            // Półprzezroczyste tło – opis czytelny także nad literami profili.
+            dc.DrawRoundedRectangle(TimerBackgroundBrush, null, new Rect(x - 3, top, text.Width + 6, text.Height), 3, 3);
+            dc.DrawText(text, new Point(x, top));
+            previousBottom = top + text.Height;
+        }
+    }
+
     /// <summary>Rysuje poziome linie cenowe przez całą szerokość wykresu.</summary>
     private void DrawPriceLines(DrawingContext dc, double chartRight)
     {
@@ -848,6 +1431,12 @@ public sealed class ProfileChartControl : FrameworkElement
                 continue;
             }
 
+            if (line.Alert is not null)
+            {
+                DrawAlertLine(dc, line, y, chartRight);
+                continue;
+            }
+
             var brush = CreateBrush(line.Color);
             dc.DrawLine(CreatePen(brush, line.Thickness, line.Style), new Point(0, y), new Point(chartRight, y));
 
@@ -861,6 +1450,64 @@ public sealed class ProfileChartControl : FrameworkElement
                 dc.DrawText(label, new Point(labelX, y - label.Height - line.Thickness / 2 - 1));
             }
         }
+    }
+
+    /// <summary>Wzór poziomu alarmowego: kreska-kropka (inny niż style zwykłych linii).</summary>
+    private static readonly DashStyle AlertDash = Frozen(new DashStyle([6, 2, 1, 2], 0));
+
+    /// <summary>
+    /// Poziom alarmowy – wyróżniony: kreska-kropka, półprzezroczysty pas wokół linii, ikona dzwonka i znaczniki
+    /// kierunku (▲ / ▼) oraz powtarzania (1× / ∞). Wyłączony albo zadziałały (jednokrotny) – przygaszony, 🔕.
+    /// Świeżo zadziałały – miga.
+    /// </summary>
+    private void DrawAlertLine(DrawingContext dc, PriceLine line, double y, double chartRight)
+    {
+        var alert = line.Alert!;
+        var flashing = FlashingAlerts?.Contains(line.Id) == true;
+        var brush = alert.IsArmed || flashing ? CreateBrush(line.Color) : Faded(CreateBrush(line.Color), 0.4);
+        var thickness = flashing && _alertFlashOn ? line.Thickness + 2 : line.Thickness;
+
+        // Pas wokół poziomu (strefa alarmu) – przy miganiu wyraźniejszy.
+        var band = Faded(CreateBrush(line.Color), flashing && _alertFlashOn ? 0.45 : alert.IsArmed ? 0.12 : 0.05);
+        dc.DrawRectangle(band, null, new Rect(0, y - 3 - thickness / 2, chartRight, 6 + thickness));
+        dc.DrawLine(Frozen(new Pen(brush, thickness) { DashStyle = AlertDash }), new Point(0, y), new Point(chartRight, y));
+
+        var icon = alert.IsArmed ? "🔔" : "🔕";
+        var direction = alert.Direction switch
+        {
+            AlertDirection.Up => "▲",
+            AlertDirection.Down => "▼",
+            _ => "▲▼",
+        };
+        var repeat = alert.Repeat == AlertRepeat.Once ? "1×" : "∞";
+        var state = alert.IsTriggered ? " zadziałał" : !alert.IsEnabled ? " wyłączony" : string.Empty;
+        var labelText = $"{(line.IsLocked ? "🔒 " : string.Empty)}{icon} {direction} {repeat}{state}" +
+                        (string.IsNullOrWhiteSpace(line.Label) ? string.Empty : $"  {line.Label}");
+
+        var label = CreateText(labelText, 11, brush, SymbolTypeface);
+        var labelX = line.LabelPosition == LabelPosition.Left ? 8 : chartRight - label.Width - 8;
+        dc.DrawText(label, new Point(labelX, y - label.Height - thickness / 2 - 3));
+    }
+
+    /// <summary>Etykieta poziomu alarmowego na osi: ciemne tło z ramką w kolorze poziomu (zwykłe linie mają pełne tło).</summary>
+    private void DrawAlertAxisLabel(DrawingContext dc, double chartRight, double y, decimal price, PriceLine line)
+    {
+        var alert = line.Alert!;
+        var flashing = FlashingAlerts?.Contains(line.Id) == true;
+        var color = CreateBrush(line.Color);
+        var brush = alert.IsArmed || flashing ? color : Faded(color, 0.5);
+        var highlighted = flashing && _alertFlashOn;
+        var text = CreateText(FormatPrice(price), 11, highlighted ? Brushes.Black : brush, UiTypeface);
+        var rect = new Rect(chartRight + 2, y - text.Height / 2 - 1, AxisWidth - 4, text.Height + 2);
+        dc.DrawRectangle(highlighted ? brush : HeaderBrush, Frozen(new Pen(brush, 1.5)), rect);
+        dc.DrawText(text, new Point(chartRight + 8, y - text.Height / 2));
+    }
+
+    private static Brush Faded(Brush brush, double opacity)
+    {
+        var copy = brush.Clone();
+        copy.Opacity = opacity;
+        return Frozen(copy);
     }
 
     /// <summary>Rysuje oś cen po prawej stronie, znaczniki linii cenowych oraz ostatniej ceny.</summary>
@@ -889,6 +1536,19 @@ public sealed class ProfileChartControl : FrameworkElement
             dc.DrawText(label, new Point(chartRight + 8, y - label.Height / 2));
         }
 
+        // Etykiety średnich (z wykresu dziennego) na osi – w kolorze średniej.
+        if (Averages is { ShowAxisLabel: true } averages)
+        {
+            foreach (var line in averages.Lines)
+            {
+                var y = PriceToY(line.Price);
+                if (y >= HeaderHeight && y <= ActualHeight)
+                {
+                    DrawAxisLabel(dc, chartRight, y, line.Price, line.AxisBrush);
+                }
+            }
+        }
+
         // Etykiety linii cenowych na osi (w kolorze linii).
         foreach (var line in Lines ?? [])
         {
@@ -896,7 +1556,14 @@ public sealed class ProfileChartControl : FrameworkElement
             var y = PriceToY(price);
             if (y >= HeaderHeight && y <= ActualHeight)
             {
-                DrawAxisLabel(dc, chartRight, y, price, CreateBrush(line.Color));
+                if (line.Alert is not null)
+                {
+                    DrawAlertAxisLabel(dc, chartRight, y, price, line);
+                }
+                else
+                {
+                    DrawAxisLabel(dc, chartRight, y, price, CreateBrush(line.Color));
+                }
             }
         }
 
@@ -927,6 +1594,11 @@ public sealed class ProfileChartControl : FrameworkElement
         if (_manualCenter is { } manual)
         {
             return manual;
+        }
+
+        if (_fitCenter is { } fit)
+        {
+            return fit;
         }
 
         var visibleRows = (ActualHeight - HeaderHeight) / _rowPx;
@@ -1034,7 +1706,7 @@ public sealed class ProfileChartControl : FrameworkElement
             {
                 // Podwójne kliknięcie w innym miejscu – powrót do śledzenia bieżącej ceny
                 // i do automatycznego dopasowania ustawionej liczby profili na ekranie.
-                FitToScreen();
+                FitAndPinLatest();
             }
 
             return;
@@ -1054,11 +1726,12 @@ public sealed class ProfileChartControl : FrameworkElement
     protected override void OnMouseMove(MouseEventArgs e)
     {
         var position = e.GetPosition(this);
+        TrackCursor(position);
 
         if (_dragStart is not { } start)
         {
             // Bez przeciągania – zmieniamy kursor nad odblokowaną linią, żeby było widać, że można ją złapać.
-            Cursor = HitTestLine(position) is { IsLocked: false } ? Cursors.SizeNS : null;
+            Cursor = HitTestLine(position) is { IsLocked: false } ? Cursors.SizeNS : CrosshairEnabled ? Cursors.Cross : null;
             return;
         }
 
@@ -1071,6 +1744,7 @@ public sealed class ProfileChartControl : FrameworkElement
         {
             // Przesuwanie całego wykresu.
             _panX = _dragPanX + (position.X - start.X);
+            ClearPin();
             _manualCenter = _dragCenter + (decimal)((position.Y - start.Y) / _rowPx) * _lastRowHeight;
         }
 
@@ -1103,17 +1777,38 @@ public sealed class ProfileChartControl : FrameworkElement
 
         if (HitTestLine(position) is { } line)
         {
-            // Menu linii cenowej.
-            menu.Items.Add(CreateMenuItem($"Edytuj linię {FormatPrice(line.Price)}…", () => EditLineRequested?.Invoke(line)));
-            menu.Items.Add(CreateMenuItem(line.IsLocked ? "🔓 Odblokuj linię" : "🔒 Zablokuj linię",
-                () => ToggleLockRequested?.Invoke(line)));
-            menu.Items.Add(new Separator());
-            menu.Items.Add(CreateMenuItem("Usuń linię", () => DeleteLineRequested?.Invoke(line)));
+            if (line.Alert is { } alert)
+            {
+                // Menu poziomu alarmowego.
+                menu.Items.Add(CreateMenuItem($"🔔 Edytuj poziom alarmowy {FormatPrice(line.Price)}…", () => EditLineRequested?.Invoke(line)));
+                if (alert.IsTriggered)
+                {
+                    menu.Items.Add(CreateMenuItem("Uzbrój ponownie", () => RearmAlertRequested?.Invoke(line)));
+                }
+
+                menu.Items.Add(CreateMenuItem(alert.IsEnabled ? "🔕 Wyłącz alarm" : "🔔 Włącz alarm",
+                    () => ToggleAlertRequested?.Invoke(line)));
+                menu.Items.Add(CreateMenuItem(line.IsLocked ? "🔓 Odblokuj poziom" : "🔒 Zablokuj poziom",
+                    () => ToggleLockRequested?.Invoke(line)));
+                menu.Items.Add(new Separator());
+                menu.Items.Add(CreateMenuItem("Usuń poziom alarmowy", () => DeleteLineRequested?.Invoke(line)));
+            }
+            else
+            {
+                // Menu linii cenowej.
+                menu.Items.Add(CreateMenuItem($"Edytuj linię {FormatPrice(line.Price)}…", () => EditLineRequested?.Invoke(line)));
+                menu.Items.Add(CreateMenuItem("🔔 Zamień w poziom alarmowy…", () => ConvertToAlertRequested?.Invoke(line)));
+                menu.Items.Add(CreateMenuItem(line.IsLocked ? "🔓 Odblokuj linię" : "🔒 Zablokuj linię",
+                    () => ToggleLockRequested?.Invoke(line)));
+                menu.Items.Add(new Separator());
+                menu.Items.Add(CreateMenuItem("Usuń linię", () => DeleteLineRequested?.Invoke(line)));
+            }
         }
         else
         {
             var price = YToTickPrice(position.Y);
             menu.Items.Add(CreateMenuItem($"Dodaj linię na cenie {FormatPrice(price)}…", () => AddLineRequested?.Invoke(price)));
+            menu.Items.Add(CreateMenuItem($"🔔 Dodaj poziom alarmowy na cenie {FormatPrice(price)}…", () => AddAlertRequested?.Invoke(price)));
 
             // Rozbicie profilu – tylko po kliknięciu w literę, która nie jest pierwszym okresem części.
             if (HitTestLetter(position) is { } hit && hit.Period > hit.Column.Profile.FirstPeriod)
@@ -1137,9 +1832,33 @@ public sealed class ProfileChartControl : FrameworkElement
                     menu.Items.Add(CreateMenuItem("Połącz z poprzednią częścią", () => MergeRequested?.Invoke(column.Profile)));
                 }
 
+                // Sesja dzienna: ręczny wpis ceny rozliczeniowej (gdy CME jej nie podało).
+                if (SessionNames.IsDay(column.Profile.Session.Name))
+                {
+                    var day = column.Profile;
+                    menu.Items.Add(CreateMenuItem($"SETTLE {day.TradingDate:dd.MM} (domyślnie Close) – wpisz ręcznie…",
+                        () => SettleRequested?.Invoke(day.TradingDate, day.LastPrice)));
+                }
+
                 // Tryb Split/Expanded – osobna kolumna dla każdego okresu TPO.
                 menu.Items.Add(CreateMenuItem(column.IsExpanded ? "Zwiń profil" : "Rozwiń profil (Split)",
                     () => ToggleExpandRequested?.Invoke(column.Profile)));
+
+                // Symulacja: start od początku tego profilu albo od klikniętego słupka (litery TPO).
+                if (SimulationMenu)
+                {
+                    var profile = column.Profile;
+                    menu.Items.Add(new Separator());
+                    menu.Items.Add(CreateMenuItem(
+                        $"▶ Symulacja od początku profilu ({profile.Session.Name} {profile.TradingDate:dd.MM}, {profile.PartStart:HH:mm})",
+                        () => SimulateBackToRequested?.Invoke(profile.PartStart)));
+
+                    if (HitTestLetter(position) is { } bar && profile.Periods.FirstOrDefault(p => p.Index == bar.Period) is { } period)
+                    {
+                        menu.Items.Add(CreateMenuItem($"▶ Symulacja od słupka {period.Letter} ({period.Start:HH:mm})",
+                            () => SimulateBackToRequested?.Invoke(period.Start)));
+                    }
+                }
             }
 
             // Blokada wszystkich linii naraz.
@@ -1186,7 +1905,11 @@ public sealed class ProfileChartControl : FrameworkElement
                 e.Handled = true;
                 break;
             case Key.D0 or Key.NumPad0:
-                FitToScreen();
+                FitAndPinLatest();
+                e.Handled = true;
+                break;
+            case Key.C:
+                SetCurrentValue(CrosshairEnabledProperty, !CrosshairEnabled); // kursor z liniami – wł./wył.
                 e.Handled = true;
                 break;
         }
@@ -1217,14 +1940,103 @@ public sealed class ProfileChartControl : FrameworkElement
     public void FitToScreen()
     {
         _manualLetterWidth = false;
+        _manualRowHeight = false;
         _panX = 0;
         _manualCenter = null;
         _autoCenter = null;
+        ClearPin();
         _letterCache.Clear();
         InvalidateVisual();
     }
 
-    private Point ChartCenter => new((ActualWidth - AxisWidth) / 2, MiddleY);
+    /// <summary>
+    /// Przypina najnowszy widoczny profil tak, żeby jego lewa krawędź była w <paramref name="fraction"/> szerokości
+    /// wykresu (np. 0.3 – po cofnięciu czasu symulacji: starsze profile po lewej, miejsce na dalsze rysowanie po prawej).
+    /// Przypięcie trwa do przesunięcia wykresu, zmiany powiększenia albo „Dopasuj”; gdy nowe profile dojdą
+    /// do prawej krawędzi, wykres przewija się jak zwykle. Pion – śledzenie ceny.
+    /// </summary>
+    public void PinLatest(double fraction = LatestPinFraction)
+    {
+        _pinAnywhere = false;
+        _panX = 0;
+        _manualCenter = null;
+        _autoCenter = null;
+        _pinFraction = fraction;
+        _pinKey = null;
+        InvalidateVisual();
+    }
+
+    /// <summary>Miejsce lewej krawędzi bieżącego profilu po „Dopasuj” – ułamek szerokości wykresu od lewej.</summary>
+    public const double LatestPinFraction = 0.3;
+
+    /// <summary>
+    /// Start symulacji z menu podręcznego (od początku profilu / od słupka): skala bez zmian (bez dopasowania),
+    /// wykres tylko przesunięty – miejsce startu (prawa krawędź ostatniej widocznej kolumny) w <paramref name="fraction"/>
+    /// szerokości od lewej, a cena startu na środku wysokości (dalej zwykłe śledzenie ceny).
+    /// „Dopasuj” albo podwójne kliknięcie przywraca dopasowanie.
+    /// </summary>
+    public void FocusSimulationStart(double fraction = 1.0 / 3)
+    {
+        _manualLetterWidth = true;
+        _manualRowHeight = true;
+        _manualCenter = null;
+        _autoCenter = null;
+        _panX = 0;
+        ClearPin();
+        _pinStartFraction = fraction;
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// „Dopasuj” (przycisk, klawisz 0, podwójne kliknięcie) – tak samo na żywo i w symulacji: ostatnie N profili
+    /// w skali ekranu, bieżący profil od 0,3 szerokości wykresu, po prawej miejsce na dalsze rysowanie.
+    /// </summary>
+    public void FitAndPinLatest()
+    {
+        FitToScreen();
+        PinLatest();
+    }
+
+    private void ClearPin()
+    {
+        _pinFraction = null;
+        _pinKey = null;
+        _pinAnywhere = false;
+        _pinStartFraction = null;
+    }
+
+    /// <summary>Usuwa podświetlenie profilu wybranego w tabeli parametrów (np. po zamknięciu tabeli).</summary>
+    public void ClearHighlight()
+    {
+        _highlight = null;
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Pokazuje i podświetla wybrany profil (np. z tabeli parametrów profili): jego początek na środku szerokości wykresu,
+    /// a jego POC na środku wysokości. Zwraca false, gdy profilu nie ma na wykresie (poza wczytaną historią
+    /// albo jego sesja jest ukryta).
+    /// </summary>
+    public bool ShowProfile(string sessionName, DateTime sessionStart)
+    {
+        var view = Profiles?.FirstOrDefault(p => p.IsVisible && p.Snapshot.Session.Name == sessionName &&
+                                                 p.Snapshot.SessionStart == sessionStart);
+        if (view is null)
+        {
+            return false;
+        }
+
+        _pinFraction = 0.5;
+        _pinKey = ProfileKey(view.Snapshot);
+        _pinAnywhere = true;
+        _highlight = (sessionName, sessionStart);
+        _manualCenter = view.Snapshot.Poc;
+        _autoCenter = null;
+        InvalidateVisual();
+        return true;
+    }
+
+    private Point ChartCenter =>new((ActualWidth - AxisWidth) / 2, MiddleY);
 
     /// <summary>
     /// Zmiana powiększenia o <paramref name="factor"/>. Punkty kotwic (profil i cena pod nimi) zostają w tym samym
@@ -1249,6 +2061,7 @@ public sealed class ProfileChartControl : FrameworkElement
 
             _letterPx = Math.Clamp(_letterPx * factor, ChartZoom.MinLetterPx, ChartZoom.MaxLetterPx);
             _manualLetterWidth = true;
+            ClearPin();
         }
 
         if (vertical)
@@ -1262,6 +2075,7 @@ public sealed class ProfileChartControl : FrameworkElement
             }
 
             _rowPx = newRowPx;
+            _manualRowHeight = true;
             _autoCenter = null; // przy śledzeniu ceny – wyśrodkuj ponownie w nowej skali
         }
 
@@ -1283,18 +2097,42 @@ public sealed class ProfileChartControl : FrameworkElement
     /// <summary>Cena jako tekst – liczba miejsc po przecinku wg ticka instrumentu (np. 6E: 1.08455).</summary>
     private string FormatPrice(decimal price) => PriceFormat.Format(price, _lastTickSize);
 
-    /// <summary>Zamienia kolor zapisany jako tekst "#RRGGBB" na pędzel (przy błędnym kolorze – biały).</summary>
-    private static Brush CreateBrush(string color)
+    /// <summary>
+    /// Zamienia kolor zapisany jako tekst "#RRGGBB" na pędzel (przy błędnym lub pustym kolorze – biały).
+    /// Pędzle są zapamiętywane – rysowanie linii co klatkę (np. miganie alarmu) nie tworzy ich od nowa.
+    /// Wywoływane tylko z wątku UI.
+    /// </summary>
+    private static Brush CreateBrush(string? color)
     {
-        try
-        {
-            return Frozen(new SolidColorBrush((Color)ColorConverter.ConvertFromString(color)));
-        }
-        catch (FormatException)
+        if (string.IsNullOrWhiteSpace(color))
         {
             return Brushes.White;
         }
+
+        if (BrushCache.TryGetValue(color, out var cached))
+        {
+            return cached;
+        }
+
+        Brush brush;
+        try
+        {
+            brush = ColorConverter.ConvertFromString(color) is Color parsed ? Frozen(new SolidColorBrush(parsed)) : Brushes.White;
+        }
+        catch (FormatException)
+        {
+            brush = Brushes.White;
+        }
+
+        if (BrushCache.Count < 256)
+        {
+            BrushCache[color] = brush;
+        }
+
+        return brush;
     }
+
+    private static readonly Dictionary<string, Brush> BrushCache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Tworzy pióro o zadanej grubości i stylu.</summary>
     private static Pen CreatePen(Brush brush, double thickness, LineStyle style)

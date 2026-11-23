@@ -72,12 +72,16 @@ public sealed class ProfileSplits
     /// Tworzy migawki dla profilu sesji: jedną, jeśli profil nie jest rozbity,
     /// albo po jednej dla każdej części rozbitego profilu.
     /// </summary>
-    public IReadOnlyList<ProfileSnapshot> CreateSnapshots(SessionProfile profile)
+    /// <param name="maxPeriod">
+    /// Ostatni uwzględniany okres TPO – profil „tak jak wyglądał” do tego okresu (używane przy płynnym cofaniu
+    /// czasu w symulacji). Części zaczynające się później są pomijane.
+    /// </param>
+    public IReadOnlyList<ProfileSnapshot> CreateSnapshots(SessionProfile profile, int maxPeriod = int.MaxValue)
     {
-        var splits = GetSplitPeriods(profile);
+        var splits = GetSplitPeriods(profile).Where(s => s <= maxPeriod).ToList();
         if (splits.Count == 0)
         {
-            return [profile.GetSnapshot()];
+            return [profile.GetSnapshot(0, maxPeriod)];
         }
 
         // Granice części: [0, s1-1], [s1, s2-1], ..., [sN, koniec].
@@ -88,7 +92,7 @@ public sealed class ProfileSplits
         for (var i = 0; i < starts.Count; i++)
         {
             var from = starts[i];
-            var to = i + 1 < starts.Count ? starts[i + 1] - 1 : int.MaxValue;
+            var to = i + 1 < starts.Count ? starts[i + 1] - 1 : maxPeriod;
 
             result.Add(profile.GetSnapshot(from, to) with { PartNumber = i + 1, PartCount = starts.Count });
         }

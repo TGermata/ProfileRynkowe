@@ -3,44 +3,103 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:MarketProfile.App.Controls"
         xmlns:vm="clr-namespace:MarketProfile.App.ViewModels"
-        Title="Ustawienia" SizeToContent="WidthAndHeight" ResizeMode="NoResize"
-        WindowStartupLocation="CenterOwner">
+        Title="Ustawienia" Width="880" Height="700" MinWidth="760" MinHeight="520"
+        ResizeMode="CanResize" WindowStartupLocation="CenterOwner">
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
         <Style TargetType="TextBox">
             <Setter Property="Width" Value="70" />
             <Setter Property="Margin" Value="4" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
         <Style TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="Margin" Value="4" />
         </Style>
+        <!-- Szara podpowiedź pod polem lub obok niego. -->
+        <Style x:Key="Hint" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Setter Property="Foreground" Value="Gray" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Margin" Value="4" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Margin" Value="4" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style TargetType="RadioButton">
+            <Setter Property="Margin" Value="4" />
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="10,3" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+        </Style>
         <Style TargetType="controls:ColorPicker">
             <Setter Property="Margin" Value="4" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <!-- Sekcja formularza: pogrubiony nagłówek, odstęp pod spodem. -->
+        <Style TargetType="GroupBox">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+            <Setter Property="HeaderTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" FontWeight="SemiBold" Margin="2,0" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- Treść podzakładki: przewijana w pionie, okno nie zmienia rozmiaru. -->
+        <Style TargetType="ScrollViewer">
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="Padding" Value="10,8" />
+        </Style>
+        <!-- Podzakładki – pionowa lista po lewej stronie. -->
+        <Style x:Key="SubTabs" TargetType="TabControl">
+            <Setter Property="TabStripPlacement" Value="Left" />
+            <Setter Property="Margin" Value="4" />
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="TabItem">
+                        <Setter Property="Padding" Value="12,7" />
+                        <Setter Property="MinWidth" Value="150" />
+                        <Setter Property="HorizontalContentAlignment" Value="Left" />
+                    </Style>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- Szablon edycji schematu kolorów jednej sesji (używany dla sesji dziennej i nocnej). -->
         <DataTemplate DataType="{x:Type vm:ColorSchemeViewModel}">
             <Grid>
+                <!-- Domyślny styl TextBlock z okna nie działa wewnątrz szablonu – ustawiamy go tu. -->
+                <Grid.Resources>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="VerticalAlignment" Value="Center" />
+                        <Setter Property="Margin" Value="4,4,16,4" />
+                    </Style>
+                </Grid.Resources>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="ColorLabel" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
-                    <RowDefinition />
-                    <RowDefinition />
-                    <RowDefinition />
-                    <RowDefinition />
-                    <RowDefinition />
+                    <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
                 </Grid.RowDefinitions>
 
                 <!-- Litery: każdy okres w innym kolorze albo wszystkie w jednym kolorze. -->
-                <TextBlock Grid.Row="0" Text="Litery TPO" VerticalAlignment="Top" Margin="4,6,4,4" />
-                <StackPanel Grid.Row="0" Grid.Column="1" Margin="4">
+                <TextBlock Grid.Row="0" Text="Litery TPO" VerticalAlignment="Top" Margin="4,6,16,4" />
+                <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,2">
                     <RadioButton Content="Każdy okres w innym kolorze (tęcza)" IsChecked="{Binding RainbowLetters}" />
                     <StackPanel Orientation="Horizontal">
                         <RadioButton Content="Jeden kolor:" IsChecked="{Binding SingleColorLetters}"
-                                     VerticalAlignment="Center" Margin="0,0,4,0" />
+                                     VerticalAlignment="Center" />
                         <controls:ColorPicker Color="{Binding LetterColor}" />
                     </StackPanel>
                 </StackPanel>
@@ -51,8 +110,8 @@
                 <TextBlock Grid.Row="2" Text="Value Area" />
                 <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
                     <controls:ColorPicker Color="{Binding ValueAreaColor}" />
-                    <TextBlock Text="krycie (%)" />
-                    <TextBox Text="{Binding ValueAreaOpacity}" Width="40" />
+                    <TextBlock Text="krycie (%)" Margin="12,4,4,4" />
+                    <TextBox Text="{Binding ValueAreaOpacity}" Width="45" />
                 </StackPanel>
 
                 <TextBlock Grid.Row="3" Text="Initial Balance" />
@@ -61,562 +120,1166 @@
         </DataTemplate>
     </Window.Resources>
 
-    <StackPanel Margin="12">
-        <TabControl Width="640">
+    <DockPanel Margin="12">
 
-            <!-- ===== Zakładka: instrumenty – lista + edycja zaznaczonego ===== -->
-            <TabItem Header="Instrumenty">
+        <!-- ===== Dół okna: błąd walidacji i przyciski ===== -->
+        <StackPanel DockPanel.Dock="Bottom">
+            <TextBlock Text="{Binding Error}" Foreground="Firebrick" TextWrapping="Wrap" Margin="2,6,2,0" />
+            <DockPanel Margin="0,8,0,0">
+                <Button DockPanel.Dock="Left" Content="Przywróć domyślny wygląd profili" Click="OnResetAppearanceClick"
+                        ToolTip="Przywraca domyślne kolory sesji (Profile → Kolory TPO) i wygląd profilu wolumenowego (Profile → Profil wolumenowy). Zmiana zapisuje się dopiero po kliknięciu „Zapisz”." />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Zapisz" Width="90" IsDefault="True" Click="OnSaveClick" />
+                    <Button Content="Anuluj" Width="90" Margin="0" IsCancel="True" />
+                </StackPanel>
+            </DockPanel>
+        </StackPanel>
+
+        <TabControl>
+
+            <!-- ================================================================ -->
+            <!-- ===== INSTRUMENTY – lista + edycja zaznaczonego ================== -->
+            <!-- ================================================================ -->
+            <TabItem Header="  Instrumenty  " Padding="10,5">
                 <DockPanel Margin="8">
                     <!-- Przyciski listy. -->
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="Dodaj" Padding="10,2" Click="OnAddInstrumentClick" />
-                            <Button Content="Usuń" Padding="10,2" Margin="6,0,0,0" Click="OnRemoveInstrumentClick" />
-                            <Button Content="Sprawdź w IB" Padding="10,2" Margin="6,0,0,0" Click="OnLookupInstrumentClick"
+                            <Button Content="Dodaj" Click="OnAddInstrumentClick" />
+                            <Button Content="Usuń" Click="OnRemoveInstrumentClick" />
+                            <Button Content="Sprawdź w IBKR" Click="OnLookupInstrumentClick"
                                     IsEnabled="{Binding CanLookupInstrument}"
                                     ToolTip="Wyszukuje instrument w Interactive Brokers (TWS musi być uruchomiony) i uzupełnia giełdę, walutę, tick, strefę czasową i godziny sesji" />
-                            <Button Content="Przywróć wbudowane" Padding="10,2" Margin="6,0,0,0" Click="OnRestoreInstrumentsClick"
+                            <Button Content="Przywróć wbudowane" Click="OnRestoreInstrumentsClick"
                                     ToolTip="Dodaje brakujące instrumenty z gotowej listy (istniejących nie zmienia)" />
                         </StackPanel>
-                        <TextBlock Text="{Binding InstrumentLookupResult}" TextWrapping="Wrap" Margin="2,6,2,0" MaxWidth="600"
-                                   HorizontalAlignment="Left" />
+                        <TextBlock Text="{Binding InstrumentLookupResult}" TextWrapping="Wrap" Margin="2,6,2,0" />
                     </StackPanel>
 
                     <!-- Lista instrumentów. -->
-                    <ListBox DockPanel.Dock="Left" Width="200" Height="430" ItemsSource="{Binding InstrumentEditors}"
+                    <ListBox DockPanel.Dock="Left" Width="200" ItemsSource="{Binding InstrumentEditors}"
                              SelectedItem="{Binding SelectedInstrumentEditor}" DisplayMemberPath="DisplayName" />
 
                     <!-- Edycja zaznaczonego instrumentu. -->
-                    <Grid DataContext="{Binding SelectedInstrumentEditor}" Margin="8,0,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
-                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
-                            <RowDefinition /><RowDefinition /><RowDefinition />
-                        </Grid.RowDefinitions>
+                    <ScrollViewer Padding="10,0,4,0">
+                        <StackPanel DataContext="{Binding SelectedInstrumentEditor}" Grid.IsSharedSizeScope="True">
 
-                        <TextBlock Grid.Row="0" Text="Symbol" />
-                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Symbol, UpdateSourceTrigger=PropertyChanged}" Width="90" HorizontalAlignment="Left" />
+                            <GroupBox Header="Identyfikacja">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="InstrLabel" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="1" Text="Opis" />
-                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" Width="250" HorizontalAlignment="Left" />
+                                    <TextBlock Grid.Row="0" Text="Symbol" />
+                                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Symbol, UpdateSourceTrigger=PropertyChanged}" Width="90" HorizontalAlignment="Left" />
 
-                        <TextBlock Grid.Row="2" Text="Rodzaj" />
-                        <ComboBox Grid.Row="2" Grid.Column="1" Width="200" HorizontalAlignment="Left" Margin="4"
-                                  ItemsSource="{Binding DataContext.InstrumentTypes, RelativeSource={RelativeSource AncestorType=Window}}"
-                                  DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding Type}" />
+                                    <TextBlock Grid.Row="1" Text="Opis" />
+                                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" Width="280" HorizontalAlignment="Left" />
 
-                        <TextBlock Grid.Row="3" Text="Symbol w IB / klasa" />
-                        <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal">
-                            <TextBox Text="{Binding IbSymbol}" ToolTip="Puste = taki sam jak symbol (np. FDAX → DAX, 6E → EUR)" />
-                            <TextBox Text="{Binding TradingClass}" ToolTip="Klasa kontraktu futures (np. FDAX, 6E) – puste = dowolna" />
-                            <TextBlock Text="puste = jak symbol" Foreground="Gray" FontSize="11" />
+                                    <TextBlock Grid.Row="2" Text="Rodzaj" />
+                                    <ComboBox Grid.Row="2" Grid.Column="1" Width="200"
+                                              ItemsSource="{Binding DataContext.InstrumentTypes, RelativeSource={RelativeSource AncestorType=Window}}"
+                                              DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding Type}" />
+                                </Grid>
+                            </GroupBox>
+
+                            <GroupBox Header="Kontrakt u brokera (Interactive Brokers)">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="InstrLabel" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Grid.Row="0" Text="Symbol w IBKR / klasa" />
+                                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding IbSymbol}" ToolTip="Puste = taki sam jak symbol (np. FDAX → DAX, 6E → EUR)" />
+                                        <TextBox Text="{Binding TradingClass}" ToolTip="Klasa kontraktu futures (np. FDAX, 6E) – puste = dowolna" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="puste = jak symbol / dowolna" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="1" Text="Giełda / główna" />
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding Exchange}" ToolTip="Np. CME, NYMEX, EUREX; akcje: SMART" />
+                                        <TextBox Text="{Binding PrimaryExchange}" ToolTip="Akcje: giełda główna (np. NASDAQ, ARCA, NYSE)" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="np. CME; akcje: SMART + NASDAQ" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="2" Text="Waluta" />
+                                    <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Currency}" Width="50" HorizontalAlignment="Left" />
+
+                                    <TextBlock Grid.Row="3" Text="Miesiąc kontraktu" />
+                                    <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding ContractMonth}" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="futures: RRRRMM, puste = najbliższy" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="4" Text="Kod produktu CME" />
+                                    <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding CmeProductId}"
+                                                 ToolTip="Numer produktu w adresie danych rozliczeniowych CME (ES 133, NQ 146, YM 318, RTY 8314, CL 425, GC 437, 6E 58)" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="pobieranie SETTLE z CME na razie wyłączone" />
+                                    </StackPanel>
+                                </Grid>
+                            </GroupBox>
+
+                            <GroupBox Header="Notowania">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="InstrLabel" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Grid.Row="0" Text="Tick" />
+                                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding TickSize}" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="minimalna zmiana ceny, np. 0.25" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="1" Text="Ticki na wiersz TPO" />
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding TicksPerRow}" Width="50" ToolTip="Wysokość wiersza TPO w tickach dla tego instrumentu" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="puste = jak w Profile → TPO" />
+                                    </StackPanel>
+                                </Grid>
+                            </GroupBox>
+
+                            <GroupBox Header="Sesje">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="InstrLabel" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Grid.Row="0" Text="Strefa czasowa" />
+                                    <ComboBox Grid.Row="0" Grid.Column="1" Width="220" IsEditable="True"
+                                              ItemsSource="{Binding DataContext.CommonTimeZones, RelativeSource={RelativeSource AncestorType=Window}}"
+                                              Text="{Binding TimeZoneId, UpdateSourceTrigger=PropertyChanged}"
+                                              ToolTip="W tej strefie podane są godziny sesji (i czas symulacji)" />
+
+                                    <TextBlock Grid.Row="1" Text="Sesja dzienna" />
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding DayStart}" Width="55" />
+                                        <TextBlock Text="–" />
+                                        <TextBox Text="{Binding DayEnd}" Width="55" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="GG:MM" />
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Row="2" Text="Sesja nocna" />
+                                    <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                                        <CheckBox IsChecked="{Binding HasNightSession}" />
+                                        <TextBox Text="{Binding NightStart}" Width="55" IsEnabled="{Binding HasNightSession}" />
+                                        <TextBlock Text="–" />
+                                        <TextBox Text="{Binding NightEnd}" Width="55" IsEnabled="{Binding HasNightSession}" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="może przechodzić przez północ" />
+                                    </StackPanel>
+                                </Grid>
+                            </GroupBox>
+
+                            <GroupBox Header="Dane">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="InstrLabel" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Grid.Row="0" Text="Pobieranie w tle" />
+                                    <CheckBox Grid.Row="0" Grid.Column="1"
+                                              Content="Pobieraj dane w tle (historia do symulacji)" IsChecked="{Binding DownloadData}"
+                                              ToolTip="Po połączeniu z brokerem historia tego instrumentu jest pobierana w tle do lokalnej bazy – także gdy nie jest pokazany na wykresie. Zakres dni: Dane i broker → Pobieranie i baza." />
+
+                                    <TextBlock Grid.Row="1" Text="Cena odniesienia" />
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                                        <TextBox Text="{Binding ReferencePrice}" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="tylko dla generatora losowych cen" />
+                                    </StackPanel>
+                                </Grid>
+                            </GroupBox>
+
+                            <TextBlock Style="{StaticResource Hint}"
+                                       Text="Każdy instrument ma własne dane w bazie, linie i rozbicia profili. Indeksy nie mają wolumenu – profil wolumenowy będzie pusty." />
                         </StackPanel>
-
-                        <TextBlock Grid.Row="4" Text="Giełda / główna" />
-                        <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal">
-                            <TextBox Text="{Binding Exchange}" ToolTip="Np. CME, NYMEX, EUREX; akcje: SMART" />
-                            <TextBox Text="{Binding PrimaryExchange}" ToolTip="Akcje: giełda główna (np. NASDAQ, ARCA, NYSE)" />
-                            <TextBlock Text="waluta" />
-                            <TextBox Text="{Binding Currency}" Width="50" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="5" Text="Tick / ticki na wiersz" />
-                        <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal">
-                            <TextBox Text="{Binding TickSize}" ToolTip="Minimalna zmiana ceny, np. 0.25" />
-                            <TextBox Text="{Binding TicksPerRow}" Width="50" ToolTip="Wysokość wiersza TPO w tickach dla tego instrumentu" />
-                            <TextBlock Text="puste = jak w zakładce TPO" Foreground="Gray" FontSize="11" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="6" Text="Strefa czasowa" />
-                        <ComboBox Grid.Row="6" Grid.Column="1" Width="200" HorizontalAlignment="Left" Margin="4" IsEditable="True"
-                                  ItemsSource="{Binding DataContext.CommonTimeZones, RelativeSource={RelativeSource AncestorType=Window}}"
-                                  Text="{Binding TimeZoneId, UpdateSourceTrigger=PropertyChanged}"
-                                  ToolTip="W tej strefie podane są godziny sesji (i czas symulacji)" />
-
-                        <TextBlock Grid.Row="7" Text="Sesja dzienna" />
-                        <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal">
-                            <TextBox Text="{Binding DayStart}" Width="55" />
-                            <TextBlock Text="–" />
-                            <TextBox Text="{Binding DayEnd}" Width="55" />
-                            <TextBlock Text="GG:MM" Foreground="Gray" FontSize="11" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="8" Text="Sesja nocna" />
-                        <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal">
-                            <CheckBox IsChecked="{Binding HasNightSession}" VerticalAlignment="Center" Margin="4" />
-                            <TextBox Text="{Binding NightStart}" Width="55" IsEnabled="{Binding HasNightSession}" />
-                            <TextBlock Text="–" />
-                            <TextBox Text="{Binding NightEnd}" Width="55" IsEnabled="{Binding HasNightSession}" />
-                            <TextBlock Text="może przechodzić przez północ" Foreground="Gray" FontSize="11" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="9" Text="Miesiąc kontraktu" />
-                        <StackPanel Grid.Row="9" Grid.Column="1" Orientation="Horizontal">
-                            <TextBox Text="{Binding ContractMonth}" />
-                            <TextBlock Text="futures: RRRRMM, puste = najbliższy" Foreground="Gray" FontSize="11" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="10" Text="Cena odniesienia" />
-                        <StackPanel Grid.Row="10" Grid.Column="1" Orientation="Horizontal">
-                            <TextBox Text="{Binding ReferencePrice}" />
-                            <TextBlock Text="tylko dla generatora losowych cen" Foreground="Gray" FontSize="11" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="12" Grid.ColumnSpan="2" Foreground="Gray" FontSize="11" TextWrapping="Wrap"
-                                   Text="Każdy instrument ma własne dane w bazie, linie i rozbicia profili. Indeksy nie mają wolumenu – profil wolumenowy będzie pusty." />
-                    </Grid>
+                    </ScrollViewer>
                 </DockPanel>
             </TabItem>
 
-            <!-- ===== Zakładka: TPO ===== -->
-            <TabItem Header="TPO">
-                <StackPanel Margin="8">
-                    <GroupBox Header="TPO" Padding="6">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                            </Grid.RowDefinitions>
+            <!-- ================================================================ -->
+            <!-- ===== PROFILE – TPO, kolory, linie, wolumen, zegar =============== -->
+            <!-- ================================================================ -->
+            <TabItem Header="  Profile  " Padding="10,5">
+                <TabControl Style="{StaticResource SubTabs}">
 
-                            <TextBlock Grid.Row="0" Text="Wysokość wiersza (ticki)" />
-                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding TicksPerRow}" />
-                            <TextBlock Grid.Row="1" Text="Okres TPO (minuty)" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TpoMinutes}" />
-                            <TextBlock Grid.Row="2" Text="Value Area (%)" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ValueAreaPercent}" />
-                            <TextBlock Grid.Row="3" Text="Remis POC (równa odległość od środka)" />
-                            <ComboBox Grid.Row="3" Grid.Column="1" Width="190" HorizontalAlignment="Left" Margin="4"
-                                      ItemsSource="{Binding PocTieBreaks}" DisplayMemberPath="Value" SelectedValuePath="Key"
-                                      SelectedValue="{Binding PocTieBreak}"
-                                      ToolTip="Którą cenę wybrać jako POC, gdy dwa wiersze mają tyle samo TPO i są równo oddalone od środka profilu" />
-                        </Grid>
-                    </GroupBox>
+                    <!-- TPO: obliczanie profilu i jego podstawowe elementy -->
+                    <TabItem Header="TPO">
+                        <ScrollViewer>
+                            <StackPanel Grid.IsSharedSizeScope="True">
+                                <GroupBox Header="Obliczanie profilu">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="TpoLabel" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                        </Grid.RowDefinitions>
 
-                    <!-- Elementy rysowane na profilach TPO – można je ukryć. -->
-                    <GroupBox Header="Elementy profilu" Padding="6" Margin="0,10,0,0">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal">
-                                <CheckBox Content="Pokazuj Initial Balance (pasek przy profilu)" VerticalAlignment="Center"
-                                          IsChecked="{Binding ShowInitialBalance}" Margin="4" />
-                                <TextBlock Text="okresów TPO w IB:" Margin="12,4,4,4" />
-                                <TextBox Text="{Binding InitialBalancePeriods}" Width="40"
-                                         ToolTip="Ile pierwszych okresów TPO tworzy Initial Balance (np. 2 = A i B)" />
-                            </StackPanel>
-                            <CheckBox Content="Pokazuj POC (ramka wiersza, wyróżnione litery, wartość w nagłówku)"
-                                      IsChecked="{Binding ShowPoc}" Margin="4" />
-                        </StackPanel>
-                    </GroupBox>
+                                        <TextBlock Grid.Row="0" Text="Wysokość wiersza" />
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
+                                            <TextBox Text="{Binding TicksPerRow}" />
+                                            <TextBlock Style="{StaticResource Hint}" Text="ticki – domyślnie; instrument może mieć własną wartość" />
+                                        </StackPanel>
 
-                    <!-- HalfBack – linia na połowie wysokości profilu. -->
-                    <GroupBox Header="HalfBack – połowa wysokości profilu" Padding="6" Margin="0,10,0,0">
-                        <StackPanel>
-                            <CheckBox Content="Rysuj linię HalfBack (środek między najwyższą a najniższą ceną profilu)"
-                                      IsChecked="{Binding HalfBackEnabled}" Margin="4" />
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Linia" />
-                                <ComboBox Width="110" Margin="4"
-                                          ItemsSource="{Binding LineStyles}" DisplayMemberPath="Value" SelectedValuePath="Key"
-                                          SelectedValue="{Binding HalfBackLineStyle}" />
-                                <TextBlock Text="Kolor" Margin="10,4,4,4" />
-                                <controls:ColorPicker Color="{Binding HalfBackColor}" />
-                                <TextBlock Text="Grubość (px)" Margin="10,4,4,4" />
-                                <TextBox Text="{Binding HalfBackThickness}" Width="40" />
-                                <TextBlock Text="Krycie (%)" Margin="10,4,4,4" />
-                                <TextBox Text="{Binding HalfBackOpacity}" Width="40"
-                                         ToolTip="100 = pełny kolor, mniej = bardziej przezroczysta linia" />
-                            </StackPanel>
-                            <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="4,4,4,0"
-                                       Text="Linia jest rysowana pod literami przez całą szerokość profilu; w bieżącym profilu przesuwa się wraz ze zmianą zakresu." />
-                        </StackPanel>
-                    </GroupBox>
+                                        <TextBlock Grid.Row="1" Text="Okres TPO" />
+                                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                                            <TextBox Text="{Binding TpoMinutes}" />
+                                            <TextBlock Style="{StaticResource Hint}" Text="minuty" />
+                                        </StackPanel>
 
-                    <!-- Strzałki początku (otwarcia) i końca (zamknięcia) rysowania profilu. -->
-                    <GroupBox Header="Strzałki początku i końca profilu" Padding="6" Margin="0,10,0,0">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal">
-                                <CheckBox Content="Początek (otwarcie) – po lewej" Width="210" VerticalAlignment="Center"
-                                          IsChecked="{Binding ArrowShowOpen}" Margin="4" />
-                                <controls:ColorPicker Color="{Binding ArrowOpenColor}" />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal">
-                                <CheckBox Content="Koniec (zamknięcie) – po prawej" Width="210" VerticalAlignment="Center"
-                                          IsChecked="{Binding ArrowShowClose}" Margin="4" />
-                                <controls:ColorPicker Color="{Binding ArrowCloseColor}" />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                <TextBlock Text="Grubość (px)" />
-                                <TextBox Text="{Binding ArrowThickness}" Width="40" />
-                                <TextBlock Text="Wielkość grotu (px)" Margin="10,4,4,4" />
-                                <TextBox Text="{Binding ArrowHeadSize}" Width="40" />
-                                <TextBlock Text="Długość (px)" Margin="10,4,4,4" />
-                                <TextBox Text="{Binding ArrowLength}" Width="40" />
-                            </StackPanel>
-                            <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="4,4,4,0"
-                                       Text="Strzałki są skierowane w stronę profilu: początek wskazuje pierwszą cenę profilu, koniec – ostatnią (w bieżącym profilu przesuwa się z ceną)." />
-                        </StackPanel>
-                    </GroupBox>
+                                        <TextBlock Grid.Row="2" Text="Value Area" />
+                                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                                            <TextBox Text="{Binding ValueAreaPercent}" />
+                                            <TextBlock Style="{StaticResource Hint}" Text="% wolumenu TPO" />
+                                        </StackPanel>
 
-                </StackPanel>
+                                        <TextBlock Grid.Row="3" Text="Remis POC" />
+                                        <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal">
+                                            <ComboBox Width="200"
+                                                      ItemsSource="{Binding PocTieBreaks}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                      SelectedValue="{Binding PocTieBreak}"
+                                                      ToolTip="Którą cenę wybrać jako POC, gdy dwa wiersze mają tyle samo TPO i są równo oddalone od środka profilu" />
+                                            <TextBlock Style="{StaticResource Hint}" Text="gdy dwa wiersze są równo oddalone od środka" />
+                                        </StackPanel>
+                                    </Grid>
+                                </GroupBox>
+
+                                <GroupBox Header="Elementy profilu">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" SharedSizeGroup="TpoLabel" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition /><RowDefinition /><RowDefinition />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Text="Initial Balance" />
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
+                                            <CheckBox Content="Pokazuj (pasek przy profilu)" IsChecked="{Binding ShowInitialBalance}" />
+                                            <TextBlock Text="okresów TPO w IB:" Margin="16,4,4,4" />
+                                            <TextBox Text="{Binding InitialBalancePeriods}" Width="45"
+                                                     ToolTip="Ile pierwszych okresów TPO tworzy Initial Balance (np. 2 = A i B)" />
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Row="1" Text="POC" />
+                                        <CheckBox Grid.Row="1" Grid.Column="1"
+                                                  Content="Pokazuj (ramka wiersza, wyróżnione litery, wartość w nagłówku)"
+                                                  IsChecked="{Binding ShowPoc}" />
+
+                                        <TextBlock Grid.Row="2" Text="Inwentarz" />
+                                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                                            <TextBlock Text="karta „Otwarcie”: istotny od" Margin="0,4,4,4" />
+                                            <TextBox Text="{Binding InventorySignificantPercent}" Width="45"
+                                                     ToolTip="Inwentarz jest istotny (strzałka kierunku korekty do SETTLE), gdy |Open − SETTLE poprzedniego dnia| wynosi co najmniej tyle procent zakresu (High − Low) poprzedniego dnia" />
+                                            <TextBlock Text="% zakresu poprzedniego dnia" Margin="4,4,4,4" />
+                                        </StackPanel>
+                                    </Grid>
+                                </GroupBox>
+
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Kolory liter, POC, Value Area i Initial Balance ustawisz w podzakładce „Kolory TPO”." />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- Kolory profili sesji dziennej i nocnej -->
+                    <TabItem Header="Kolory TPO">
+                        <ScrollViewer>
+                            <StackPanel Grid.IsSharedSizeScope="True">
+                                <GroupBox Header="Sesja dzienna">
+                                    <ContentControl Content="{Binding DayColors}" />
+                                </GroupBox>
+                                <GroupBox Header="Sesja nocna">
+                                    <ContentControl Content="{Binding NightColors}" />
+                                </GroupBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- Linie i znaczniki rysowane na profilu -->
+                    <TabItem Header="Linie i znaczniki">
+                        <ScrollViewer>
+                            <StackPanel>
+                                <!-- HalfBack – linia na połowie wysokości profilu. -->
+                                <GroupBox Header="HalfBack – połowa wysokości profilu">
+                                    <StackPanel>
+                                        <CheckBox Content="Rysuj linię HalfBack (środek między najwyższą a najniższą ceną profilu)"
+                                                  IsChecked="{Binding HalfBackEnabled}" />
+                                        <Grid IsEnabled="{Binding HalfBackEnabled}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Linia" />
+                                            <ComboBox Grid.Row="0" Grid.Column="1" Width="120"
+                                                      ItemsSource="{Binding LineStyles}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                      SelectedValue="{Binding HalfBackLineStyle}" />
+                                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Kolor" Margin="20,4,4,4" />
+                                            <controls:ColorPicker Grid.Row="0" Grid.Column="3" Color="{Binding HalfBackColor}" />
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Grubość (px)" />
+                                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding HalfBackThickness}" Width="45" HorizontalAlignment="Left" />
+                                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Krycie (%)" Margin="20,4,4,4" />
+                                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding HalfBackOpacity}" Width="45" HorizontalAlignment="Left"
+                                                     ToolTip="100 = pełny kolor, mniej = bardziej przezroczysta linia" />
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Linia jest rysowana pod literami przez całą szerokość profilu; w bieżącym profilu przesuwa się wraz ze zmianą zakresu." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- Podświetlenie profilu wybranego w tabeli „Parametry profili”. -->
+                                <GroupBox Header="Podświetlenie profilu wybranego w tabeli parametrów">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Kolor tła" />
+                                            <controls:ColorPicker Grid.Column="1" Color="{Binding HighlightColor}" />
+                                            <TextBlock Grid.Column="2" Text="Krycie (%)" Margin="20,4,4,4" />
+                                            <TextBox Grid.Column="3" Text="{Binding HighlightOpacity}" Width="45" HorizontalAlignment="Left"
+                                                     ToolTip="100 = pełny kolor, mniej = bardziej przezroczyste tło (litery profilu pozostają czytelne)" />
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Po kliknięciu wiersza w oknie „Parametry profili” wykres przesuwa się do tego profilu, a jego tło jest podświetlone tym kolorem. Podświetlenie znika po zamknięciu okna parametrów." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- Tryb Split: kreska na połowie każdego zakończonego słupka (okresu TPO). -->
+                                <GroupBox Header="Tryb Split – kreska połowy słupka">
+                                    <StackPanel>
+                                        <CheckBox Content="Rysuj kreskę na połowie każdego zakończonego okresu TPO"
+                                                  IsChecked="{Binding MidlineEnabled}" />
+                                        <Grid IsEnabled="{Binding MidlineEnabled}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Kolor" />
+                                            <controls:ColorPicker Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Color="{Binding MidlineColor}" />
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Grubość (px)" />
+                                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MidlineThickness}" Width="45" HorizontalAlignment="Left" />
+                                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Krycie (%)" Margin="20,4,4,4" />
+                                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MidlineOpacity}" Width="45" HorizontalAlignment="Left"
+                                                     ToolTip="100 = pełny kolor, mniej = bardziej przezroczysta kreska" />
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Kreska jest rysowana pod literami – litery TPO pozostają w pełni widoczne." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- Strzałki początku (otwarcia) i końca (zamknięcia) rysowania profilu. -->
+                                <GroupBox Header="Strzałki początku i końca profilu">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
+                                            <CheckBox Grid.Row="0" Content="Początek (otwarcie) – po lewej" IsChecked="{Binding ArrowShowOpen}" Margin="4,4,16,4" />
+                                            <controls:ColorPicker Grid.Row="0" Grid.Column="1" Color="{Binding ArrowOpenColor}" />
+                                            <CheckBox Grid.Row="1" Content="Koniec (zamknięcie) – po prawej" IsChecked="{Binding ArrowShowClose}" Margin="4,4,16,4" />
+                                            <controls:ColorPicker Grid.Row="1" Grid.Column="1" Color="{Binding ArrowCloseColor}" />
+                                        </Grid>
+                                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                            <TextBlock Text="Grubość (px)" />
+                                            <TextBox Text="{Binding ArrowThickness}" Width="45" />
+                                            <TextBlock Text="Wielkość grotu (px)" Margin="20,4,4,4" />
+                                            <TextBox Text="{Binding ArrowHeadSize}" Width="45" />
+                                            <TextBlock Text="Długość (px)" Margin="20,4,4,4" />
+                                            <TextBox Text="{Binding ArrowLength}" Width="45" />
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Strzałki są skierowane w stronę profilu: początek wskazuje pierwszą cenę profilu, koniec – ostatnią (w bieżącym profilu przesuwa się z ceną)." />
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- Profil wolumenowy -->
+                    <TabItem Header="Profil wolumenowy">
+                        <ScrollViewer>
+                            <StackPanel>
+                                <GroupBox Header="Profil wolumenowy sesji">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                                <RowDefinition /><RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
+
+                                            <!-- Dla których profili TPO rysować (to samo co „Wolumen” na pasku narzędzi). -->
+                                            <TextBlock Grid.Row="0" Text="Rysuj dla" />
+                                            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal">
+                                                <ComboBox Width="200" ItemsSource="{Binding VolumeModes}" DisplayMemberPath="Value"
+                                                          SelectedValuePath="Key" SelectedValue="{Binding VolumeMode}" />
+                                                <TextBlock Style="{StaticResource Hint}" Text="to samo co „Wolumen” na pasku narzędzi" />
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Row="1" Text="Odległość od profilu TPO (px)" />
+                                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding VolumeGap}" HorizontalAlignment="Left" />
+
+                                            <TextBlock Grid.Row="2" Text="Długość najdłuższego słupka (px)" />
+                                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding VolumeWidth}" HorizontalAlignment="Left" />
+
+                                            <TextBlock Grid.Row="3" Text="Kierunek słupków" VerticalAlignment="Top" Margin="4,6,4,4" />
+                                            <StackPanel Grid.Row="3" Grid.Column="1">
+                                                <RadioButton Content="Zwykły – od liter TPO w prawo" IsChecked="{Binding VolumeNormal}" />
+                                                <RadioButton Content="Odwrócony – w stronę liter TPO" IsChecked="{Binding VolumeMirrored}" />
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Row="4" Text="Kolor słupków" />
+                                            <controls:ColorPicker Grid.Row="4" Grid.Column="1" Color="{Binding VolumeBarColor}" />
+
+                                            <TextBlock Grid.Row="5" Text="Kolor VPOC" />
+                                            <controls:ColorPicker Grid.Row="5" Grid.Column="1" Color="{Binding VolumeVpocColor}" />
+
+                                            <TextBlock Grid.Row="6" Text="Krycie słupków (%)" />
+                                            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding VolumeOpacity}" HorizontalAlignment="Left" />
+
+                                            <!-- Skalowanie – ograniczenie długości słupków przy dużym wolumenie. -->
+                                            <TextBlock Grid.Row="7" Text="Skala długości słupków" />
+                                            <ComboBox Grid.Row="7" Grid.Column="1" Width="140"
+                                                      ItemsSource="{Binding VolumeScales}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                      SelectedValue="{Binding VolumeScale}" />
+
+                                            <TextBlock Grid.Row="8" Text="Limit (% największego wolumenu)" />
+                                            <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding VolumeCapPercent}" HorizontalAlignment="Left" />
+
+                                            <!-- Rodzaj profilu: tradycyjny albo różnicowy (delta) – to samo co w menu „Wyświetlanie”. -->
+                                            <TextBlock Grid.Row="9" Text="Rodzaj wolumenu" VerticalAlignment="Top" Margin="4,6,4,4" />
+                                            <StackPanel Grid.Row="9" Grid.Column="1">
+                                                <RadioButton GroupName="VolumeDisplayKind" Content="Tradycyjny – wolumen całkowity" IsChecked="{Binding VolumeDisplayTotal}" />
+                                                <RadioButton GroupName="VolumeDisplayKind" Content="Różnicowy – delta (kupno − sprzedaż)" IsChecked="{Binding VolumeDisplayDelta}" />
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Row="10" Text="Delta: kolor przewagi kupna" />
+                                            <controls:ColorPicker Grid.Row="10" Grid.Column="1" Color="{Binding VolumeDeltaBuyColor}" />
+
+                                            <TextBlock Grid.Row="11" Text="Delta: kolor przewagi sprzedaży" />
+                                            <controls:ColorPicker Grid.Row="11" Grid.Column="1" Color="{Binding VolumeDeltaSellColor}" />
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Delta: strona transakcji ustalana z notowań bid/ask (transakcja po ask = kupno, po bid = sprzedaż; dla TWS potrzebna subskrypcja tick-by-tick bid/ask). Ticki zapisane wcześniej i transakcje w środku spreadu – reguła ticka (szacunek). Świece 1-min z historii nie mają strony – pod profilem widać, jaka część wolumenu jest w delcie." />
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Skala pierwiastkowa lub logarytmiczna spłaszcza duże wolumeny. Limit np. 60% – wolumen powyżej 60% maksimum ma pełną długość (z białym znacznikiem obcięcia), a pozostałe słupki są dłuższe i czytelniejsze. 100% = bez limitu. Słupki mają wyraźny obrys, więc są widoczne także przy niskim kryciu." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- Profil wolumenowy aktualnie budowanego słupka TPO (bieżącego okresu). -->
+                                <GroupBox Header="Wolumen bieżącego słupka TPO">
+                                    <StackPanel>
+                                        <CheckBox IsChecked="{Binding PeriodVolumeEnabled}"
+                                                  Content="Rysuj profil wolumenowy aktualnie budowanego słupka (przy bieżącym profilu)" />
+                                        <Grid IsEnabled="{Binding PeriodVolumeEnabled}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                                <RowDefinition /><RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Text="Odstęp od liter TPO (px)" />
+                                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PeriodVolumeGapFromTpo}" HorizontalAlignment="Left" />
+
+                                            <TextBlock Grid.Row="1" Text="Odstęp do wolumenu sesji (px)" />
+                                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PeriodVolumeGapToSession}" HorizontalAlignment="Left" />
+
+                                            <TextBlock Grid.Row="2" Text="Długość najdłuższego słupka (px)" />
+                                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding PeriodVolumeWidth}" HorizontalAlignment="Left" />
+
+                                            <TextBlock Grid.Row="3" Text="Kolor słupków" />
+                                            <controls:ColorPicker Grid.Row="3" Grid.Column="1" Color="{Binding PeriodVolumeColor}" />
+
+                                            <TextBlock Grid.Row="4" Text="Krycie słupków (%)" />
+                                            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding PeriodVolumeOpacity}" HorizontalAlignment="Left" />
+
+                                            <!-- Skala: względem poprzednich słupków – na początku okresu słupki są krótkie i rosną z wolumenem. -->
+                                            <TextBlock Grid.Row="5" Text="Skala słupków" />
+                                            <ComboBox Grid.Row="5" Grid.Column="1" Width="220"
+                                                      ItemsSource="{Binding PeriodVolumeScaleModes}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                      SelectedValue="{Binding PeriodVolumeScaleMode}"
+                                                      ToolTip="Względem poprzednich słupków: pełna długość = typowy (mediana) największy wolumen wiersza z ostatnich zakończonych słupków tej samej sesji. Na początku okresu słupki są krótkie i rosną z wolumenem." />
+
+                                            <TextBlock Grid.Row="6" Text="Liczba słupków do odniesienia" />
+                                            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding PeriodVolumeReferencePeriods}" HorizontalAlignment="Left" />
+                                        </Grid>
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- Liczby wolumenu przy słupkach (aktualnie zliczony wolumen wiersza). -->
+                                <GroupBox Header="Liczby wolumenu przy słupkach">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Text="Pokazuj" />
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal">
+                                            <CheckBox IsChecked="{Binding VolumeLabelsOnSession}" Content="przy profilu wolumenowym sesji" />
+                                            <CheckBox IsChecked="{Binding VolumeLabelsOnPeriod}" Content="przy wolumenie bieżącego słupka" Margin="16,4,4,4" />
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Row="1" Text="Położenie liczby" />
+                                        <ComboBox Grid.Row="1" Grid.Column="1" Width="170"
+                                                  ItemsSource="{Binding VolumeLabelPositions}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                  SelectedValue="{Binding VolumeLabelPosition}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Text="Krycie tekstu (%)" Margin="16,4,4,4" />
+                                        <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding VolumeLabelOpacity}" HorizontalAlignment="Left" />
+
+                                        <TextBlock Grid.Row="2" Text="Wielkość czcionki" />
+                                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding VolumeLabelFontSize}" HorizontalAlignment="Left" />
+                                        <TextBlock Grid.Row="2" Grid.Column="2" Text="Grubość czcionki" Margin="16,4,4,4" />
+                                        <ComboBox Grid.Row="2" Grid.Column="3" Width="130"
+                                                  ItemsSource="{Binding FontWeights}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                  SelectedValue="{Binding VolumeLabelFontWeight}" />
+
+                                        <TextBlock Grid.Row="3" Text="Kolor tekstu" />
+                                        <controls:ColorPicker Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Color="{Binding VolumeLabelColor}" />
+                                    </Grid>
+                                </GroupBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- Zegar bieżącego okresu TPO i wskaźnik tempa budowania TPO -->
+                    <TabItem Header="Zegar i tempo TPO">
+                        <ScrollViewer>
+                            <StackPanel>
+                                <GroupBox Header="Zegar bieżącego okresu TPO">
+                                    <StackPanel>
+                                        <CheckBox Content="Pokazuj zegar (na żywo i w symulacji)" IsChecked="{Binding TimerEnabled}" />
+                                        <Grid IsEnabled="{Binding TimerEnabled}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Text="Położenie" />
+                                            <ComboBox Grid.Row="0" Grid.Column="1" Width="160"
+                                                      ItemsSource="{Binding TimerPositions}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                      SelectedValue="{Binding TimerPosition}" />
+
+                                            <TextBlock Grid.Row="1" Text="Wielkość czcionki" />
+                                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TimerFontSize}" HorizontalAlignment="Left" />
+
+                                            <TextBlock Grid.Row="2" Text="Grubość czcionki" />
+                                            <ComboBox Grid.Row="2" Grid.Column="1" Width="160"
+                                                      ItemsSource="{Binding FontWeights}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                      SelectedValue="{Binding TimerFontWeight}" />
+
+                                            <TextBlock Grid.Row="3" Text="Kolor czcionki" />
+                                            <controls:ColorPicker Grid.Row="3" Grid.Column="1" Color="{Binding TimerColor}" />
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Zegar pokazuje literę aktualnie rysowanego okresu TPO, jego przedział czasu i czas do końca okresu, np. „TPO F  10:00–10:30  ⏱ 12:34”. Czas liczony jest z danych: na żywo – z ostatniej transakcji, w symulacji – z zegara symulacji (w pauzie stoi)." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <GroupBox Header="Tempo budowania TPO">
+                                    <StackPanel>
+                                        <CheckBox Content="Pokazuj wskaźnik tempa na wykresie (ze wskazówką)" IsChecked="{Binding TempoGauge}" />
+                                        <Grid IsEnabled="{Binding TempoGauge}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Położenie wskaźnika" />
+                                            <ComboBox Grid.Column="1" Width="160"
+                                                      ItemsSource="{Binding TempoGaugePositions}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                      SelectedValue="{Binding TempoGaugePosition}" />
+                                        </Grid>
+                                        <CheckBox Content="Pokazuj tempo w pasku na dole okna (wartość, stan, ostatnie zatrzymanie)" IsChecked="{Binding TempoInStatusBar}" />
+                                        <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                                   Text="Tempo = ile nowych poziomów ceny dokłada bieżąca litera w porównaniu ze średnią tej litery z ostatnich 20 sesji: +2,0 – w górę dwa razy szybciej niż zwykle, −1,0 – w dół w zwykłym tempie, 0 – rynek stoi. Kolor jak temperatura: niebieski – wolno, zielony – zwykłe tempo, czerwony – bardzo szybko. Skala wskaźnika 0–30+ jest logarytmiczna: małe wartości widać dokładnie, a duże też się mieszczą. Tempo jest liczone zawsze – wyłączenie wskaźnika i paska tylko je ukrywa." />
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                </TabControl>
             </TabItem>
 
-            <!-- ===== Zakładka: Interactive Brokers – źródło danych w trybie „Na żywo” ===== -->
-            <TabItem Header="Interactive Brokers">
-                <StackPanel Margin="8">
-                    <GroupBox Header="Źródło danych w trybie „Na żywo”" Padding="6">
-                        <StackPanel>
-                            <RadioButton Content="Generator losowych cen (do testów)" IsChecked="{Binding UseGeneratorLive}" Margin="4" />
-                            <RadioButton Content="Interactive Brokers (TWS / IB Gateway)" IsChecked="{Binding UseInteractiveBrokers}" Margin="4" />
-                        </StackPanel>
-                    </GroupBox>
-
-                    <!-- Ścieżka do biblioteki klienta TWS API – sprawdzana na bieżąco podczas wpisywania. -->
-                    <GroupBox Header="Biblioteka klienta TWS API (CSharpAPI.dll)" Padding="6" Margin="0,10,0,0">
-                        <StackPanel>
-                            <DockPanel>
-                                <Button DockPanel.Dock="Right" Content="Wykryj" Padding="8,0" Margin="4,4,0,4" Click="OnIbAutoDetectClick"
-                                        ToolTip="Szukaj folderu „TWS API” obok aplikacji i w C:\TWS API" />
-                                <Button DockPanel.Dock="Right" Content="Przeglądaj…" Padding="8,0" Margin="4,4,0,4" Click="OnIbBrowseClick" />
-                                <TextBox Text="{Binding IbApiPath, UpdateSourceTrigger=PropertyChanged}" Width="Auto" Margin="4"
-                                         ToolTip="Plik CSharpAPI.dll albo folder, w którym ma być wyszukany (np. cały folder „TWS API”)" />
-                            </DockPanel>
-                            <TextBlock Text="{Binding IbApiStatus}" TextWrapping="Wrap" FontSize="11" MaxWidth="440"
-                                       HorizontalAlignment="Left">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Foreground" Value="Firebrick" />
-                                        <Setter Property="Margin" Value="4" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IbApiValid}" Value="True">
-                                                <Setter Property="Foreground" Value="ForestGreen" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-                    </GroupBox>
-
-                    <GroupBox Header="Połączenie z TWS" Padding="6" Margin="0,10,0,0">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                            </Grid.RowDefinitions>
-
-                            <TextBlock Grid.Row="0" Text="Adres" />
-                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding IbHost}" Width="120" HorizontalAlignment="Left" />
-
-                            <TextBlock Grid.Row="1" Text="Port" />
-                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
-                                <TextBox Text="{Binding IbPort}" />
-                                <TextBlock Text="TWS: 7497 demo / 7496 real, Gateway: 4002 / 4001" Foreground="Gray" FontSize="11" />
-                            </StackPanel>
-
-                            <TextBlock Grid.Row="2" Text="Client ID" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding IbClientId}" HorizontalAlignment="Left" />
-
-                            <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Foreground="Gray" FontSize="11"
-                                       Text="Miesiąc kontraktu futures ustawiasz przy instrumencie (zakładka „Instrumenty”)." />
-
-                            <TextBlock Grid.Row="4" Text="Rodzaj danych" />
-                            <ComboBox Grid.Row="4" Grid.Column="1" Width="300" HorizontalAlignment="Left" Margin="4"
-                                      ItemsSource="{Binding IbDataTypes}" DisplayMemberPath="Value" SelectedValuePath="Key"
-                                      SelectedValue="{Binding IbDataType}" />
-                        </Grid>
-                    </GroupBox>
-
-                    <!-- Test połączenia: łączy, szuka kontraktu, czeka na notowanie i rozłącza. -->
-                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                        <Button Content="Testuj połączenie" Padding="10,2" Click="OnIbTestClick" IsEnabled="{Binding CanTestIb}" />
-                    </StackPanel>
-                    <TextBlock Text="{Binding IbTestResult}" TextWrapping="Wrap" MaxWidth="440" HorizontalAlignment="Left" Margin="4,6,4,0" />
-                    <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" MaxWidth="440" HorizontalAlignment="Left" Margin="4,6,4,0"
-                               Text="Aplikacja tylko pobiera dane – nie składa zleceń. Test używa Client ID + 100. W TWS musi być włączone API: Configure → API → Settings → Enable ActiveX and Socket Clients." />
-                </StackPanel>
-            </TabItem>
-
-            <!-- ===== Zakładka 2: dane, generator i baza danych ===== -->
+            <!-- ================================================================ -->
+            <!-- ===== DANE I BROKER – źródło, połączenie, pobieranie, baza ======= -->
+            <!-- ================================================================ -->
             <!-- (Symulację – start, Play/Pause, prędkość – obsługuje się z paska w oknie głównym.) -->
-            <TabItem Header="Dane">
-                <StackPanel Margin="8">
-                    <GroupBox Header="Dane" Padding="6">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition />
-                                <RowDefinition />
-                            </Grid.RowDefinitions>
+            <!-- ============================================================ -->
+            <!-- WYKRES D/W/M: rodzaj prezentacji, kolory, wolumen, średnie       -->
+            <!-- ============================================================ -->
+            <TabItem Header="  Wykres D/W/M  " Padding="10,5">
+                <ScrollViewer Margin="4">
+                    <StackPanel>
+                        <GroupBox Header="Prezentacja">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Rodzaj wykresu" Width="140" />
+                                    <RadioButton Content="Świece japońskie" GroupName="SettingsCandleType" IsChecked="{Binding CandleTypeCandles}"
+                                                 VerticalAlignment="Center" Margin="4,4,16,4" />
+                                    <RadioButton Content="Słupki OHLC" GroupName="SettingsCandleType" IsChecked="{Binding CandleTypeOhlc}"
+                                                 VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="140" /><ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Kolor wzrostu" />
+                                    <controls:ColorPicker Grid.Row="0" Grid.Column="1" Color="{Binding CandleUpColor}" />
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="Kolor spadku" Margin="24,4,4,4" />
+                                    <controls:ColorPicker Grid.Row="0" Grid.Column="3" Color="{Binding CandleDownColor}" />
 
-                            <TextBlock Grid.Row="0" Text="Historia ładowana przed startem (dni)" />
-                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding HistoryDays}" />
-                            <TextBlock Grid.Row="1" Text="Przyspieszenie generatora w trybie „Na żywo” (×)" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SimulatorSpeed}" />
-                        </Grid>
-                    </GroupBox>
-
-                    <GroupBox Header="Lokalna baza danych" Padding="6" Margin="0,10,0,0">
-                        <StackPanel>
-                            <TextBlock Text="{Binding DatabaseInfo}" TextWrapping="Wrap" />
-                            <TextBlock Text="{Binding DatabasePath}" Foreground="Gray" TextWrapping="Wrap" FontSize="11" />
-
-                            <CheckBox Content="Zapisuj dane od brokera do bazy (do późniejszych symulacji)"
-                                      IsChecked="{Binding RecordToDatabase}" Margin="4,8,4,4" />
-
-                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <Button Content="Wygeneruj dane testowe" Padding="8,2" Margin="4"
-                                        IsEnabled="{Binding CanGenerate}" Click="OnGenerateTestDataClick" />
-                                <TextBlock Text="dni:" />
-                                <TextBox Text="{Binding TestDataDays}" Width="40" />
+                                    <CheckBox Grid.Row="1" Grid.Column="0" Content="Wolumen" IsChecked="{Binding CandleShowVolume}"
+                                              ToolTip="Słupki wolumenu w dolnej części wykresu (w kolorach wzrostu i spadku)" />
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal" IsEnabled="{Binding CandleShowVolume}">
+                                        <TextBlock Text="Krycie (%)" />
+                                        <TextBox Text="{Binding CandleVolumeOpacity}" Width="45" />
+                                    </StackPanel>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Odświeżanie z IBKR co (min)" Width="140" />
+                                    <TextBox Text="{Binding CandleIbRefreshMinutes}" Width="45"
+                                             ToolTip="Przy połączeniu z IBKR (tryb „Na żywo”) świece D/W/M instrumentu i rynku szerokiego są co tyle minut pobierane z IBKR i zapisywane w bazie. Ostatnia świeca instrumentu zmienia się na żywo z każdą transakcją." />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Świece / słupki OHLC przełączysz też na pasku zakładki „Wykres D/W/M”. Świeca jest wzrostowa, gdy zamknięcie ≥ otwarcie. Przy połączeniu z IBKR wykres jest na żywo: ostatnia świeca instrumentu zmienia się z każdą transakcją, a świece z IBKR (także rynku szerokiego) są odświeżane co podaną liczbę minut." />
                             </StackPanel>
-                            <TextBlock Foreground="Gray" TextWrapping="Wrap" FontSize="11"
-                                       Text="Dane testowe zastępują poprzednie dane testowe tego instrumentu. Dane od brokera nie są usuwane." />
-                        </StackPanel>
-                    </GroupBox>
-                </StackPanel>
-            </TabItem>
+                        </GroupBox>
 
-            <!-- ===== Zakładka 2: wygląd profilu wolumenowego ===== -->
-            <TabItem Header="Profil wolumenowy">
-                <StackPanel Margin="8">
-                    <!-- Dla których profili TPO rysować profil wolumenowy (to samo co „Wolumen” na pasku narzędzi). -->
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                        <TextBlock Text="Rysuj profil wolumenowy dla:" />
-                        <ComboBox Width="200" Margin="4" ItemsSource="{Binding VolumeModes}" DisplayMemberPath="Value"
-                                  SelectedValuePath="Key" SelectedValue="{Binding VolumeMode}" />
+                        <GroupBox Header="Średnie kroczące (SMA)">
+                            <StackPanel>
+                                <!-- Nagłówek kolumn. -->
+                                <Grid Margin="0,0,0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70" /><ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="150" /><ColumnDefinition Width="100" /><ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Rysuj" Foreground="Gray" />
+                                    <TextBlock Grid.Column="1" Text="Okres (świece)" Foreground="Gray" />
+                                    <TextBlock Grid.Column="2" Text="Kolor" Foreground="Gray" />
+                                    <TextBlock Grid.Column="3" Text="Grubość (px)" Foreground="Gray" />
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding MovingAverages}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="70" /><ColumnDefinition Width="90" />
+                                                    <ColumnDefinition Width="150" /><ColumnDefinition Width="100" /><ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" Margin="8,4" VerticalAlignment="Center" />
+                                                <TextBox Grid.Column="1" Text="{Binding Period}" Width="60" Margin="4" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" />
+                                                <controls:ColorPicker Grid.Column="2" Color="{Binding Color}" Margin="4" HorizontalAlignment="Left" />
+                                                <TextBox Grid.Column="3" Text="{Binding Thickness}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" />
+                                                <Button Grid.Column="4" Content="✕ Usuń" Click="OnRemoveMovingAverageClick" Padding="8,2"
+                                                        HorizontalAlignment="Left" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Content="+ Dodaj średnią" Click="OnAddMovingAverageClick" />
+                                    <Button Content="Przywróć domyślny wygląd wykresu" Click="OnResetCandleChartClick"
+                                            ToolTip="Domyślne kolory, wolumen i średnie SMA 20 / 50 / 200. Zapis dopiero po kliknięciu „Zapisz”." />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="SMA = średnia z cen zamknięcia ostatnich N świec bieżącego interwału (np. SMA 20 na wykresie dziennym = 20 dni, na tygodniowym = 20 tygodni). Wartości średnich pod kursorem są w opisie świecy u góry wykresu." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Średnie dzienne na wykresie TPO">
+                            <StackPanel>
+                                <CheckBox Content="Rysuj poziomy średnich dziennych na wykresie profili TPO" IsChecked="{Binding TpoAveragesEnabled}" />
+                                <StackPanel IsEnabled="{Binding TpoAveragesEnabled}">
+                                    <!-- Nagłówek kolumn. -->
+                                    <Grid Margin="0,6,0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="70" /><ColumnDefinition Width="55" />
+                                            <ColumnDefinition Width="120" /><ColumnDefinition Width="150" /><ColumnDefinition Width="90" />
+                                            <ColumnDefinition Width="115" /><ColumnDefinition Width="70" />
+                                            <ColumnDefinition Width="75" /><ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Średnia" Foreground="Gray" />
+                                        <TextBlock Grid.Column="1" Text="Na TPO" Foreground="Gray" />
+                                        <TextBlock Grid.Column="2" Text="Opis (pusty = auto)" Foreground="Gray" />
+                                        <TextBlock Grid.Column="3" Text="Kolor" Foreground="Gray" />
+                                        <TextBlock Grid.Column="4" Text="Rodzaj" Foreground="Gray" />
+                                        <TextBlock Grid.Column="5" Text="Styl linii" Foreground="Gray" />
+                                        <TextBlock Grid.Column="6" Text="Grubość" Foreground="Gray" />
+                                        <TextBlock Grid.Column="7" Text="Pasek (px)" Foreground="Gray" />
+                                        <TextBlock Grid.Column="8" Text="Krycie paska (%)" Foreground="Gray" />
+                                        <TextBlock Grid.Column="9" Text="Miga" Foreground="Gray" />
+                                    </Grid>
+                                    <ItemsControl ItemsSource="{Binding MovingAverages}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="70" /><ColumnDefinition Width="55" />
+                                                        <ColumnDefinition Width="120" /><ColumnDefinition Width="150" /><ColumnDefinition Width="90" />
+                                                        <ColumnDefinition Width="115" /><ColumnDefinition Width="70" />
+                                                        <ColumnDefinition Width="75" /><ColumnDefinition Width="110" /><ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding Title}" Margin="4" VerticalAlignment="Center" />
+                                                    <CheckBox Grid.Column="1" IsChecked="{Binding ShowOnTpo}" Margin="8,4" VerticalAlignment="Center" />
+                                                    <TextBox Grid.Column="2" Text="{Binding TpoLabel}" Width="110" Margin="4" HorizontalAlignment="Left"
+                                                             VerticalContentAlignment="Center"
+                                                             ToolTip="{Binding DefaultTpoLabel}" />
+                                                    <controls:ColorPicker Grid.Column="3" Color="{Binding TpoColor}" Margin="4" HorizontalAlignment="Left"
+                                                                          ToolTip="Kolor na wykresie TPO – domyślnie taki jak średniej na wykresie dziennym" />
+                                                    <ComboBox Grid.Column="4" Width="80" Margin="4" HorizontalAlignment="Left"
+                                                              ItemsSource="{Binding DataContext.TpoShapes, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding TpoShape}" />
+                                                    <ComboBox Grid.Column="5" Width="105" Margin="4" HorizontalAlignment="Left" IsEnabled="{Binding IsTpoLine}"
+                                                              ItemsSource="{Binding DataContext.LineStyles, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                              DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding TpoLineStyle}" />
+                                                    <TextBox Grid.Column="6" Text="{Binding TpoThickness}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                             VerticalContentAlignment="Center" IsEnabled="{Binding IsTpoLine}" />
+                                                    <TextBox Grid.Column="7" Text="{Binding TpoBandHeight}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                             VerticalContentAlignment="Center" IsEnabled="{Binding IsTpoBand}"
+                                                             ToolTip="Szerokość paska w pikselach (2–60), wyśrodkowanego na wartości średniej" />
+                                                    <TextBox Grid.Column="8" Text="{Binding TpoBandOpacity}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                             VerticalContentAlignment="Center" IsEnabled="{Binding IsTpoBand}"
+                                                             ToolTip="Krycie paska w procentach (5–100) – litery profili widać przez pasek" />
+                                                    <CheckBox Grid.Column="9" IsChecked="{Binding TpoBlink}" Margin="8,4" VerticalAlignment="Center"
+                                                              ToolTip="Miga, gdy cena zbliży się do tej średniej" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <TextBlock Text="Opis linii" Width="140" />
+                                        <RadioButton Content="Po lewej" GroupName="TpoAvgLabel" IsChecked="{Binding TpoAveragesLabelLeft}"
+                                                     VerticalAlignment="Center" Margin="4,4,16,4" />
+                                        <RadioButton Content="Po prawej" GroupName="TpoAvgLabel" IsChecked="{Binding TpoAveragesLabelRight}"
+                                                     VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Krycie (%)" Width="140" />
+                                        <TextBox Text="{Binding TpoAveragesOpacity}" Width="45" />
+                                        <TextBlock Text="Czcionka opisu (pt)" Margin="24,4,4,4" />
+                                        <TextBox Text="{Binding TpoAveragesFontSize}" Width="45" />
+                                    </StackPanel>
+                                    <CheckBox Content="Wartość średniej w opisie (np. „SMA20 D 6712.40”)" IsChecked="{Binding TpoAveragesShowValue}" />
+                                    <CheckBox Content="Cena średniej na osi cen (w kolorze średniej)" IsChecked="{Binding TpoAveragesAxisLabel}" />
+                                    <CheckBox Content="Migaj, gdy cena zbliży się do średniej (średnie z zaznaczonym „Miga”)" IsChecked="{Binding TpoAveragesBlink}"
+                                              Margin="4,8,4,4" />
+                                    <StackPanel Orientation="Horizontal" IsEnabled="{Binding TpoAveragesBlink}">
+                                        <TextBlock Text="Odległość (ticki)" Width="140" />
+                                        <TextBox Text="{Binding TpoAveragesBlinkTicks}" Width="45"
+                                                 ToolTip="Linia miga, gdy cena jest od średniej najwyżej o tyle ticków (np. ES: 8 ticków = 2 punkty)" />
+                                        <TextBlock Text="Tempo migania (ms)" Margin="24,4,4,4" />
+                                        <TextBox Text="{Binding TpoAveragesBlinkMs}" Width="55"
+                                                 ToolTip="Czas jednej fazy migania (150–2000 ms)" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Poziom każdej średniej z listy powyżej (wykres dzienny) na dziś: N−1 ostatnich zamknięć dziennych + bieżąca cena jako dzisiejsze zamknięcie. Linia przez cały wykres TPO w kolorze średniej – widać, kiedy cena zbliża się do znaczącej średniej. Pusty opis = automatyczny, np. „SMA20 D”. Rodzaj „Pasek” – półprzezroczysta strefa wokół średniej, np. 6 px przy kryciu 30%. Kolor domyślnie jak na wykresie dziennym. W symulacji – na dzień i cenę symulacji." />
+                            </StackPanel>
+                        </GroupBox>
                     </StackPanel>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition />
-                            <RowDefinition />
-                            <RowDefinition />
-                            <RowDefinition />
-                            <RowDefinition />
-                            <RowDefinition />
-                            <RowDefinition />
-                            <RowDefinition />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Grid.Row="0" Text="Odległość od profilu TPO (px)" />
-                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding VolumeGap}" HorizontalAlignment="Left" />
-
-                        <TextBlock Grid.Row="1" Text="Długość najdłuższego słupka (px)" />
-                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding VolumeWidth}" HorizontalAlignment="Left" />
-
-                        <TextBlock Grid.Row="2" Text="Kierunek słupków" VerticalAlignment="Top" Margin="4,6,4,4" />
-                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="4">
-                            <RadioButton Content="Zwykły – od liter TPO w prawo"
-                                         IsChecked="{Binding VolumeNormal}" />
-                            <RadioButton Content="Odwrócony – w stronę liter TPO"
-                                         IsChecked="{Binding VolumeMirrored}" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="3" Text="Kolor słupków" />
-                        <controls:ColorPicker Grid.Row="3" Grid.Column="1" Color="{Binding VolumeBarColor}" />
-
-                        <TextBlock Grid.Row="4" Text="Kolor VPOC" />
-                        <controls:ColorPicker Grid.Row="4" Grid.Column="1" Color="{Binding VolumeVpocColor}" />
-
-                        <TextBlock Grid.Row="5" Text="Krycie słupków (%)" />
-                        <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding VolumeOpacity}" HorizontalAlignment="Left" />
-
-                        <!-- Skalowanie – ograniczenie długości słupków przy dużym wolumenie. -->
-                        <TextBlock Grid.Row="6" Text="Skala długości słupków" />
-                        <ComboBox Grid.Row="6" Grid.Column="1" Width="130" HorizontalAlignment="Left" Margin="4"
-                                  ItemsSource="{Binding VolumeScales}" DisplayMemberPath="Value" SelectedValuePath="Key"
-                                  SelectedValue="{Binding VolumeScale}" />
-
-                        <TextBlock Grid.Row="7" Text="Limit (% największego wolumenu)" />
-                        <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding VolumeCapPercent}" HorizontalAlignment="Left" />
-                    </Grid>
-
-                    <TextBlock Foreground="Gray" TextWrapping="Wrap" Margin="4,6,4,0" FontSize="11"
-                               Text="Skala pierwiastkowa lub logarytmiczna spłaszcza duże wolumeny. Limit np. 60% – wolumen powyżej 60% maksimum ma pełną długość (z białym znacznikiem obcięcia), a pozostałe słupki są dłuższe i czytelniejsze. 100% = bez limitu." />
-
-                    <!-- Profil wolumenowy aktualnie budowanego słupka TPO (bieżącego okresu). -->
-                    <GroupBox Header="Wolumen bieżącego słupka TPO" Margin="0,10,0,0" Padding="4">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                            </Grid.RowDefinitions>
-
-                            <CheckBox Grid.ColumnSpan="4" Margin="4" IsChecked="{Binding PeriodVolumeEnabled}"
-                                      Content="Rysuj profil wolumenowy aktualnie budowanego słupka (przy bieżącym profilu)" />
-
-                            <TextBlock Grid.Row="1" Text="Odstęp od liter TPO (px)" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PeriodVolumeGapFromTpo}" HorizontalAlignment="Left" />
-                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Odstęp do wolumenu sesji (px)" />
-                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding PeriodVolumeGapToSession}" HorizontalAlignment="Left" />
-
-                            <TextBlock Grid.Row="2" Text="Długość najdłuższego słupka (px)" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding PeriodVolumeWidth}" HorizontalAlignment="Left" />
-                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Krycie słupków (%)" />
-                            <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding PeriodVolumeOpacity}" HorizontalAlignment="Left" />
-
-                            <TextBlock Grid.Row="3" Text="Kolor słupków" />
-                            <controls:ColorPicker Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Color="{Binding PeriodVolumeColor}" />
-                        </Grid>
-                    </GroupBox>
-
-                    <!-- Liczby wolumenu przy słupkach (aktualnie zliczony wolumen wiersza). -->
-                    <GroupBox Header="Liczby wolumenu przy słupkach" Margin="0,10,0,0" Padding="4">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                                <RowDefinition />
-                            </Grid.RowDefinitions>
-
-                            <CheckBox Grid.ColumnSpan="2" Margin="4" IsChecked="{Binding VolumeLabelsOnSession}"
-                                      Content="Przy profilu wolumenowym sesji" />
-                            <CheckBox Grid.Column="2" Grid.ColumnSpan="2" Margin="4" IsChecked="{Binding VolumeLabelsOnPeriod}"
-                                      Content="Przy wolumenie bieżącego słupka" />
-
-                            <TextBlock Grid.Row="1" Text="Położenie liczby" />
-                            <ComboBox Grid.Row="1" Grid.Column="1" Width="170" HorizontalAlignment="Left" Margin="4"
-                                      ItemsSource="{Binding VolumeLabelPositions}" DisplayMemberPath="Value" SelectedValuePath="Key"
-                                      SelectedValue="{Binding VolumeLabelPosition}" />
-                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Krycie tekstu (%)" />
-                            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding VolumeLabelOpacity}" HorizontalAlignment="Left" />
-
-                            <TextBlock Grid.Row="2" Text="Wielkość czcionki" />
-                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding VolumeLabelFontSize}" HorizontalAlignment="Left" />
-                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Grubość czcionki" />
-                            <ComboBox Grid.Row="2" Grid.Column="3" Width="130" HorizontalAlignment="Left" Margin="4"
-                                      ItemsSource="{Binding FontWeights}" DisplayMemberPath="Value" SelectedValuePath="Key"
-                                      SelectedValue="{Binding VolumeLabelFontWeight}" />
-
-                            <TextBlock Grid.Row="3" Text="Kolor tekstu" />
-                            <controls:ColorPicker Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Color="{Binding VolumeLabelColor}" />
-                        </Grid>
-                    </GroupBox>
-
-                    <TextBlock Foreground="Gray" TextWrapping="Wrap" Margin="4,10,4,4"
-                               Text="To samo ustawienie („dla których profili”) jest też na pasku narzędzi okna głównego (Wolumen). Słupki mają wyraźniejszy obrys, więc są widoczne także przy niskim kryciu." />
-                </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
-            <!-- ===== Zakładka 3: kolory profili sesji dziennej i nocnej ===== -->
-            <TabItem Header="Kolory">
-                <StackPanel Margin="8">
-                    <GroupBox Header="Sesja dzienna" Padding="6">
-                        <ContentControl Content="{Binding DayColors}" />
-                    </GroupBox>
-                    <GroupBox Header="Sesja nocna" Padding="6" Margin="0,10,0,0">
-                        <ContentControl Content="{Binding NightColors}" />
-                    </GroupBox>
-
-                    <!-- Tryb Split: kreska na połowie każdego zakończonego słupka (okresu TPO). -->
-                    <GroupBox Header="Tryb Split – kreska połowy słupka" Padding="6" Margin="0,10,0,0">
-                        <StackPanel>
-                            <CheckBox Content="Rysuj kreskę na połowie każdego zakończonego okresu TPO"
-                                      IsChecked="{Binding MidlineEnabled}" Margin="4" />
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Kolor" />
-                                <controls:ColorPicker Color="{Binding MidlineColor}" />
-                                <TextBlock Text="Grubość (px)" Margin="12,4,4,4" />
-                                <TextBox Text="{Binding MidlineThickness}" Width="40" />
-                                <TextBlock Text="Krycie (%)" Margin="12,4,4,4" />
-                                <TextBox Text="{Binding MidlineOpacity}" Width="40"
-                                         ToolTip="100 = pełny kolor, mniej = bardziej przezroczysta kreska" />
+            <!-- Wygląd okna głównego. -->
+            <TabItem Header="  Szeroki rynek  " Padding="10,5">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <GroupBox Header="Instrument">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Indeks" Width="140" />
+                                    <ComboBox Width="120" IsEditable="True" ItemsSource="{Binding BroadMarketOptions}"
+                                              Text="{Binding BroadMarketSymbol, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Rynek szeroki – domyślnie SPX (indeks S&amp;P 500); dla instrumentów europejskich np. DAX. Do wyboru są tylko indeksy: świece dzienne pochodzą wyłącznie z sesji kasowej. Jego świece D/W/M są pobierane w tle i zapisywane w bazie, także bez zaznaczonego „Pobieraj dane”. Ten instrument pokazuje zakładka „Szeroki rynek” i przełącznik [instrument | rynek szeroki] na wykresie D/W/M." />
                             </StackPanel>
-                            <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="4,4,4,0"
-                                       Text="Kreska jest rysowana pod literami – litery TPO pozostają w pełni widoczne." />
-                        </StackPanel>
-                    </GroupBox>
-                </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Świece">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Świeca wzrostowa" Width="140" />
+                                    <controls:ColorPicker Color="{Binding BroadUpColor}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Świeca spadkowa" Width="140" />
+                                    <controls:ColorPicker Color="{Binding BroadDownColor}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Średnie kroczące">
+                            <StackPanel>
+                                <!-- Nagłówek kolumn. -->
+                                <Grid Margin="0,0,0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70" /><ColumnDefinition Width="80" /><ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="150" /><ColumnDefinition Width="100" /><ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Rysuj" Foreground="Gray" />
+                                    <TextBlock Grid.Column="1" Text="Rodzaj" Foreground="Gray" />
+                                    <TextBlock Grid.Column="2" Text="Okres (dni)" Foreground="Gray" />
+                                    <TextBlock Grid.Column="3" Text="Kolor" Foreground="Gray" />
+                                    <TextBlock Grid.Column="4" Text="Grubość (px)" Foreground="Gray" />
+                                    <TextBlock Grid.Column="5" Text="Styl linii" Foreground="Gray" />
+                                </Grid>
+                                <ItemsControl ItemsSource="{Binding BroadMovingAverages}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="70" /><ColumnDefinition Width="80" /><ColumnDefinition Width="90" />
+                                                    <ColumnDefinition Width="150" /><ColumnDefinition Width="100" /><ColumnDefinition Width="130" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" Margin="8,4" VerticalAlignment="Center" />
+                                                <ComboBox Grid.Column="1" Width="70" Margin="4" HorizontalAlignment="Left"
+                                                          ItemsSource="{Binding DataContext.MovingAverageKinds, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                          DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding Kind}" />
+                                                <TextBox Grid.Column="2" Text="{Binding Period}" Width="60" Margin="4" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" />
+                                                <controls:ColorPicker Grid.Column="3" Color="{Binding Color}" Margin="4" HorizontalAlignment="Left" />
+                                                <TextBox Grid.Column="4" Text="{Binding Thickness}" Width="45" Margin="4" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" />
+                                                <ComboBox Grid.Column="5" Width="120" Margin="4" HorizontalAlignment="Left"
+                                                          ItemsSource="{Binding DataContext.LineStyles, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                          DisplayMemberPath="Value" SelectedValuePath="Key" SelectedValue="{Binding LineStyle}" />
+                                                <Button Grid.Column="6" Content="✕ Usuń" Click="OnRemoveBroadMovingAverageClick" Padding="8,2"
+                                                        HorizontalAlignment="Left" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Content="+ Dodaj średnią" Click="OnAddBroadMovingAverageClick" />
+                                    <Button Content="Przywróć domyślne (EMA 8, EMA 21)" Click="OnResetBroadMarketChartClick"
+                                            ToolTip="Domyślne kolory świec i średnie: EMA 8 – jasnoniebieska kropkowana, EMA 21 – biała ciągła. Zapis dopiero po kliknięciu „Zapisz”." />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="EMA = wykładnicza średnia z cen zamknięcia ostatnich N dni (start od SMA z pierwszych N zamknięć, jak w TWS i TradingView); SMA = zwykła średnia. Wartości średnich pod kursorem są w opisie świecy u góry wykresu." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Oddech rynku (wiersz nad wykresem)">
+                            <StackPanel>
+                                <CheckBox Content="Pokazuj wskaźnik graficzny (pasek)" IsChecked="{Binding ShowBreathGauge}" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="Od otwarcia sesji kasowej (9:30 ET) sumowany jest rzeczywisty wolumen kupna i sprzedaży SPY – strona transakcji z notowań bid/ask (kupno = transakcja po ask, sprzedaż = po bid), a nie ze zmiany ceny. Wartość: przewaga kupna = kupno / sprzedaż (np. +1,25), przewaga sprzedaży = −(sprzedaż / kupno) (np. −1,25). Pasek: zielony dla wartości dodatnich, czerwony dla ujemnych, tym mocniejszy, im większa przewaga. Wymaga połączenia z IB w trybie „Na żywo” i danych SPY. Obok – drugi wskaźnik dla całej NYSE (dane IB VOL-NYSE): wolumen spółek rosnących do spadających względem wczorajszego zamknięcia, liczony tak samo (ze znakiem)." />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="Wiersze wskaźników">
+                            <TextBlock Style="{StaticResource Hint}" Margin="0"
+                                       Text="Nad wykresem: Oddech rynku. Pod wykresem dwa wiersze (D1, D2) – na razie wolne. Wiersze przesuwają się razem ze świecami (przewijanie, zoom, kursor)." />
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
-            <!-- ===== Zakładka: zegar bieżącego okresu TPO ===== -->
-            <TabItem Header="Zegar TPO">
-                <StackPanel Margin="8">
-                    <CheckBox Content="Pokazuj zegar bieżącego okresu TPO (na żywo i w symulacji)"
-                              IsChecked="{Binding TimerEnabled}" Margin="4" />
+            <TabItem Header="  Okno  " Padding="10,5">
+                <ScrollViewer>
+                    <StackPanel>
+                        <GroupBox Header="Kontrolki">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Rozmiar kontrolek" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                    <ComboBox Width="140" ItemsSource="{Binding ControlSizes}"
+                                              DisplayMemberPath="Value" SelectedValuePath="Key"
+                                              SelectedValue="{Binding ControlSize}" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0"
+                                           Text="Pasek narzędzi i pasek symulacji (przyciski, listy, pola czasu) – mniejsze zostawiają więcej miejsca na wykres." />
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
 
-                    <Grid Margin="0,6,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition />
-                            <RowDefinition />
-                            <RowDefinition />
-                            <RowDefinition />
-                        </Grid.RowDefinitions>
+            <TabItem Header="  Dane i broker  " Padding="10,5">
+                <TabControl Style="{StaticResource SubTabs}">
 
-                        <TextBlock Grid.Row="0" Text="Położenie" />
-                        <ComboBox Grid.Row="0" Grid.Column="1" Width="150" HorizontalAlignment="Left" Margin="4"
-                                  ItemsSource="{Binding TimerPositions}" DisplayMemberPath="Value" SelectedValuePath="Key"
-                                  SelectedValue="{Binding TimerPosition}" />
+                    <!-- Źródło danych i połączenie z Interactive Brokers -->
+                    <TabItem Header="Źródło i połączenie">
+                        <ScrollViewer>
+                            <StackPanel>
+                                <GroupBox Header="Źródło danych w trybie „Na żywo”">
+                                    <StackPanel>
+                                        <RadioButton Content="Interactive Brokers (TWS / IB Gateway)" IsChecked="{Binding UseInteractiveBrokers}" />
+                                        <RadioButton Content="Interactive Brokers – IBKR Web API (bez TWS, klucze OAuth)" IsChecked="{Binding UseIbWebApi}" />
+                                        <RadioButton Content="Generator losowych cen (do testów)" IsChecked="{Binding UseGeneratorLive}" />
+                                    </StackPanel>
+                                </GroupBox>
 
-                        <TextBlock Grid.Row="1" Text="Wielkość czcionki" />
-                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding TimerFontSize}" HorizontalAlignment="Left" />
+                                <!-- IBKR Web API: klucze OAuth. Wartości NIE są wiązane z modelem ani zapisywane w ustawieniach –
+                                     „Zapisz klucze” szyfruje je (DPAPI) do pliku w %AppData%\MarketProfile, poza repozytorium. -->
+                                <GroupBox Header="IBKR Web API – klucze OAuth 1.0a"
+                                          Visibility="{Binding UseIbWebApi, Converter={StaticResource BoolToVisibility}}">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding WebApiKeysStatus}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                        <Grid Margin="0,4,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="2" Text="Grubość czcionki" />
-                        <ComboBox Grid.Row="2" Grid.Column="1" Width="150" HorizontalAlignment="Left" Margin="4"
-                                  ItemsSource="{Binding FontWeights}" DisplayMemberPath="Value" SelectedValuePath="Key"
-                                  SelectedValue="{Binding TimerFontWeight}" />
+                                            <TextBlock Grid.Row="0" Text="Consumer key" />
+                                            <PasswordBox Grid.Row="0" Grid.Column="1" x:Name="WebApiConsumerKey" Width="260" Margin="4" HorizontalAlignment="Left" />
 
-                        <TextBlock Grid.Row="3" Text="Kolor czcionki" />
-                        <controls:ColorPicker Grid.Row="3" Grid.Column="1" Color="{Binding TimerColor}" />
-                    </Grid>
+                                            <TextBlock Grid.Row="1" Text="Access token" />
+                                            <PasswordBox Grid.Row="1" Grid.Column="1" x:Name="WebApiAccessToken" Width="260" Margin="4" HorizontalAlignment="Left" />
 
-                    <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="4,10,4,0"
-                               Text="Zegar pokazuje literę aktualnie rysowanego okresu TPO, jego przedział czasu i czas do końca okresu, np. „TPO F  10:00–10:30  ⏱ 12:34”. Czas liczony jest z danych: na żywo – z ostatniej transakcji, w symulacji – z zegara symulacji (w pauzie stoi)." />
-                </StackPanel>
+                                            <TextBlock Grid.Row="2" Text="Access token secret" />
+                                            <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="WebApiAccessTokenSecret" Width="400" Margin="4" HorizontalAlignment="Left" />
+
+                                            <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,2,0,2">
+                                                <Button Content="Klucz podpisu (.pem)…" Click="OnWebApiSignatureKeyClick" Margin="4,0,0,0" />
+                                                <Button Content="Klucz szyfrowania (.pem)…" Click="OnWebApiEncryptionKeyClick" Margin="4,0,0,0" />
+                                                <Button Content="dhparam.pem…" Click="OnWebApiDhParamClick" Margin="4,0,0,0" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock Text="{Binding WebApiKeyFilesText}" TextWrapping="Wrap" FontSize="11" Margin="4,0,4,4" />
+                                        <StackPanel Orientation="Horizontal" Margin="4">
+                                            <Button Content="Zapisz klucze (zaszyfrowane)" Click="OnWebApiSaveKeysClick" />
+                                            <Button Content="Usuń zapisane klucze" Click="OnWebApiDeleteKeysClick" Margin="6,0,0,0" />
+                                        </StackPanel>
+                                        <CheckBox Content="Przejmij sesję, gdy ten sam użytkownik jest zalogowany w TWS (TWS zostanie rozłączony)"
+                                                  IsChecked="{Binding IbWebApiCompete}" />
+                                        <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                                   Text="Puste pole lub niewybrany plik = zostaje wartość zapisana wcześniej. Klucze są szyfrowane przez Windows (tylko Twoje konto) w %AppData%\MarketProfile – nigdy w ustawieniach ani w repozytorium. Pliki .pem możesz po zapisaniu przenieść w bezpieczne miejsce." />
+                                        <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                                   Text="Ograniczenia Web API: brak historii ticków (w tle pobierane są tylko świece 1-min i D/W/M), transakcje na żywo składane z notowań (bez tick-by-tick), świece D/W/M futures tylko z bieżącego kontraktu. IBKR pozwala na jedną sesję na użytkownika – Web API i TWS na tym samym loginie się wykluczają." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- Ścieżka do biblioteki klienta TWS API – sprawdzana na bieżąco podczas wpisywania. -->
+                                <GroupBox Header="Biblioteka klienta TWS API (CSharpAPI.dll)">
+                                    <StackPanel>
+                                        <DockPanel>
+                                            <Button DockPanel.Dock="Right" Content="Wykryj" Margin="4,4,0,4" Click="OnIbAutoDetectClick"
+                                                    ToolTip="Szukaj folderu „TWS API” obok aplikacji i w C:\TWS API" />
+                                            <Button DockPanel.Dock="Right" Content="Przeglądaj…" Margin="4,4,0,4" Click="OnIbBrowseClick" />
+                                            <TextBox Text="{Binding IbApiPath, UpdateSourceTrigger=PropertyChanged}" Width="Auto"
+                                                     ToolTip="Plik CSharpAPI.dll albo folder, w którym ma być wyszukany (np. cały folder „TWS API”)" />
+                                        </DockPanel>
+                                        <TextBlock Text="{Binding IbApiStatus}" TextWrapping="Wrap" FontSize="11">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="Foreground" Value="Firebrick" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IbApiValid}" Value="True">
+                                                            <Setter Property="Foreground" Value="ForestGreen" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <GroupBox Header="Połączenie z TWS / IB Gateway">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Text="Adres" />
+                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding IbHost}" Width="140" HorizontalAlignment="Left" />
+
+                                        <TextBlock Grid.Row="1" Text="Port" />
+                                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                                            <TextBox Text="{Binding IbPort}" />
+                                            <TextBlock Style="{StaticResource Hint}" Text="TWS: 7497 demo / 7496 real, Gateway: 4002 / 4001" />
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Row="2" Text="Client ID" />
+                                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal">
+                                            <TextBox Text="{Binding IbClientId}" />
+                                            <TextBlock Style="{StaticResource Hint}" Text="pobieranie w tle używa Client ID + 1, test połączenia + 100" />
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Row="3" Text="Rodzaj danych" />
+                                        <ComboBox Grid.Row="3" Grid.Column="1" Width="320"
+                                                  ItemsSource="{Binding IbDataTypes}" DisplayMemberPath="Value" SelectedValuePath="Key"
+                                                  SelectedValue="{Binding IbDataType}" />
+
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource Hint}"
+                                                   Text="Symbol w IBKR, giełdę i miesiąc kontraktu futures ustawiasz przy instrumencie (zakładka „Instrumenty”)." />
+                                    </Grid>
+                                </GroupBox>
+
+                                <!-- Test połączenia: łączy, szuka kontraktu, czeka na notowanie i rozłącza. -->
+                                <GroupBox Header="Test">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="4">
+                                            <Button Content="Testuj połączenie" Click="OnIbTestClick" IsEnabled="{Binding CanTestIb}" />
+                                            <Button Content="Sprawdź historię ticków" Click="OnIbTickProbeClick" IsEnabled="{Binding CanTestIb}"
+                                                    ToolTip="Sprawdza w TWS, ile dni wstecz są dostępne ticki (transakcje) instrumentu z wykresu i ile trwałoby ich pobranie" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding IbTestResult}" TextWrapping="Wrap" />
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Aplikacja tylko pobiera dane – nie składa zleceń. W TWS musi być włączone API: Configure → API → Settings → Enable ActiveX and Socket Clients." />
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- Pobieranie historii i lokalna baza -->
+                    <TabItem Header="Pobieranie i baza">
+                        <ScrollViewer>
+                            <StackPanel>
+                                <GroupBox Header="Historia na wykresie">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Historia ładowana przed startem" />
+                                        <TextBox Text="{Binding HistoryDays}" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="dni" />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <GroupBox Header="Zapis i pobieranie w tle">
+                                    <StackPanel>
+                                        <CheckBox Content="Zapisuj dane od brokera do bazy (do późniejszych symulacji)"
+                                                  IsChecked="{Binding RecordToDatabase}" />
+                                        <Grid IsEnabled="{Binding RecordToDatabase}" Margin="20,0,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition /><RowDefinition />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Text="Dni historii świec 1-min" />
+                                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding BackgroundHistoryDays}" Width="50" />
+                                            <TextBlock Grid.Row="0" Grid.Column="2" Style="{StaticResource Hint}"
+                                                       Text="dla instrumentów z zaznaczonym „Pobieraj dane w tle” (Instrumenty → Dane)" />
+
+                                            <TextBlock Grid.Row="1" Text="Dni kompletnych ticków" />
+                                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding BackgroundTickDays}" Width="50"
+                                                     ToolTip="Symulacja z ticków odtwarza rynek dokładnie tak, jak wyglądał (kolejność i wolumen każdej transakcji). Okresy bez ticków są odtwarzane całymi świecami 1-min (z ostrzeżeniem)." />
+                                            <TextBlock Grid.Row="1" Grid.Column="2" Style="{StaticResource Hint}"
+                                                       Text="każda transakcja; 0 = tylko świece" />
+                                        </Grid>
+                                        <CheckBox Content="Pokazuj postęp pobierania w tle w polu informacji (doba, procent, komplet dni ticków) – błąd pobierania widać zawsze"
+                                                  IsChecked="{Binding ShowDownloadProgress}" Margin="4,8,4,4" />
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Po połączeniu z brokerem brakujące dni świec 1-min, a potem ticków są pobierane w tle (osobne połączenie, Client ID + 1) – od najnowszych dni, z kontynuacją po ponownym uruchomieniu. Ticki pobierają się powoli (limit IBKR 60 zapytań / 10 min, ok. 40 min na dzień ES); przycisk „Sprawdź historię ticków” (Źródło i połączenie) pokazuje szacunek." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <GroupBox Header="Lokalna baza danych">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding DatabaseInfo}" TextWrapping="Wrap" />
+                                        <TextBlock Style="{StaticResource Hint}" Text="{Binding DatabasePath}" />
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <!-- Generator losowych cen i dane testowe -->
+                    <TabItem Header="Generator i testy">
+                        <ScrollViewer>
+                            <StackPanel>
+                                <GroupBox Header="Generator losowych cen">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="Przyspieszenie w trybie „Na żywo”" />
+                                            <TextBox Text="{Binding SimulatorSpeed}" />
+                                            <TextBlock Style="{StaticResource Hint}" Text="×" />
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Działa, gdy źródłem danych jest generator (Źródło i połączenie). Cenę startową ustawia „Cena odniesienia” instrumentu." />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <GroupBox Header="Dane testowe w bazie">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="Wygeneruj dane testowe" Margin="4"
+                                                    IsEnabled="{Binding CanGenerate}" Click="OnGenerateTestDataClick" />
+                                            <TextBlock Text="dni:" Margin="12,4,4,4" />
+                                            <TextBox Text="{Binding TestDataDays}" Width="45" />
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="Dane testowe zastępują poprzednie dane testowe tego instrumentu. Dane od brokera nie są usuwane." />
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                </TabControl>
             </TabItem>
         </TabControl>
-
-        <!-- Komunikat o błędzie walidacji. -->
-        <TextBlock Text="{Binding Error}" Foreground="Firebrick" TextWrapping="Wrap" MaxWidth="420" />
-
-        <DockPanel Margin="0,10,0,0">
-            <Button DockPanel.Dock="Left" Content="Przywróć domyślny wygląd" Padding="8,2" Click="OnResetAppearanceClick"
-                    ToolTip="Przywraca domyślne kolory sesji i wygląd profilu wolumenowego" />
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Zapisz" Width="80" IsDefault="True" Click="OnSaveClick" />
-                <Button Content="Anuluj" Width="80" Margin="6,0,0,0" IsCancel="True" />
-            </StackPanel>
-        </DockPanel>
-    </StackPanel>
+    </DockPanel>
 </Window>

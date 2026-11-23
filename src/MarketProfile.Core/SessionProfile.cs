@@ -22,6 +22,12 @@ public sealed class SessionProfile
     // (wiersz, okres) -> wolumen.
     private readonly Dictionary<(decimal Row, int Period), long> _volume = new();
 
+    // (wiersz, okres) -> wolumen kupna i sprzedaży (tylko transakcje ze znaną stroną) – profil różnicowy (delta).
+    private readonly Dictionary<(decimal Row, int Period), (long Buy, long Sell)> _sideVolume = new();
+
+    // Minuta od początku sesji -> wolumen (do porównań wolumenu „do tej samej minuty” z poprzednią sesją).
+    private readonly SortedDictionary<int, long> _minuteVolume = new();
+
     // Numer okresu -> zakres cen i ostatnia cena w tym okresie.
     private readonly SortedDictionary<int, PeriodData> _periods = new();
 
@@ -88,10 +94,23 @@ public sealed class SessionProfile
     /// Pierwsza cena ruchu (dla świecy – jej otwarcie; dla ticka – cena ticka).
     /// Zapamiętywana jako cena otwarcia okresu, gdy jest to pierwszy ruch w tym okresie.
     /// </param>
-    public void AddPriceRange(int periodIndex, decimal low, decimal high, decimal lastPrice, long volume, decimal? openPrice = null)
+    /// <param name="minute">Minuta od początku sesji, w której był ruch (null = nieznana – wolumen tylko w okresie).</param>
+    /// <param name="side">
+    /// Strona transakcji (tylko dla ticka, gdzie low = high). Wolumen ze znaną stroną trafia także do delty wiersza;
+    /// świece i transakcje o nieznanej stronie liczą się tylko do wolumenu całkowitego.
+    /// </param>
+    public void AddPriceRange(int periodIndex, decimal low, decimal high, decimal lastPrice, long volume, decimal? openPrice = null,
+        int? minute = null, TradeSide side = TradeSide.Unknown)
     {
         lock (_sync)
         {
+            if (side != TradeSide.Unknown && volume > 0)
+            {
+                var key = (Settings.ToRowPrice(lastPrice), periodIndex);
+                var (buy, sell) = _sideVolume.GetValueOrDefault(key);
+                _sideVolume[key] = side == TradeSide.Buy ? (buy + volume, sell) : (buy, sell + volume);
+            }
+
             // 1. Aktualizujemy zakres cen okresu TPO (pierwszy ruch w okresie wyznacza jego cenę otwarcia).
             if (!_periods.TryGetValue(periodIndex, out var period))
             {
@@ -134,6 +153,11 @@ public sealed class SessionProfile
 
             AddVolume(Settings.ToRowPrice(lastPrice), periodIndex, volume - perRow * rowCount);
 
+            if (minute is { } m && volume > 0)
+            {
+                _minuteVolume[m] = _minuteVolume.GetValueOrDefault(m) + volume;
+            }
+
             _version++;
         }
 
@@ -146,6 +170,66 @@ public sealed class SessionProfile
         if (volume > 0)
         {
             _volume[(row, periodIndex)] = _volume.GetValueOrDefault((row, periodIndex)) + volume;
+        }
+    }
+
+    /// <summary>Wolumen co minutę sesji (minuta od początku sesji → wolumen); kopia – bezpieczna poza blokadą.</summary>
+    public IReadOnlyDictionary<int, long> GetMinuteVolumes()
+    {
+        lock (_sync)
+        {
+            return new SortedDictionary<int, long>(_minuteVolume);
+        }
+    }
+
+    /// <summary>Wolumen każdego okresu TPO (numer okresu → wolumen).</summary>
+    public IReadOnlyDictionary<int, long> GetPeriodVolumes()
+    {
+        lock (_sync)
+        {
+            var result = new SortedDictionary<int, long>();
+            foreach (var ((_, period), volume) in _volume)
+            {
+                result[period] = result.GetValueOrDefault(period) + volume;
+            }
+
+            return result;
+        }
+    }
+
+    /// <summary>Czy profil ma jakiekolwiek dane (okresy TPO).</summary>
+    public bool HasData
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _periods.Count > 0;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Dane do analizy tempa budowania TPO (<see cref="TpoTempo"/>): cena otwarcia sesji i zakres każdej litery
+    /// do okresu <paramref name="toPeriod"/> włącznie. Lżejsze niż pełna migawka.
+    /// </summary>
+    public TempoSession GetTempoSession(int toPeriod = int.MaxValue)
+    {
+        lock (_sync)
+        {
+            var periods = _periods
+                .Where(p => p.Key <= toPeriod)
+                .Select(p => new TpoPeriod(p.Key, GetPeriodStart(p.Key), GetPeriodStart(p.Key + 1), p.Value.High, p.Value.Low)
+                {
+                    Open = p.Value.Open,
+                    Close = p.Value.Close,
+                })
+                .ToList();
+            var open = _periods.Count > 0 ? _periods.First().Value.Open : 0;
+            return new TempoSession(Session.Name, SessionStart, Settings.TpoPeriod, Settings.RowHeight, open, periods)
+            {
+                SessionEnd = SessionEnd,
+            };
         }
     }
 
@@ -185,6 +269,20 @@ public sealed class SessionProfile
                 }
             }
 
+            // 2a. Kupno / sprzedaż wierszy (transakcje ze znaną stroną) – profil różnicowy.
+            var sideByRow = new Dictionary<decimal, (long Buy, long Sell)>();
+            long totalBuy = 0, totalSell = 0;
+            foreach (var ((row, period), (buy, sell)) in _sideVolume)
+            {
+                if (period >= fromPeriod && period <= toPeriod)
+                {
+                    var (b, s) = sideByRow.GetValueOrDefault(row);
+                    sideByRow[row] = (b + buy, s + sell);
+                    totalBuy += buy;
+                    totalSell += sell;
+                }
+            }
+
             // 3. Budujemy ciągłą listę wierszy od najniższego do najwyższego (puste wiersze też, z 0 TPO),
             //    bo algorytm Value Area rozszerza obszar wiersz po wierszu.
             var levels = new List<PriceLevel>();
@@ -196,14 +294,23 @@ public sealed class SessionProfile
                 for (var row = minRow; row <= maxRow; row += rowHeight)
                 {
                     IReadOnlyList<int> periods = filtered.TryGetValue(row, out var list) ? list : [];
-                    levels.Add(new PriceLevel(row, periods, volumeByRow.GetValueOrDefault(row)));
+                    var (buy, sell) = sideByRow.GetValueOrDefault(row);
+                    levels.Add(new PriceLevel(row, periods, volumeByRow.GetValueOrDefault(row))
+                    {
+                        BuyVolume = buy,
+                        SellVolume = sell,
+                    });
                 }
             }
 
             // 4. Okresy TPO z zakresu.
             var periodList = _periods
                 .Where(p => p.Key >= fromPeriod && p.Key <= toPeriod)
-                .Select(p => new TpoPeriod(p.Key, GetPeriodStart(p.Key), GetPeriodStart(p.Key + 1), p.Value.High, p.Value.Low))
+                .Select(p => new TpoPeriod(p.Key, GetPeriodStart(p.Key), GetPeriodStart(p.Key + 1), p.Value.High, p.Value.Low)
+                {
+                    Open = p.Value.Open,
+                    Close = p.Value.Close,
+                })
                 .ToList();
 
             // 4a. Wolumen bieżącego (ostatniego) okresu tej części – profil wolumenowy aktualnie budowanego słupka TPO.
@@ -214,6 +321,28 @@ public sealed class SessionProfile
                 if (period == currentPeriod && volume > 0)
                 {
                     currentVolume[row] = currentVolume.GetValueOrDefault(row) + volume;
+                }
+            }
+
+            // 4a'. Delta bieżącego okresu (profil różnicowy bieżącego słupka).
+            var currentDelta = new Dictionary<decimal, long>();
+            foreach (var ((row, period), (buy, sell)) in _sideVolume)
+            {
+                if (period == currentPeriod && buy + sell > 0)
+                {
+                    currentDelta[row] = currentDelta.GetValueOrDefault(row) + buy - sell;
+                }
+            }
+
+            // 4b. Największy wolumen wiersza w każdym ZAKOŃCZONYM okresie tej części (bez bieżącego) –
+            //     odniesienie dla skali profilu wolumenowego bieżącego słupka.
+            var completedMax = new SortedDictionary<int, long>();
+            foreach (var ((_, period), volume) in _volume)
+            {
+                if (period >= fromPeriod && period <= toPeriod && period != currentPeriod &&
+                    volume > completedMax.GetValueOrDefault(period))
+                {
+                    completedMax[period] = volume;
                 }
             }
 
@@ -257,6 +386,11 @@ public sealed class SessionProfile
                 TotalVolume = totalVolume,
                 CurrentPeriodIndex = currentPeriod,
                 CurrentPeriodVolume = currentVolume,
+                CurrentPeriodDelta = currentDelta,
+                TotalBuyVolume = totalBuy,
+                TotalSellVolume = totalSell,
+                MaxRowAbsDelta = levels.Count > 0 ? levels.Max(l => Math.Abs(l.Delta)) : 0,
+                CompletedPeriodMaxVolumes = [.. completedMax.Values],
                 Version = _version,
             };
         }

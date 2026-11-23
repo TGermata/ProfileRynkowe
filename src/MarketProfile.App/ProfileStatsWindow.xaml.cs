@@ -1,0 +1,302 @@
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Threading;
+using MarketProfile.App.ViewModels;
+using MarketProfile.Core;
+
+namespace MarketProfile.App;
+
+/// <summary>
+/// Okno „Parametry profili”: tabela parametrów profili bieżącego instrumentu (zapisane w bazie + bieżące z pamięci),
+/// filtr po sesji i datach, eksport CSV. Podwójne kliknięcie wiersza pokazuje profil na wykresie.
+/// </summary>
+public partial class ProfileStatsWindow : Window
+{
+    private readonly MainViewModel _viewModel;
+    private readonly Func<string, DateTime, bool> _showProfile;
+    private readonly Action _clearHighlight;
+    private bool _refreshing;   // zaznaczenie ustawia odświeżanie tabeli, nie użytkownik – bez przesuwania wykresu
+    private readonly DispatcherTimer _refreshTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private bool _dirty;
+    private bool _loaded;
+
+    /// <param name="viewModel">Model widoku okna głównego (źródło parametrów).</param>
+    /// <param name="showProfile">Pokazuje i podświetla profil (sesja, początek sesji) na wykresie; false = profilu nie ma na wykresie.</param>
+    /// <param name="clearHighlight">Usuwa podświetlenie profilu (po zamknięciu okna).</param>
+    /// <summary>Pomoc – opis parametrów (EN wg Daltona i PL).</summary>
+    private void OnHelpClick(object sender, RoutedEventArgs e) => HelpWindow.ShowHelp(this);
+
+    /// <summary>F1 – pomoc.</summary>
+    private void OnWindowPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.F1)
+        {
+            HelpWindow.ShowHelp(this);
+            e.Handled = true;
+        }
+    }
+
+    public ProfileStatsWindow(MainViewModel viewModel, Func<string, DateTime, bool> showProfile, Action clearHighlight)
+    {
+        InitializeComponent();
+        _viewModel = viewModel;
+        DayOnly.IsChecked = viewModel.ProfileStatsDayOnly; // przed Loaded – bez odświeżania tabeli
+        SessionFilter.IsEnabled = DayOnly.IsChecked != true;
+        _showProfile = showProfile;
+        _clearHighlight = clearHighlight;
+
+        // Odświeżanie na bieżąco – najwyżej co 2 s (parametry bieżącego profilu zmieniają się z każdą transakcją).
+        _viewModel.ProfileStatsUpdated += OnStatsUpdated;
+        _refreshTimer.Tick += (_, _) =>
+        {
+            if (_dirty && AutoRefresh.IsChecked == true)
+            {
+                Refresh();
+            }
+        };
+        _refreshTimer.Start();
+
+        Loaded += (_, _) =>
+        {
+            _loaded = true;
+            Refresh();
+        };
+        Closed += (_, _) =>
+        {
+            _refreshTimer.Stop();
+            _viewModel.ProfileStatsUpdated -= OnStatsUpdated;
+            _clearHighlight();
+        };
+    }
+
+    private void OnStatsUpdated(object? sender, IReadOnlyList<ProfileStats> e) => _dirty = true;
+
+    private void OnFilterChanged(object sender, EventArgs e)
+    {
+        if (DayOnly is not null && SessionFilter is not null)
+        {
+            SessionFilter.IsEnabled = DayOnly.IsChecked != true; // „tylko dzienne” zastępuje wybór sesji
+            if (_loaded)
+            {
+                _viewModel.ProfileStatsDayOnly = DayOnly.IsChecked == true;
+            }
+        }
+
+        if (_loaded)
+        {
+            Refresh();
+        }
+    }
+
+    private void OnRefreshClick(object sender, RoutedEventArgs e) => Refresh();
+
+    /// <summary>Wiersze wg filtrów: najnowsze profile na górze.</summary>
+    private List<ProfileStatsRow> LoadRows()
+    {
+        var from = FromDate.SelectedDate is { } f ? DateOnly.FromDateTime(f) : (DateOnly?)null;
+        var to = ToDate.SelectedDate is { } t ? DateOnly.FromDateTime(t) : (DateOnly?)null;
+        var session = DayOnly.IsChecked == true ? SessionNames.Day : (SessionFilter.SelectedItem as ComboBoxItem)?.Content as string;
+        var tick = _viewModel.Settings.Instrument.TickSize;
+
+        return _viewModel.GetProfileStatsForView(from, to)
+            .Where(s => session is null or "Wszystkie" || s.Session == session)
+            .OrderByDescending(s => s.SessionStart)
+            .Select(s => new ProfileStatsRow(s, tick, s.IsDaySession ? _viewModel.GetSettlement(s.TradingDate) : null))
+            .ToList();
+    }
+
+    private void Refresh()
+    {
+        _dirty = false;
+        var selected = (Grid.SelectedItem as ProfileStatsRow)?.Stats;
+        var rows = LoadRows();
+        _refreshing = true;
+        try
+        {
+            Grid.ItemsSource = rows;
+            if (selected is not null)
+            {
+                Grid.SelectedItem = rows.FirstOrDefault(r => r.Stats.Session == selected.Session && r.Stats.SessionStart == selected.SessionStart);
+            }
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+
+        SymbolText.Text = $"Instrument: {_viewModel.ProfileStatsSymbol}";
+        FooterText.Text = $"Profili: {rows.Count}. {InventorySummary(rows)}Zakończone sesje są zapisywane w bazie (tabela profile_stats w pliku data\\marketdata.db) – " +
+                          "algorytm może je czytać bezpośrednio z bazy albo z eksportu CSV. Bieżąca sesja na żywo jest zapisywana po każdej literze. " +
+                          "Najedź na nagłówek kolumny – krótki opis parametru; pełny opis (EN wg Daltona i PL) – „? Pomoc” albo F1. Kliknięcie wiersza – pokaż i podświetl profil na wykresie (kolor i krycie: Ustawienia → Profile → Linie i znaczniki).";
+    }
+
+    /// <summary>
+    /// Statystyka wyrównania inwentarza z otwarcia w widocznych, zakończonych sesjach dziennych – do porównania z założonymi
+    /// ok. 65%, np. „Inwentarz wyrównany: 41 z 62 dni (66%) – długi 22/33, krótki 19/29.”
+    /// </summary>
+    private static string InventorySummary(IReadOnlyList<ProfileStatsRow> rows)
+    {
+        var days = rows.Select(r => r.Stats)
+            .Where(s => s is { IsDaySession: true, IsComplete: true, InventoryCorrected: not null })
+            .ToList();
+        if (days.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        string Part(OpeningInventory kind) =>
+            $"{days.Count(s => s.Inventory == kind && s.InventoryCorrected == true)}/{days.Count(s => s.Inventory == kind)}";
+
+        var corrected = days.Count(s => s.InventoryCorrected == true);
+        return $"Inwentarz wyrównany: {corrected} z {days.Count} dni ({(double)corrected / days.Count:P0}) – " +
+               $"długi {Part(OpeningInventory.Long)}, krótki {Part(OpeningInventory.Short)}. ";
+    }
+
+    /// <summary>Kliknięcie wiersza (zmiana zaznaczenia przez użytkownika) – pokaż i podświetl profil na wykresie.</summary>
+    private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_refreshing)
+        {
+            ShowSelected();
+        }
+    }
+
+    private void OnRowDoubleClick(object sender, MouseButtonEventArgs e) => ShowSelected();
+
+    private void ShowSelected()
+    {
+        if (Grid.SelectedItem is not ProfileStatsRow row)
+        {
+            return;
+        }
+
+        // Informacja nad tabelą zamiast okna komunikatu – kliknięcie wiersza nie może za każdym razem blokować pracy.
+        if (!_showProfile(row.Stats.Session, row.Stats.SessionStart))
+        {
+            _clearHighlight();
+            NoticeText.Text = $"{row.Date} {row.Session}: tego profilu nie ma teraz na wykresie – jest poza wczytaną historią " +
+                              "albo jego sesja jest ukryta. Przewiń wykres w lewo (doczyta się starsza historia) albo włącz sesję na pasku narzędzi.";
+            NoticeText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            NoticeText.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>Prawy klik zaznacza wiersz pod kursorem (menu dotyczy tego wiersza).</summary>
+    private void OnGridRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        for (var current = e.OriginalSource as DependencyObject; current is not null;
+             current = System.Windows.Media.VisualTreeHelper.GetParent(current))
+        {
+            if (current is DataGridRow row)
+            {
+                row.IsSelected = true;
+                return;
+            }
+        }
+    }
+
+    /// <summary>Menu wiersza: SETTLE tylko dla zakończonych sesji dziennych.</summary>
+    private void OnGridContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        var row = Grid.SelectedItem as ProfileStatsRow;
+        var canEdit = row is { Stats.IsDaySession: true, Stats.IsComplete: true };
+        SettleMenuItem.IsEnabled = canEdit;
+        RemoveSettleMenuItem.IsEnabled = canEdit && row!.Stats.SettleSource == Settlement.SourceManual;
+    }
+
+    private void OnEditSettleClick(object sender, RoutedEventArgs e)
+    {
+        if (Grid.SelectedItem is ProfileStatsRow row &&
+            SettleWindow.Edit(this, _viewModel, row.Stats.TradingDate, row.Stats.Close))
+        {
+            Refresh();
+        }
+    }
+
+    private void OnRemoveSettleClick(object sender, RoutedEventArgs e)
+    {
+        if (Grid.SelectedItem is ProfileStatsRow row)
+        {
+            _viewModel.RemoveSettlement(row.Stats.TradingDate);
+            Refresh();
+        }
+    }
+
+    /// <summary>Eksport widocznych wierszy do CSV: liczby jak w bazie (kropka dziesiętna), separator średnik.</summary>
+    private void OnExportClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "Eksport parametrów profili",
+            Filter = "Plik CSV (*.csv)|*.csv",
+            FileName = $"profile_stats_{_viewModel.ProfileStatsSymbol}_{DateTime.Now:yyyyMMdd}.csv",
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var rows = (Grid.ItemsSource as IEnumerable<ProfileStatsRow> ?? []).Select(r => r.Stats).OrderBy(s => s.SessionStart);
+        File.WriteAllText(dialog.FileName, ToCsv(_viewModel.ProfileStatsSymbol, rows), new UTF8Encoding(true));
+    }
+
+    internal static string ToCsv(string symbol, IEnumerable<ProfileStats> stats)
+    {
+        static string N(decimal? v) => v?.ToString("0.########", CultureInfo.InvariantCulture) ?? string.Empty;
+        static string D(double? v) => v?.ToString("0.###", CultureInfo.InvariantCulture) ?? string.Empty;
+        static string L(IEnumerable<decimal> values) => string.Join("|", values.Select(v => N(v)));
+
+        var csv = new StringBuilder();
+        csv.AppendLine(string.Join(";",
+            "symbol", "session", "trading_date", "session_start", "is_complete", "periods", "last_letter",
+            "open", "high", "low", "close", "range", "total_TPO", "volume", "POC", "VPOC", "VAH", "VAL", "VA_width", "POC_position",
+            "IBH", "IBL", "IB_width", "IB_ext_up", "IB_ext_up_letter", "IB_ext_down", "IB_ext_down_letter", "IB_ext",
+            "shape", "TPO_above_POC", "TPO_below_POC", "single_prints", "excess_high", "excess_low", "poor_high", "poor_low",
+            "prev_trading_date", "open_vs_prev_VA", "open_type", "open_direction", "value_migration", "VA_overlap",
+            "naked_POCs", "naked_VPOCs",
+            "HB", "SETTLE", "SETTLE_source", "prev_close", "prev_SETTLE", "prev_HB", "GAP",
+            "open_vs_prev_HB", "ONH", "ONL", "ONPOC", "open_vs_overnight",
+            "inventory", "inventory_size", "inventory_corrected", "inventory_corrected_letter",
+            "trend_direction", "is_trend_day", "trend_from", "trend_to", "trend_periods",
+            "PBL", "PBH", "PB_letter"));
+
+        foreach (var s in stats)
+        {
+            csv.AppendLine(string.Join(";",
+                symbol, s.Session, s.TradingDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                s.SessionStart.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture), s.IsComplete ? "1" : "0",
+                s.Periods.ToString(CultureInfo.InvariantCulture), s.LastLetter?.ToString() ?? string.Empty,
+                N(s.Open), N(s.High), N(s.Low), N(s.Close), N(s.Range), s.TotalTpo.ToString(CultureInfo.InvariantCulture),
+                s.Volume.ToString(CultureInfo.InvariantCulture), N(s.Poc), N(s.VolumePoc), N(s.ValueAreaHigh), N(s.ValueAreaLow),
+                N(s.ValueAreaWidth), D(s.PocPosition), N(s.IbHigh), N(s.IbLow), N(s.IbWidth),
+                N(s.IbExtensionUp), s.IbExtensionUpLetter?.ToString() ?? string.Empty,
+                N(s.IbExtensionDown), s.IbExtensionDownLetter?.ToString() ?? string.Empty, s.IbExtension.ToString(),
+                s.ShapeCode, s.TpoAbovePoc.ToString(CultureInfo.InvariantCulture), s.TpoBelowPoc.ToString(CultureInfo.InvariantCulture),
+                string.Join("|", s.SinglePrints.Select(r => $"{N(r.Low)}-{N(r.High)}")),
+                s.ExcessHigh.ToString(CultureInfo.InvariantCulture), s.ExcessLow.ToString(CultureInfo.InvariantCulture),
+                s.PoorHigh ? "1" : "0", s.PoorLow ? "1" : "0",
+                s.PreviousTradingDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty,
+                s.OpenVsPreviousValue.ToString(), s.OpenType.ToString(), s.OpenDirection.ToString(CultureInfo.InvariantCulture),
+                s.ValueMigration.ToString(), D(s.ValueAreaOverlap), L(s.NakedPocs), L(s.NakedVolumePocs),
+                N(s.Halfback), N(s.Settle), s.SettleSource ?? string.Empty, N(s.PreviousClose), N(s.PreviousSettle),
+                N(s.PreviousHalfback), N(s.Gap), s.OpenVsPreviousHb.ToString(CultureInfo.InvariantCulture),
+                N(s.OvernightHigh), N(s.OvernightLow), N(s.OvernightPoc), s.OpenVsOvernight.ToString(),
+                s.Inventory.ToString(), N(s.InventorySize),
+                s.InventoryCorrected is { } corrected ? corrected ? "1" : "0" : string.Empty,
+                s.InventoryCorrectedLetter?.ToString() ?? string.Empty,
+                s.TrendDirection.ToString(CultureInfo.InvariantCulture), s.IsTrendDay ? "1" : "0",
+                s.TrendFrom?.ToString() ?? string.Empty, s.TrendTo?.ToString() ?? string.Empty,
+                s.TrendPeriods.ToString(CultureInfo.InvariantCulture), N(s.PullbackLow), N(s.PullbackHigh),
+                s.PullbackLetter?.ToString() ?? string.Empty));
+        }
+
+        return csv.ToString();
+    }
+}

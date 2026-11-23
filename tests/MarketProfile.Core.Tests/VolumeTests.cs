@@ -56,4 +56,28 @@ public class VolumeTests
         Assert.Equal(7, snapshot.MaxCurrentPeriodVolume);
         Assert.Equal(60, snapshot.TotalVolume);
     }
+
+    [Fact]
+    public void Migawka_MaksimaZakonczonychOkresow_BezBiezacego()
+    {
+        var builder = new ProfileBuilder(new ProfileSettings { TicksPerRow = 4 }); // wiersz = 1 punkt
+        builder.ProcessTick(TickAt(9, 35, 100m, 50));   // A: wiersz 100 = 50
+        builder.ProcessTick(TickAt(9, 40, 101m, 20));   // A: wiersz 101 = 20 → maksimum A = 50
+        builder.ProcessTick(TickAt(10, 5, 101m, 7));    // B: 7
+        builder.ProcessTick(TickAt(10, 10, 101m, 8));   // B: wiersz 101 = 15 → maksimum B = 15
+        builder.ProcessTick(TickAt(10, 35, 102m, 999)); // C – bieżący, nie wchodzi do listy
+
+        var snapshot = builder.Profiles.Single(p => p.Session.Name == "Dzienna").GetSnapshot();
+
+        Assert.Equal([50L, 15L], snapshot.CompletedPeriodMaxVolumes);
+    }
+
+    [Fact]
+    public void Mediana()
+    {
+        Assert.Equal(0, ProfileCalculator.Median([]));
+        Assert.Equal(7, ProfileCalculator.Median([7]));
+        Assert.Equal(20, ProfileCalculator.Median([100, 10, 20]));       // nieparzysta liczba – środkowa
+        Assert.Equal(15, ProfileCalculator.Median([10, 20, 5, 1000]));   // parzysta – średnia dwóch środkowych
+    }
 }

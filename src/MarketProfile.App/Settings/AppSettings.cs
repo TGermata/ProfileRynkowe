@@ -60,6 +60,25 @@ public sealed record AppSettings
     /// <summary>Ostatnio ustawiona prędkość symulacji (60 = 1 s to 1 minuta danych).</summary>
     public double SimSpeed { get; init; } = 60;
 
+    /// <summary>
+    /// Czas końca symulacji – "yyyy-MM-dd HH:mm" w strefie instrumentu. Pusty = odtwarzanie bez ograniczeń
+    /// (do końca danych w bazie). Po dojściu do tego momentu symulacja się wstrzymuje.
+    /// </summary>
+    public string SimEnd { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Dokładny moment (format ISO 8601 „o”), w którym symulację wstrzymano przy przejściu do trybu „Na żywo” –
+    /// po powrocie do symulacji wykres wraca do tego miejsca (w pauzie). Pusty = brak zapamiętanego punktu.
+    /// </summary>
+    public string SimResumeAt { get; init; } = string.Empty;
+
+    /// <summary>Instrument, którego dotyczy <see cref="SimResumeAt"/>.</summary>
+    public string SimResumeSymbol { get; init; } = string.Empty;
+
+    /// <summary>Moment z <see cref="SimResumeAt"/>, jeśli jest zapisany poprawnie.</summary>
+    public DateTimeOffset? ParseSimResumeAt() =>
+        DateTimeOffset.TryParseExact(SimResumeAt, "o", CultureInfo.InvariantCulture, DateTimeStyles.None, out var at) ? at : null;
+
     // --- Interactive Brokers ---
 
     /// <summary>Źródło danych w trybie „Na żywo”: generator losowych cen albo Interactive Brokers.</summary>
@@ -88,6 +107,16 @@ public sealed record AppSettings
     [JsonConverter(typeof(JsonStringEnumConverter<IbDataType>))]
     public IbDataType IbDataType { get; init; } = IbDataType.Delayed;
 
+    /// <summary>
+    /// IBKR Web API: przejmij sesję brokerską, gdy ten sam użytkownik jest zalogowany gdzie indziej (np. w TWS – zostanie rozłączony).
+    /// Klucze OAuth NIE są w ustawieniach – są zaszyfrowane w osobnym pliku (IbWebCredentialStore).
+    /// </summary>
+    public bool IbWebApiCompete { get; init; }
+
+    /// <summary>Czy źródłem danych jest Interactive Brokers (przez TWS API albo Web API).</summary>
+    [JsonIgnore]
+    public bool UsesInteractiveBrokers => LiveSource is LiveSourceKind.InteractiveBrokers or LiveSourceKind.InteractiveBrokersWebApi;
+
     /// <summary>Parametry połączenia z IB w postaci używanej przez źródło danych.</summary>
     public IbConnectionSettings ToIbSettings() => new()
     {
@@ -95,10 +124,125 @@ public sealed record AppSettings
         Port = IbPort,
         ClientId = IbClientId,
         DataType = IbDataType,
+        UseWebApi = LiveSource == LiveSourceKind.InteractiveBrokersWebApi,
+        WebApiCompete = IbWebApiCompete,
     };
 
     /// <summary>Czy zapisywać dane od brokera (ticki i świece) w lokalnej bazie do późniejszych symulacji.</summary>
     public bool RecordToDatabase { get; init; } = true;
+
+    /// <summary>
+    /// Ile dni historii (świece 1-min) trzymać w bazie dla instrumentów z zaznaczonym „Pobieraj dane”.
+    /// Brakujące dni są pobierane w tle po połączeniu z brokerem.
+    /// </summary>
+    public int BackgroundHistoryDays { get; init; } = 20;
+
+    /// <summary>
+    /// Ile ostatnich dni kompletnych ticków (każda transakcja) pobierać w tle dla instrumentów z „Pobieraj dane”
+    /// – symulacja odtwarza wtedy rynek dokładnie tak, jak wyglądał. 0 = tylko świece 1-min.
+    /// Pobieranie ticków jest powolne (limity zapytań IB: ok. 40 min na dzień handlowy ES).
+    /// </summary>
+    public int BackgroundTickDays { get; init; } = 5;
+
+    /// <summary>Czy pokazywać na wykresie wskaźnik tempa budowania TPO (ze wskazówką).</summary>
+    public bool TempoGauge { get; init; } = true;
+
+    /// <summary>Położenie wskaźnika tempa na wykresie.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<TempoGaugePosition>))]
+    public TempoGaugePosition TempoGaugePosition { get; init; } = TempoGaugePosition.UnderTimer;
+
+    /// <summary>Czy pokazywać linię z tempem (wartość, stan, ostatnie zatrzymanie) w pasku na dole okna.</summary>
+    public bool TempoInStatusBar { get; init; } = true;
+
+    /// <summary>
+    /// Czy pokazywać w polu informacji postęp pobierania w tle (doba, procent, komplet dni ticków).
+    /// Domyślnie nie – pole informacji pokazuje tylko problemy (błąd pobierania – zawsze).
+    /// </summary>
+    public bool ShowDownloadProgress { get; init; }
+
+    /// <summary>Rozmiar kontrolek pasków (narzędzia i symulacja): małe / normalne / duże.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<ControlSize>))]
+    public ControlSize ControlSize { get; init; } = ControlSize.Normal;
+
+    /// <summary>Kursor z liniami ceny i czasu na wykresie TPO (panel narzędzi, klawisz C).</summary>
+    public bool ShowCrosshair { get; init; }
+
+    /// <summary>Położenie panelu narzędzi na wykresie TPO (od lewego górnego rogu wykresu).</summary>
+    public double ToolPanelLeft { get; init; } = 12;
+
+    /// <summary>Położenie panelu narzędzi na wykresie TPO – odległość od góry wykresu.</summary>
+    public double ToolPanelTop { get; init; } = 48;
+
+    /// <summary>Czy panel narzędzi jest zwinięty (widać tylko jego nagłówek).</summary>
+    public bool ToolPanelCollapsed { get; init; }
+
+    /// <summary>Opisy analizy na profilach dziennych (menu „Wyświetlanie” nad wykresem TPO).</summary>
+    public ChartNotesStyle Notes { get; init; } = new();
+
+    /// <summary>Alarmy dźwiękowe poziomów cenowych (menu „Wyświetlanie”).</summary>
+    public PriceAlertsSettings PriceAlerts { get; init; } = new();
+
+    /// <summary>Położenie menu „Wyświetlanie” na wykresie TPO.</summary>
+    public double DisplayPanelLeft { get; init; } = 12;
+
+    /// <summary>Położenie menu „Wyświetlanie” – odległość od góry wykresu.</summary>
+    public double DisplayPanelTop { get; init; } = 96;
+
+    /// <summary>Czy menu „Wyświetlanie” jest zwinięte (domyślnie tak – nie zasłania wykresu).</summary>
+    public bool DisplayPanelCollapsed { get; init; } = true;
+
+    /// <summary>Tabela „Parametry profili”: pokazuj tylko profile sesji dziennych (najważniejsze w analizie).</summary>
+    public bool ProfileStatsDayOnly { get; init; } = true;
+
+    /// <summary>Symulacja: karta „Otwarcie” przy nowym profilu (inwentarz, położenie otwarcia, GAP…).</summary>
+    public bool ShowOpeningCard { get; init; } = true;
+
+    /// <summary>
+    /// Karta „Otwarcie”: inwentarz jest istotny (strzałka kierunku korekty), gdy |Open − SETTLE poprz. dnia| wynosi co najmniej
+    /// tyle procent zakresu (High − Low) poprzedniego dnia; mniejszy odstęp – bez znaczenia.
+    /// </summary>
+    public int InventorySignificantPercent { get; init; } = 15;
+
+    /// <summary>Położenie karty „Otwarcie” na wykresie TPO.</summary>
+    public double OpeningPanelLeft { get; init; } = 12;
+
+    /// <summary>Położenie karty „Otwarcie” – odległość od góry wykresu.</summary>
+    public double OpeningPanelTop { get; init; } = 150;
+
+    /// <summary>Czy kody produktów CME (do pobierania SETTLE) zostały już uzupełnione w zapisanej liście instrumentów.</summary>
+    public bool CmeDefaultsApplied { get; init; }
+
+    /// <summary>Skala pasków dla <see cref="ControlSize"/>.</summary>
+    [JsonIgnore]
+    public double ControlScale => ControlSize switch
+    {
+        ControlSize.Small => 0.85,
+        ControlSize.Large => 1.2,
+        _ => 1.0,
+    };
+
+    /// <summary>
+    /// Czy wykonano jednorazowe zaznaczenie „Pobieraj dane” dla ES i NQ w ustawieniach zapisanych przez
+    /// wcześniejsze wersje (wtedy tej opcji nie było).
+    /// </summary>
+    public bool DownloadDefaultsApplied { get; init; }
+
+    /// <summary>Instrumenty, których historia jest pobierana w tle.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<Instrument> DownloadInstruments => Instruments.Where(i => i.DownloadData).ToList();
+
+    /// <summary>
+    /// Czy zmiana ustawień wymaga ponownego uruchomienia pobierania w tle
+    /// (inne instrumenty, liczba dni albo parametry połączenia z brokerem).
+    /// </summary>
+    public bool RequiresDownloadRestart(AppSettings other) =>
+        BackgroundHistoryDays != other.BackgroundHistoryDays || BackgroundTickDays != other.BackgroundTickDays ||
+        RecordToDatabase != other.RecordToDatabase ||
+        LiveSource != other.LiveSource || IbApiPath != other.IbApiPath || IbHost != other.IbHost ||
+        IbPort != other.IbPort || IbClientId != other.IbClientId || IbDataType != other.IbDataType ||
+        IbWebApiCompete != other.IbWebApiCompete ||
+        !DownloadInstruments.SequenceEqual(other.DownloadInstruments) ||
+        !Equals(BroadMarketInstrument, other.BroadMarketInstrument);
 
     /// <summary>Ile dni danych testowych generować do bazy.</summary>
     public int TestDataDays { get; init; } = 5;
@@ -115,6 +259,10 @@ public sealed record AppSettings
     /// <summary>Dla których profili rysować profil wolumenowy.</summary>
     [JsonConverter(typeof(JsonStringEnumConverter<VolumeProfileMode>))]
     public VolumeProfileMode VolumeProfile { get; init; } = VolumeProfileMode.Current;
+
+    /// <summary>Rodzaj profilu wolumenowego: tradycyjny (wolumen całkowity) albo różnicowy (delta kupno − sprzedaż).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<VolumeDisplayKind>))]
+    public VolumeDisplayKind VolumeDisplay { get; init; } = VolumeDisplayKind.Total;
 
     /// <summary>Wygląd profilu wolumenowego (odległość, długość, kierunek, kolory).</summary>
     public VolumeProfileStyle VolumeStyle { get; init; } = new();
@@ -146,8 +294,30 @@ public sealed record AppSettings
     /// <summary>Linia HalfBack – połowa wysokości profilu (włączenie, styl linii, kolor, grubość, krycie).</summary>
     public HalfBackStyle HalfBack { get; init; } = new();
 
+    /// <summary>Podświetlenie tła profilu wybranego w tabeli „Parametry profili” (kolor, krycie).</summary>
+    public ProfileHighlightStyle SelectedProfileHighlight { get; init; } = new();
+
     /// <summary>Zegar bieżącego okresu TPO na wykresie (położenie, czcionka, kolor).</summary>
     public PeriodTimerStyle PeriodTimer { get; init; } = new();
+
+    /// <summary>Wykres D/W/M: rodzaj prezentacji, kolory, wolumen i średnie kroczące.</summary>
+    public CandleChartStyle CandleChart { get; init; } = new();
+
+    /// <summary>Średnie dzienne (wartości „na dziś”) jako linie na wykresie TPO.</summary>
+    public TpoAveragesStyle TpoAverages { get; init; } = new();
+
+    /// <summary>Zakładka „Szeroki rynek”: dzienny wykres rynku szerokiego (SPX) – kolory świec i średnie kroczące.</summary>
+    public BroadMarketChartStyle BroadMarketChart { get; init; } = new();
+
+    /// <summary>
+    /// Symbol „rynku szerokiego” (domyślnie SPX) – na wykresie D/W/M można przełączyć się z instrumentu na ten
+    /// instrument; jego świece D/W/M są pobierane w tle i zapisywane w bazie (do analiz).
+    /// </summary>
+    public string BroadMarketSymbol { get; init; } = Instrument.DefaultBroadMarketSymbol;
+
+    /// <summary>Instrument rynku szerokiego (z listy, a gdy go tam nie ma – z listy wbudowanej); null = nieznany symbol.</summary>
+    [JsonIgnore]
+    public Instrument? BroadMarketInstrument => Instrument.Find(Instruments, BroadMarketSymbol);
 
     /// <summary>
     /// Czy zmiana ustawień wymaga przebudowania profili od nowa (np. inna wysokość wiersza albo godziny sesji).
@@ -155,13 +325,15 @@ public sealed record AppSettings
     /// </summary>
     public bool RequiresRebuild(AppSettings other) =>
         InstrumentSymbol != other.InstrumentSymbol ||
-        !Equals(Instrument, other.Instrument) || // zmieniono definicję wybranego instrumentu (sesje, tick...)
+        // Zmieniono definicję wybranego instrumentu (sesje, tick...); samo „Pobieraj dane” nie przebudowuje profili.
+        !Equals(Instrument with { DownloadData = false }, other.Instrument with { DownloadData = false }) ||
         TicksPerRow != other.TicksPerRow || TpoMinutes != other.TpoMinutes ||
         InitialBalancePeriods != other.InitialBalancePeriods || PocTieBreak != other.PocTieBreak ||
         ValueAreaPercent != other.ValueAreaPercent || HistoryDays != other.HistoryDays ||
         SimulatorSpeed != other.SimulatorSpeed || RecordToDatabase != other.RecordToDatabase ||
         LiveSource != other.LiveSource || IbApiPath != other.IbApiPath || IbHost != other.IbHost ||
-        IbPort != other.IbPort || IbClientId != other.IbClientId || IbDataType != other.IbDataType;
+        IbPort != other.IbPort || IbClientId != other.IbClientId || IbDataType != other.IbDataType ||
+        IbWebApiCompete != other.IbWebApiCompete;
 
     /// <summary>
     /// Ile dni historii trzeba wczytać, żeby było co najmniej <see cref="ProfilesOnScreen"/> profili:
@@ -209,7 +381,7 @@ public sealed record AppSettings
     {
         if (Instruments.Count > 0)
         {
-            return this;
+            return WithDownloadDefaults().WithCmeDefaults();
         }
 
         TimeOnly Parse(string text, TimeOnly fallback) =>
@@ -229,7 +401,39 @@ public sealed record AppSettings
                 : i)
             .ToList();
 
-        return this with { Instruments = instruments };
+        return this with { Instruments = instruments, DownloadDefaultsApplied = true, CmeDefaultsApplied = true };
+    }
+
+    /// <summary>Jednorazowo uzupełnia kody produktów CME wbudowanych instrumentów w liście z wcześniejszej wersji.</summary>
+    private AppSettings WithCmeDefaults()
+    {
+        if (CmeDefaultsApplied)
+        {
+            return this;
+        }
+
+        var instruments = Instruments
+            .Select(i => i.CmeProductId == 0 && i.Type == InstrumentType.Future
+                ? i with { CmeProductId = Instrument.DefaultCmeProductId(i.Symbol) }
+                : i)
+            .ToList();
+        return this with { Instruments = instruments, CmeDefaultsApplied = true };
+    }
+
+    /// <summary>
+    /// Jednorazowo zaznacza „Pobieraj dane” dla ES i NQ w liście instrumentów zapisanej przez wcześniejszą wersję.
+    /// </summary>
+    private AppSettings WithDownloadDefaults()
+    {
+        if (DownloadDefaultsApplied)
+        {
+            return this;
+        }
+
+        var instruments = Instruments
+            .Select(i => i.Symbol is "ES" or "NQ" ? i with { DownloadData = true } : i)
+            .ToList();
+        return this with { Instruments = instruments, DownloadDefaultsApplied = true };
     }
 
     /// <summary>
@@ -250,6 +454,28 @@ public sealed record AppSettings
     /// <summary>Zamienia tekst "HH:mm" na godzinę.</summary>
     public static TimeOnly ParseTime(string text) =>
         TimeOnly.ParseExact(text.Trim(), "HH:mm", CultureInfo.InvariantCulture);
+
+    // --- Układ okien (praca na kilku monitorach) ---
+
+    /// <summary>Położenie i rozmiar okna głównego przy ostatnim zamknięciu (null = domyślne – zmaksymalizowane).</summary>
+    public WindowLayout? MainWindowLayout { get; init; }
+
+    /// <summary>Zakładki przeniesione do osobnych okien – wracają na swoje miejsca przy kolejnym uruchomieniu.</summary>
+    public List<WindowLayout> DetachedTabs { get; init; } = [];
+}
+
+/// <summary>
+/// Położenie okna na pulpicie (współrzędne WPF, mogą wskazywać dowolny monitor) i jego stan.
+/// </summary>
+/// <param name="Key">Zakładka w osobnym oknie: "tpo", "candles" albo "volume" (dla okna głównego – "main").</param>
+public sealed record WindowLayout(string Key, double Left, double Top, double Width, double Height, bool Maximized);
+
+/// <summary>Rozmiar kontrolek pasków okna głównego.</summary>
+public enum ControlSize
+{
+    Small,
+    Normal,
+    Large,
 }
 
 /// <summary>Tryb wyświetlania profilu wolumenowego.</summary>
@@ -263,6 +489,16 @@ public enum VolumeProfileMode
 
     /// <summary>Dla wszystkich profili.</summary>
     All,
+}
+
+/// <summary>Rodzaj profilu wolumenowego.</summary>
+public enum VolumeDisplayKind
+{
+    /// <summary>Tradycyjny – wolumen całkowity w wierszu.</summary>
+    Total,
+
+    /// <summary>Różnicowy – delta: wolumen kupna − wolumen sprzedaży w wierszu.</summary>
+    Delta,
 }
 
 /// <summary>Skala długości słupków profilu wolumenowego.</summary>
@@ -300,6 +536,12 @@ public sealed record VolumeProfileStyle
 
     /// <summary>Kolor słupka VPOC – wiersza z największym wolumenem (#RRGGBB).</summary>
     public string VpocColor { get; init; } = "#FF9E40";
+
+    /// <summary>Profil różnicowy: kolor przewagi kupna (delta dodatnia).</summary>
+    public string DeltaBuyColor { get; init; } = "#26A69A";
+
+    /// <summary>Profil różnicowy: kolor przewagi sprzedaży (delta ujemna).</summary>
+    public string DeltaSellColor { get; init; } = "#EF5350";
 
     /// <summary>Krycie słupków w procentach (100 = pełny kolor, mniej = przezroczyste).</summary>
     public int Opacity { get; init; } = 60;
@@ -340,6 +582,26 @@ public sealed record PeriodVolumeStyle
 
     /// <summary>Krycie słupków (%).</summary>
     public int Opacity { get; init; } = 60;
+
+    /// <summary>Skala długości słupków (względem poprzednich słupków albo własnego maksimum).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<PeriodVolumeScaleMode>))]
+    public PeriodVolumeScaleMode ScaleMode { get; init; } = PeriodVolumeScaleMode.Reference;
+
+    /// <summary>Z ilu ostatnich zakończonych słupków tej samej sesji liczyć skalę odniesienia (mediana).</summary>
+    public int ReferencePeriods { get; init; } = 10;
+}
+
+/// <summary>Skala profilu wolumenowego bieżącego słupka TPO.</summary>
+public enum PeriodVolumeScaleMode
+{
+    /// <summary>
+    /// Względem poprzednich słupków: pełna długość = typowy (mediana) największy wolumen wiersza z ostatnich
+    /// zakończonych słupków tej samej sesji – na początku okresu słupki są krótkie i rosną z wolumenem.
+    /// </summary>
+    Reference,
+
+    /// <summary>Własne maksimum: najdłuższy słupek zawsze ma pełną długość (nawet przy kilku kontraktach).</summary>
+    OwnMaximum,
 }
 
 /// <summary>Gdzie rysować liczbę wolumenu względem słupka.</summary>
@@ -426,6 +688,16 @@ public sealed record HalfBackStyle
     public int Opacity { get; init; } = 70;
 }
 
+/// <summary>Podświetlenie tła profilu wybranego w tabeli „Parametry profili”.</summary>
+public sealed record ProfileHighlightStyle
+{
+    /// <summary>Kolor tła (#RRGGBB).</summary>
+    public string Color { get; init; } = "#FFD54F";
+
+    /// <summary>Krycie tła w procentach (100 = pełny kolor, mniej = bardziej przezroczyste).</summary>
+    public int Opacity { get; init; } = 15;
+}
+
 /// <summary>Źródło danych w trybie „Na żywo”.</summary>
 public enum LiveSourceKind
 {
@@ -434,6 +706,52 @@ public enum LiveSourceKind
 
     /// <summary>Interactive Brokers (przez TWS / IB Gateway).</summary>
     InteractiveBrokers,
+
+    /// <summary>Interactive Brokers przez IBKR Web API (api.ibkr.com, klucze OAuth) – bez TWS.</summary>
+    InteractiveBrokersWebApi,
+}
+
+/// <summary>Które poziomy sesji nocnej (ONH / ONL / ON POC) rysować na profilach dziennych.</summary>
+public enum OvernightLevelsMode
+{
+    /// <summary>Tylko na ostatnim profilu dziennym.</summary>
+    LastDay,
+
+    /// <summary>Na wszystkich profilach dziennych.</summary>
+    AllDays,
+
+    /// <summary>Wcale.</summary>
+    None,
+}
+
+/// <summary>Globalne przełączniki alarmów dźwiękowych poziomów cenowych.</summary>
+public sealed record PriceAlertsSettings
+{
+    /// <summary>Czy alarmy dźwiękowe są włączone.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Czy alarmy działają także w symulacji (odtwarzaniu historii).</summary>
+    public bool InSimulation { get; init; } = true;
+}
+
+/// <summary>Opisy analizy na profilach dziennych – włączane osobno w menu „Wyświetlanie”.</summary>
+public sealed record ChartNotesStyle
+{
+    /// <summary>Znacznik HB – halfback (połowa zakresu profilu).</summary>
+    public bool ShowHalfback { get; init; } = true;
+
+    /// <summary>Znacznik S – SETTLE (wpis ręczny, a gdy go brak – Close sesji).</summary>
+    public bool ShowSettle { get; init; } = true;
+
+    /// <summary>Znacznik PULLBACK LOW / HIGH dnia trendowego.</summary>
+    public bool ShowPullback { get; init; } = true;
+
+    /// <summary>Linia opisu pod profilem (relacja wartości, trend, otwarcie względem nocy, luka względem High / Low dnia poprzedniego).</summary>
+    public bool ShowNoteText { get; init; } = true;
+
+    /// <summary>Poziomy sesji nocnej ONH / ONL / ON POC.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<OvernightLevelsMode>))]
+    public OvernightLevelsMode OvernightLevels { get; init; } = OvernightLevelsMode.LastDay;
 }
 
 /// <summary>
@@ -475,6 +793,227 @@ public enum TimerPosition
 
     /// <summary>Prawy górny róg wykresu (obok osi cen).</summary>
     TopRight,
+}
+
+/// <summary>Rodzaj prezentacji świec na wykresie D/W/M.</summary>
+public enum CandleChartType
+{
+    /// <summary>Świece japońskie (korpus od otwarcia do zamknięcia, knoty do maksimum i minimum).</summary>
+    Candles,
+
+    /// <summary>Słupki OHLC (pionowa kreska maksimum–minimum, otwarcie w lewo, zamknięcie w prawo).</summary>
+    OhlcBars,
+}
+
+/// <summary>Wygląd wykresu D/W/M.</summary>
+public sealed record CandleChartStyle
+{
+    /// <summary>Świece japońskie albo słupki OHLC.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<CandleChartType>))]
+    public CandleChartType Type { get; init; } = CandleChartType.Candles;
+
+    /// <summary>Kolor świecy wzrostowej (zamknięcie ≥ otwarcie), #RRGGBB.</summary>
+    public string UpColor { get; init; } = "#30C070";
+
+    /// <summary>Kolor świecy spadkowej, #RRGGBB.</summary>
+    public string DownColor { get; init; } = "#E05050";
+
+    /// <summary>Czy pokazywać wolumen w dolnej części wykresu.</summary>
+    public bool ShowVolume { get; init; } = true;
+
+    /// <summary>Krycie słupków wolumenu w procentach.</summary>
+    public int VolumeOpacity { get; init; } = 45;
+
+    /// <summary>
+    /// Co ile minut odświeżać świece D/W/M z IB (instrument i rynek szeroki) przy połączeniu z brokerem.
+    /// Ostatnia świeca instrumentu i tak zmienia się na żywo z bieżącymi profilami TPO.
+    /// </summary>
+    public int IbRefreshMinutes { get; init; } = 5;
+
+    /// <summary>Wolne miejsce za najnowszą świecą w % szerokości wykresu (przeciąganie znacznika na wykresie).</summary>
+    public int RightMarginPercent { get; init; } = 10;
+
+    /// <summary>Średnie kroczące rysowane na wykresie (w kolejności z listy).</summary>
+    public List<MovingAverageStyle> MovingAverages { get; init; } =
+    [
+        new() { Period = 20, Color = "#F0C030", Thickness = 1 },
+        new() { Period = 50, Color = "#4FA3F7", Thickness = 2 },
+        new() { Period = 200, Color = "#E040FB", Thickness = 2, Enabled = false },
+    ];
+}
+
+/// <summary>
+/// Wygląd dziennego wykresu rynku szerokiego (zakładka „Szeroki rynek”): kolory świec i średnie kroczące SMA/EMA.
+/// Świece są tylko z sesji kasowej (rynek szeroki to indeks – patrz <see cref="AppSettings.BroadMarketSymbol"/>).
+/// </summary>
+public sealed record BroadMarketChartStyle
+{
+    /// <summary>Kolor świecy wzrostowej (zamknięcie ≥ otwarcie), #RRGGBB.</summary>
+    public string UpColor { get; init; } = "#30C070";
+
+    /// <summary>Kolor świecy spadkowej, #RRGGBB.</summary>
+    public string DownColor { get; init; } = "#E05050";
+
+    /// <summary>Średnie kroczące rysowane na wykresie (w kolejności z listy).</summary>
+    public List<BroadMovingAverageStyle> MovingAverages { get; init; } = DefaultMovingAverages();
+
+    /// <summary>Wolne miejsce za najnowszą świecą w % szerokości wykresu (przeciąganie znacznika na wykresie).</summary>
+    public int RightMarginPercent { get; init; } = 10;
+
+    /// <summary>„Oddech rynku”: oprócz liczby – wskaźnik graficzny (pasek zielony / czerwony z gradientem).</summary>
+    public bool ShowBreathGauge { get; init; } = true;
+
+    /// <summary>Domyślne średnie: EMA 8 (jasnoniebieska, kropkowana) i EMA 21 (biała, ciągła).</summary>
+    public static List<BroadMovingAverageStyle> DefaultMovingAverages() =>
+    [
+        new() { Kind = MovingAverageKind.Ema, Period = 8, Color = "#7FD4FF", Thickness = 1, LineStyle = LineStyle.Dotted },
+        new() { Kind = MovingAverageKind.Ema, Period = 21, Color = "#FFFFFF", Thickness = 1, LineStyle = LineStyle.Solid },
+    ];
+}
+
+/// <summary>Średnia krocząca (SMA albo EMA) cen zamknięcia na wykresie „Szeroki rynek”.</summary>
+public sealed record BroadMovingAverageStyle
+{
+    /// <summary>Czy rysować tę średnią.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Rodzaj średniej: wykładnicza (EMA) albo prosta (SMA).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<MovingAverageKind>))]
+    public MovingAverageKind Kind { get; init; } = MovingAverageKind.Ema;
+
+    /// <summary>Liczba świec średniej.</summary>
+    public int Period { get; init; } = 8;
+
+    /// <summary>Kolor linii, #RRGGBB.</summary>
+    public string Color { get; init; } = "#FFFFFF";
+
+    /// <summary>Grubość linii w pikselach.</summary>
+    public int Thickness { get; init; } = 1;
+
+    /// <summary>Styl linii: ciągła, kreskowana albo kropkowana.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<LineStyle>))]
+    public LineStyle LineStyle { get; init; } = LineStyle.Solid;
+}
+
+/// <summary>Prosta średnia krocząca (SMA) cen zamknięcia na wykresie D/W/M.</summary>
+public sealed record MovingAverageStyle
+{
+    /// <summary>Czy rysować tę średnią.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Liczba świec średniej (np. 20 = średnia z 20 ostatnich zamknięć).</summary>
+    public int Period { get; init; } = 20;
+
+    /// <summary>Kolor linii, #RRGGBB.</summary>
+    public string Color { get; init; } = "#F0C030";
+
+    /// <summary>Grubość linii w pikselach.</summary>
+    public int Thickness { get; init; } = 1;
+
+    /// <summary>Czy rysować poziom tej średniej (z wykresu dziennego, wartość „na dziś”) na wykresie profili TPO.</summary>
+    public bool ShowOnTpo { get; init; } = true;
+
+    /// <summary>Opis linii na wykresie TPO; pusty = automatyczny (np. „SMA20 D”).</summary>
+    public string TpoLabel { get; init; } = string.Empty;
+
+    /// <summary>Styl linii na wykresie TPO.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<LineStyle>))]
+    public LineStyle TpoLineStyle { get; init; } = LineStyle.Dashed;
+
+    /// <summary>Grubość linii na wykresie TPO (px).</summary>
+    public int TpoThickness { get; init; } = 1;
+
+    /// <summary>Na wykresie TPO: linia albo wąski pasek (strefa wokół średniej).</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<TpoAverageShape>))]
+    public TpoAverageShape TpoShape { get; init; } = TpoAverageShape.Line;
+
+    /// <summary>Szerokość (wysokość) paska na wykresie TPO w pikselach.</summary>
+    public int TpoBandHeight { get; init; } = 6;
+
+    /// <summary>Krycie paska na wykresie TPO w procentach.</summary>
+    public int TpoBandOpacity { get; init; } = 30;
+
+    /// <summary>Czy linia / pasek na wykresie TPO ma migać, gdy cena zbliży się do średniej.</summary>
+    public bool TpoBlink { get; init; } = true;
+
+    /// <summary>Kolor na wykresie TPO (#RRGGBB); pusty = kolor średniej z wykresu dziennego.</summary>
+    public string TpoColor { get; init; } = string.Empty;
+
+    /// <summary>Kolor na wykresie TPO (własny albo z wykresu dziennego).</summary>
+    public string EffectiveTpoColor => string.IsNullOrWhiteSpace(TpoColor) ? Color : TpoColor;
+
+    /// <summary>Opis linii na wykresie TPO (własny albo automatyczny).</summary>
+    public string EffectiveTpoLabel => string.IsNullOrWhiteSpace(TpoLabel) ? DefaultTpoLabel(Period) : TpoLabel.Trim();
+
+    /// <summary>Automatyczny opis średniej dziennej, np. „SMA20 D”.</summary>
+    public static string DefaultTpoLabel(int period) => $"SMA{period} D";
+}
+
+/// <summary>Sposób rysowania średniej na wykresie TPO.</summary>
+public enum TpoAverageShape
+{
+    /// <summary>Linia (styl i grubość z ustawień).</summary>
+    Line,
+
+    /// <summary>Wąski półprzezroczysty pasek wyśrodkowany na średniej (szerokość w px i krycie z ustawień).</summary>
+    Band,
+}
+
+/// <summary>
+/// Poziomy średnich kroczących z wykresu dziennego (wartości „na dziś”) rysowane jako linie poziome na wykresie TPO –
+/// widać, że cena zbliża się do znaczącej średniej. Które średnie, styl i opis – przy średnich wykresu D/W/M.
+/// </summary>
+public sealed record TpoAveragesStyle
+{
+    /// <summary>Czy rysować średnie na wykresie TPO.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Po której stronie wykresu opis linii.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<LabelPosition>))]
+    public LabelPosition LabelPosition { get; init; } = LabelPosition.Left;
+
+    /// <summary>Czy dopisywać do opisu wartość średniej (np. „SMA20 D 6712.40”).</summary>
+    public bool ShowValueInLabel { get; init; } = true;
+
+    /// <summary>Czy pokazywać cenę średniej na osi cen (w kolorze średniej).</summary>
+    public bool ShowAxisLabel { get; init; } = true;
+
+    /// <summary>Krycie linii i opisu (%).</summary>
+    public int Opacity { get; init; } = 85;
+
+    /// <summary>Wielkość czcionki opisu (pt).</summary>
+    public int FontSize { get; init; } = 11;
+
+    /// <summary>Czy linie / paski średnich migają, gdy cena zbliży się do nich (włącznik główny; każda średnia – własny).</summary>
+    public bool BlinkEnabled { get; init; } = true;
+
+    /// <summary>Od jakiej odległości ceny od średniej (w tickach) linia zaczyna migać.</summary>
+    public int BlinkDistanceTicks { get; init; } = 8;
+
+    /// <summary>Tempo migania – czas jednej fazy (widoczna / wygaszona) w milisekundach.</summary>
+    public int BlinkIntervalMs { get; init; } = 500;
+}
+
+/// <summary>Położenie wskaźnika tempa budowania TPO na wykresie.</summary>
+public enum TempoGaugePosition
+{
+    /// <summary>Pod zegarem TPO (wyrównany do niego); bez zegara – w miejscu zegara.</summary>
+    UnderTimer,
+
+    /// <summary>Lewy górny róg wykresu.</summary>
+    TopLeft,
+
+    /// <summary>Góra, na środku wykresu.</summary>
+    TopCenter,
+
+    /// <summary>Prawy górny róg wykresu.</summary>
+    TopRight,
+
+    /// <summary>Lewy dolny róg wykresu.</summary>
+    BottomLeft,
+
+    /// <summary>Prawy dolny róg wykresu.</summary>
+    BottomRight,
 }
 
 /// <summary>Grubość czcionki.</summary>
@@ -574,27 +1113,19 @@ public static class SettingsStore
     /// <summary>Wczytuje ustawienia; jeśli plik nie istnieje lub jest uszkodzony – zwraca domyślne.</summary>
     public static AppSettings Load()
     {
+        // Lista instrumentów: uzupełniana przy pierwszym uruchomieniu nowej wersji (z przeniesieniem starych godzin sesji).
+        // Uszkodzony plik: kopia zapasowa + komunikat i ustawienia domyślne (patrz JsonFileStore).
         try
         {
-            if (File.Exists(FilePath))
-            {
-                // Lista instrumentów: uzupełniana przy pierwszym uruchomieniu nowej wersji (z przeniesieniem starych godzin sesji).
-                return (JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), JsonOptions) ?? new AppSettings())
-                    .WithInstrumentsInitialized();
-            }
+            return (JsonFileStore.Read<AppSettings>(FilePath, JsonOptions) ?? new AppSettings()).WithInstrumentsInitialized();
         }
         catch (Exception)
         {
-            // Uszkodzony plik – wracamy do ustawień domyślnych.
+            // Odczytany plik ma niepoprawne wartości (np. instrument bez sesji) – ustawienia domyślne.
+            return new AppSettings().WithInstrumentsInitialized();
         }
-
-        return new AppSettings().WithInstrumentsInitialized();
     }
 
-    /// <summary>Zapisuje ustawienia do pliku.</summary>
-    public static void Save(AppSettings settings)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(settings, JsonOptions));
-    }
+    /// <summary>Zapisuje ustawienia do pliku (atomowo; błąd zapisu jest zgłaszany, nie rzucany).</summary>
+    public static void Save(AppSettings settings) => JsonFileStore.Write(FilePath, settings, JsonOptions);
 }
