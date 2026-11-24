@@ -8,7 +8,8 @@ namespace MarketProfile.App.ViewModels;
 
 /// <summary>
 /// Zakładka „Szeroki rynek”: wykres świec 30 min rynku szerokiego (domyślnie indeks SPX) ze średnimi EMA/SMA
-/// z ustawień; nad wykresem wskaźnik „Oddech rynku” (SPY), pod nim dwa wiersze na przyszłe wskaźniki.
+/// z ustawień; nad wykresem wskaźniki „Oddech rynku” (SPY, NYSE) i spółki rosnące / spadające (NYSE, NASDAQ),
+/// pod nim pasek 11 sektorów S&amp;P 500 (<see cref="SectorTiles"/>).
 ///
 /// Świece są tylko z sesji kasowej: rynek szeroki to zawsze indeks (wybór w ustawieniach ograniczony do indeksów),
 /// a świece indeksów są pobierane z IB z <c>useRTH = 1</c>. Dane pobiera istniejący mechanizm – pobieranie
@@ -29,7 +30,83 @@ public sealed partial class MainViewModel
     public IReadOnlyList<Bar> BroadBars
     {
         get => _broadBars;
-        private set => SetProperty(ref _broadBars, value);
+        private set
+        {
+            if (SetProperty(ref _broadBars, value))
+            {
+                UpdateEmaDistances(); // te same świece co wykres – wartości zgodne z liniami EMA
+            }
+        }
+    }
+
+    // =====================================================================
+    // Cena SPX wobec EMA8 / EMA21 (górny wiersz, żółte tło)
+    // =====================================================================
+
+    private decimal? _ema8Distance;
+    private decimal? _ema21Distance;
+    private string _ema8Detail = string.Empty;
+    private string _ema21Detail = string.Empty;
+
+    /// <summary>O ile % ostatnia cena jest nad (+) / pod (−) EMA8 ze świec 30 min (null – brak danych).</summary>
+    public decimal? Ema8Distance
+    {
+        get => _ema8Distance;
+        private set => SetProperty(ref _ema8Distance, value);
+    }
+
+    /// <summary>Opis: cena i wartość EMA8.</summary>
+    public string Ema8Detail
+    {
+        get => _ema8Detail;
+        private set => SetProperty(ref _ema8Detail, value);
+    }
+
+    /// <summary>O ile % ostatnia cena jest nad (+) / pod (−) EMA21 ze świec 30 min (null – brak danych).</summary>
+    public decimal? Ema21Distance
+    {
+        get => _ema21Distance;
+        private set => SetProperty(ref _ema21Distance, value);
+    }
+
+    /// <summary>Opis: cena i wartość EMA21.</summary>
+    public string Ema21Detail
+    {
+        get => _ema21Detail;
+        private set => SetProperty(ref _ema21Detail, value);
+    }
+
+    /// <summary>
+    /// Odległość ostatniej ceny (zamknięcie ostatniej świecy – na żywo bieżąca cena) od EMA8 i EMA21 liczonych jak
+    /// na wykresie (<see cref="Indicators.Ema"/> na świecach 30 min z sesji kasowej, z bieżącą świecą).
+    /// </summary>
+    private void UpdateEmaDistances()
+    {
+        var bars = _broadBars;
+        (Ema8Distance, Ema8Detail) = EmaDistance(bars, 8);
+        (Ema21Distance, Ema21Detail) = EmaDistance(bars, 21);
+    }
+
+    private (decimal? Distance, string Detail) EmaDistance(IReadOnlyList<Bar> bars, int period)
+    {
+        var symbol = BroadMarket?.Symbol ?? "SPX";
+        if (bars.Count == 0)
+        {
+            return (null, $"brak świec {symbol}");
+        }
+
+        var price = bars[^1].Close;
+        var ema = Indicators.Ema(bars, period)[^1];
+        var distance = Indicators.PercentFromAverage(price, ema);
+        if (distance is null || ema is not { } average)
+        {
+            return (null, $"za mało świec do EMA{period}");
+        }
+
+        var side = distance > 0 ? "nad średnią" : distance < 0 ? "pod średnią" : "na średniej";
+        var format = BroadTickSize < 0.01m ? "N4" : "N2";
+        return (distance,
+            $"{symbol} {price.ToString(format, CultureInfo.CurrentCulture)} · EMA{period} {average.ToString(format, CultureInfo.CurrentCulture)} · {side} (30 min)");
     }
 
     /// <summary>Wygląd wykresu z ustawień „Szeroki rynek” (kolory świec, średnie EMA/SMA).</summary>
@@ -137,6 +214,7 @@ public sealed partial class MainViewModel
         UpdateBroadLiveBars();
         UpdateBroadInfo(broad);
         UpdateNyseBreath();
+        UpdateAdvanceDecline();
 
         if (_broadFeeds is null)
         {
@@ -286,15 +364,48 @@ public sealed partial class MainViewModel
             return; // w międzyczasie zatrzymano źródło danych
         }
 
+        lock (_advanceDeclineLock)
+        {
+            _advanceDeclineProblems.Clear(); // nowe połączenia – stare komunikaty nieaktualne (ostatnie wartości zostają)
+        }
+
         var feeds = _broadFeeds = new BroadMarketLiveFeeds();
         var live = _broadLive;
-        feeds.IndexTick += live.Add;
+        feeds.IndexTick += tick =>
+        {
+            live.Add(tick);
+            OnBroadIndexTick(); // bieżąca świeca i SPX vs EMA8 / EMA21 – od razu z nowym tickiem
+        };
         feeds.BreathTick += breath.Add;
         feeds.NyseVolume += (up, down) =>
         {
             lock (_nyseVolumeLock)
             {
                 _nyseVolume = (up, down);
+            }
+        };
+        feeds.AdvanceDecline += (symbol, advancing, declining) =>
+        {
+            lock (_advanceDeclineLock)
+            {
+                _advanceDecline[symbol] = (advancing, declining);
+            }
+        };
+        feeds.AdvanceDeclineProblem += (symbol, message) =>
+        {
+            // Błąd 300 (nieznany tickerId – po anulowaniu zapytania) to tylko echo – nie zasłania właściwego powodu;
+            // brak subskrypcji zostaje widoczny, dopóki nie przyjdą dane.
+            if (message.Contains("błąd 300", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            lock (_advanceDeclineLock)
+            {
+                if (!(_advanceDeclineProblems.GetValueOrDefault(symbol)?.Contains("brak subskrypcji", StringComparison.OrdinalIgnoreCase) ?? false))
+                {
+                    _advanceDeclineProblems[symbol] = message;
+                }
             }
         };
         feeds.Problem += message => System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
@@ -318,6 +429,9 @@ public sealed partial class MainViewModel
         }
 
         UpdateBreath();
+
+        // Pasek sektorów S&P 500 (na dole zakładki) – notowania ETF-ów sektorowych, osobne połączenie.
+        await StartSectorsAsync(generation);
     }
 
     /// <summary>Zatrzymanie dodatkowych połączeń (wartości zostają na ekranie).</summary>
@@ -333,6 +447,9 @@ public sealed partial class MainViewModel
             _broadFeeds = null;
             await feeds.DisposeAsync();
         }
+
+        await StopSectorsAsync();
+        UpdateSectors(force: true);
     }
 
     /// <summary>Tick głównego źródła – gdy instrumentem głównym jest rynek szeroki albo SPY (wątek źródła danych).</summary>
@@ -347,6 +464,7 @@ public sealed partial class MainViewModel
         if (symbol == BroadMarket?.Symbol)
         {
             _broadLive?.Add(tick);
+            OnBroadIndexTick();
         }
         else if (symbol == BroadMarketLiveFeeds.BreathSymbol)
         {
@@ -367,7 +485,71 @@ public sealed partial class MainViewModel
         UpdateBroadLiveBars();
         UpdateBreath();
         UpdateNyseBreath();
+        UpdateAdvanceDecline();
         UpdateBroadDataStatus();
+    }
+
+    // =====================================================================
+    // Spółki rosnące / spadające NYSE i NASDAQ (IB AD-NYSE, AD-NASD)
+    // =====================================================================
+
+    private readonly Dictionary<string, (decimal Advancing, decimal Declining)> _advanceDecline = [];
+    private readonly Dictionary<string, string> _advanceDeclineProblems = [];
+    private readonly Lock _advanceDeclineLock = new();
+    private AdvanceDeclineView _nyseAdvanceDecline = AdvanceDeclineView.Empty;
+    private AdvanceDeclineView _nasdaqAdvanceDecline = AdvanceDeclineView.Empty;
+
+    /// <summary>Spółki NYSE rosnące / spadające względem wczorajszego zamknięcia (AD-NYSE).</summary>
+    public AdvanceDeclineView NyseAdvanceDecline
+    {
+        get => _nyseAdvanceDecline;
+        private set => SetProperty(ref _nyseAdvanceDecline, value);
+    }
+
+    /// <summary>Spółki NASDAQ rosnące / spadające względem wczorajszego zamknięcia (AD-NASD).</summary>
+    public AdvanceDeclineView NasdaqAdvanceDecline
+    {
+        get => _nasdaqAdvanceDecline;
+        private set => SetProperty(ref _nasdaqAdvanceDecline, value);
+    }
+
+    private void UpdateAdvanceDecline()
+    {
+        NyseAdvanceDecline = BuildAdvanceDecline(BroadMarketLiveFeeds.NyseAdvanceDecline.Symbol, "NYSE");
+        NasdaqAdvanceDecline = BuildAdvanceDecline(BroadMarketLiveFeeds.NasdaqAdvanceDecline.Symbol, "NASDAQ");
+    }
+
+    private AdvanceDeclineView BuildAdvanceDecline(string symbol, string market)
+    {
+        (decimal Advancing, decimal Declining)? values;
+        string? problem;
+        lock (_advanceDeclineLock)
+        {
+            values = _advanceDecline.TryGetValue(symbol, out var v) ? v : null;
+            problem = _advanceDeclineProblems.GetValueOrDefault(symbol);
+        }
+
+        if (values is { } ad)
+        {
+            var advancing = (long)ad.Advancing;
+            var declining = (long)ad.Declining;
+            var total = advancing + declining;
+            var share = total > 0 ? $" · rosnące {advancing * 100.0 / total:0}%" : string.Empty;
+            var detail = $"{market} · przewaga {(advancing >= declining ? "+" : "−")}{Math.Abs(advancing - declining):N0}{share}" +
+                         (_broadFeeds is null ? string.Empty : " · na żywo");
+            return new AdvanceDeclineView(advancing, declining, detail);
+        }
+
+        var text = _broadFeeds is null
+            ? $"{market} – brak danych (połącz się z IB w trybie „Na żywo”)"
+            : problem is not null
+                ? problem.Contains("brak subskrypcji", StringComparison.OrdinalIgnoreCase)
+                    ? $"{market} – brak subskrypcji danych {symbol} w IB"
+                    : $"{symbol}: {problem}"
+                : DateTimeOffset.UtcNow - _broadLiveStartedAt < TimeSpan.FromSeconds(30)
+                    ? $"{market} – czekam na dane {symbol} z IB"
+                    : $"{market} – brak danych {symbol} z IB (TWS API ich nie przysyła – sprawdź subskrypcję danych)";
+        return AdvanceDeclineView.Empty with { Detail = text };
     }
 
     /// <summary>Stan notowań indeksu: czy przychodzą, na żywo czy z opóźnieniem.</summary>
@@ -446,6 +628,29 @@ public sealed partial class MainViewModel
                            (_broadFeeds is null ? string.Empty : " · na żywo");
     }
 
+    private int _broadTickUpdatePending;
+
+    /// <summary>
+    /// Nowy tick rynku szerokiego (wątek źródła danych): odświeżenie bieżącej świecy i wskaźników SPX vs EMA8 / EMA21
+    /// od razu, a nie dopiero z zegara. Seria ticków między dwoma przebiegami wątku okna – jedno odświeżenie.
+    /// </summary>
+    private void OnBroadIndexTick()
+    {
+        if (Interlocked.Exchange(ref _broadTickUpdatePending, 1) != 0)
+        {
+            return; // odświeżenie już czeka w kolejce okna – obejmie także ten tick
+        }
+
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            Interlocked.Exchange(ref _broadTickUpdatePending, 0);
+            if (IsTabShown(BroadTab))
+            {
+                UpdateBroadLiveBars();
+            }
+        });
+    }
+
     private void UpdateBroadLiveBars()
     {
         var live = _broadLive;
@@ -502,4 +707,13 @@ public sealed partial class MainViewModel
         >= 1_000_000 => (volume / 1_000_000m).ToString("0.0", CultureInfo.CurrentCulture) + " mln",
         _ => volume.ToString("N0", CultureInfo.CurrentCulture),
     };
+}
+
+/// <summary>
+/// Kolumna „spółki rosnące / spadające”: liczby względem wczorajszego zamknięcia (null – brak danych) i opis
+/// (przewaga, udział rosnących albo powód braku danych).
+/// </summary>
+public sealed record AdvanceDeclineView(long? Advancing, long? Declining, string Detail)
+{
+    public static AdvanceDeclineView Empty { get; } = new(null, null, string.Empty);
 }

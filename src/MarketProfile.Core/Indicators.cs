@@ -72,6 +72,13 @@ public static class Indicators
         return result;
     }
 
+    /// <summary>
+    /// O ile procent cena jest nad (+) albo pod (−) średnią: <c>(cena − średnia) / średnia × 100</c>;
+    /// null – brak średniej (za mało świec) albo średnia ≤ 0.
+    /// </summary>
+    public static decimal? PercentFromAverage(decimal price, decimal? average) =>
+        average is > 0 ? (price - average.Value) / average.Value * 100m : null;
+
     /// <summary>Średnia krocząca wybranego rodzaju (SMA albo EMA).</summary>
     public static decimal?[] MovingAverage(IReadOnlyList<Bar> bars, MovingAverageKind kind, int period) =>
         kind == MovingAverageKind.Ema ? Ema(bars, period) : Sma(bars, period);

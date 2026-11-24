@@ -65,9 +65,14 @@ public static class IbFeeds
     public static Task<TickPage> GetTicksPageAsync(IMarketDataFeed feed, DateTimeOffset start, CancellationToken token) =>
         feed is IbWebDataFeed web ? web.GetTicksPageAsync(start, token) : Tws.GetTicksPageAsync(feed, start, token);
 
-    /// <summary>Świece D/W/M za okres wstecz od teraz (format IB, np. "5 Y") – źródło z <see cref="Create"/>.</summary>
-    public static Task<OhlcPage> GetOhlcBarsAsync(IMarketDataFeed feed, BarInterval interval, string duration, CancellationToken token) =>
-        feed is IbWebDataFeed web ? web.GetOhlcBarsAsync(interval, duration, token) : Tws.GetOhlcBarsAsync(feed, interval, duration, token);
+    /// <summary>
+    /// Świece D/W/M za okres wstecz od teraz (format IB, np. "5 Y") – źródło z <see cref="Create"/>.
+    /// <paramref name="cashOnly"/> – tylko sesja kasowa (także dla kontraktów terminowych).
+    /// </summary>
+    public static Task<OhlcPage> GetOhlcBarsAsync(IMarketDataFeed feed, BarInterval interval, string duration, bool cashOnly, CancellationToken token) =>
+        feed is IbWebDataFeed web
+            ? web.GetOhlcBarsAsync(interval, duration, token, cashOnly)
+            : Tws.GetOhlcBarsAsync(feed, interval, duration, cashOnly, token);
 
     /// <summary>Świece 30 min (tylko sesja kasowa) za okres kończący się w <paramref name="end"/> (null = teraz) – źródło z <see cref="Create"/>.</summary>
     public static Task<OhlcPage> GetIntradayBarsAsync(IMarketDataFeed feed, DateTimeOffset? end, string duration, CancellationToken token) =>
@@ -105,8 +110,9 @@ public static class IbFeeds
             ((IbDataFeed)feed).GetTicksPageAsync(start, token);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        public static Task<OhlcPage> GetOhlcBarsAsync(IMarketDataFeed feed, BarInterval interval, string duration, CancellationToken token) =>
-            ((IbDataFeed)feed).GetOhlcBarsAsync(interval, duration, token);
+        public static Task<OhlcPage> GetOhlcBarsAsync(IMarketDataFeed feed, BarInterval interval, string duration, bool cashOnly,
+            CancellationToken token) =>
+            ((IbDataFeed)feed).GetOhlcBarsAsync(interval, duration, token, cashOnly);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         public static Task<OhlcPage> GetIntradayBarsAsync(IMarketDataFeed feed, DateTimeOffset? end, string duration, CancellationToken token) =>

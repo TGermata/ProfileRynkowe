@@ -58,13 +58,17 @@ public sealed class OhlcBarDownloader
         _pacingWait = pacingWait ?? TimeSpan.FromMinutes(1);
     }
 
-    /// <summary>Uzupełnia wszystkie interwały instrumentu (od miesięcznego do dziennego).</summary>
-    public async Task<IReadOnlyList<OhlcDownloadResult>> UpdateAsync(string symbol, string source, DateTimeOffset now, CancellationToken token)
+    /// <summary>
+    /// Uzupełnia wszystkie interwały instrumentu (od miesięcznego do dziennego). <paramref name="cashOnly"/> – seria
+    /// „tylko sesja kasowa” w bazie (fetch musi wtedy pytać brokera o świece z samej sesji kasowej).
+    /// </summary>
+    public async Task<IReadOnlyList<OhlcDownloadResult>> UpdateAsync(string symbol, string source, DateTimeOffset now, CancellationToken token,
+        bool cashOnly = false)
     {
         var results = new List<OhlcDownloadResult>();
         foreach (var interval in BarIntervals.All)
         {
-            results.Add(await UpdateIntervalAsync(symbol, interval, source, now, token).ConfigureAwait(false));
+            results.Add(await UpdateIntervalAsync(symbol, interval, source, now, token, cashOnly).ConfigureAwait(false));
         }
 
         return results;
@@ -72,9 +76,9 @@ public sealed class OhlcBarDownloader
 
     /// <summary>Uzupełnia jeden interwał.</summary>
     public async Task<OhlcDownloadResult> UpdateIntervalAsync(
-        string symbol, BarInterval interval, string source, DateTimeOffset now, CancellationToken token)
+        string symbol, BarInterval interval, string source, DateTimeOffset now, CancellationToken token, bool cashOnly = false)
     {
-        var range = _store.GetOhlcRange(symbol, interval);
+        var range = _store.GetOhlcRange(symbol, interval, cashOnly);
         var duration = DurationFor(interval, range?.Newest, now, _depth);
 
         for (var attempt = 0; ; attempt++)
@@ -92,7 +96,7 @@ public sealed class OhlcBarDownloader
                 return new OhlcDownloadResult(interval, duration, 0, page.Error ?? (page.PacingViolation ? "limit zapytań" : null));
             }
 
-            var saved = _store.SaveOhlcBars(symbol, interval, page.Bars, source);
+            var saved = _store.SaveOhlcBars(symbol, interval, page.Bars, source, cashOnly);
             return new OhlcDownloadResult(interval, duration, saved, page.Error);
         }
     }

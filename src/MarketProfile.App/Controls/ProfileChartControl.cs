@@ -18,6 +18,7 @@ namespace MarketProfile.App.Controls;
 /// Obsługa myszy:
 ///  - przeciąganie lewym przyciskiem – przesuwanie wykresu,
 ///  - przeciąganie odblokowanej linii cenowej – zmiana jej ceny (zablokowanej nie da się przesunąć),
+///  - Ctrl + przeciąganie linii (także zablokowanej) – kopia linii na nowej cenie, oryginał zostaje,
 ///  - kółko – zmiana wysokości wierszy (zoom w pionie),
 ///  - Ctrl + kółko – zmiana szerokości liter (zoom w poziomie),
 ///  - podwójne kliknięcie na linii – edycja linii,
@@ -270,6 +271,12 @@ public sealed partial class ProfileChartControl : FrameworkElement
     /// <summary>Użytkownik przeciągnął linię na nową cenę.</summary>
     public event Action<PriceLine, decimal>? LineMoved;
 
+    /// <summary>
+    /// Użytkownik skopiował linię (Ctrl + przeciągnięcie) – gotowa nowa linia do dodania: nowy identyfikator,
+    /// nowa cena, odblokowana, alarm uzbrojony.
+    /// </summary>
+    public event Action<PriceLine>? LineCopied;
+
     /// <summary>Użytkownik chce rozbić profil – podany okres ma rozpocząć nową część.</summary>
     public event Action<ProfileSnapshot, int>? SplitRequested;
 
@@ -385,6 +392,7 @@ public sealed partial class ProfileChartControl : FrameworkElement
     private decimal _dragCenter;
     private PriceLine? _draggedLine;   // linia przeciągana myszą (null = przesuwamy wykres)
     private decimal _draggedLinePrice; // bieżąca cena przeciąganej linii
+    private bool _copyingLine;         // Ctrl + przeciąganie – kopia linii (oryginał zostaje na miejscu)
 
     // Pamięć podręczna sformatowanych liter – tworzenie FormattedText jest kosztowne.
     private readonly Dictionary<(char, Brush), FormattedText> _letterCache = new();
@@ -1417,12 +1425,7 @@ public sealed partial class ProfileChartControl : FrameworkElement
     /// <summary>Rysuje poziome linie cenowe przez całą szerokość wykresu.</summary>
     private void DrawPriceLines(DrawingContext dc, double chartRight)
     {
-        if (Lines is not { Count: > 0 } lines)
-        {
-            return;
-        }
-
-        foreach (var line in lines)
+        foreach (var line in DrawnLines())
         {
             var price = GetDisplayedPrice(line);
             var y = Math.Round(PriceToY(price)) + (line.Thickness % 2 == 1 ? 0.5 : 0); // ostra linia na pikselach
@@ -1550,7 +1553,7 @@ public sealed partial class ProfileChartControl : FrameworkElement
         }
 
         // Etykiety linii cenowych na osi (w kolorze linii).
-        foreach (var line in Lines ?? [])
+        foreach (var line in DrawnLines())
         {
             var price = GetDisplayedPrice(line);
             var y = PriceToY(price);
@@ -1629,7 +1632,29 @@ public sealed partial class ProfileChartControl : FrameworkElement
 
     /// <summary>Cena linii do narysowania (podczas przeciągania – bieżąca pozycja myszy).</summary>
     private decimal GetDisplayedPrice(PriceLine line) =>
-        _draggedLine?.Id == line.Id ? _draggedLinePrice : line.Price;
+        !_copyingLine && _draggedLine?.Id == line.Id ? _draggedLinePrice : line.Price;
+
+    /// <summary>
+    /// Kopia linii w trakcie Ctrl + przeciągania (null – nie kopiujemy albo cena jeszcze się nie zmieniła):
+    /// nowy identyfikator, odblokowana, alarm uzbrojony.
+    /// </summary>
+    private PriceLine? CopyPreview =>
+        _copyingLine && _draggedLine is { } line && _draggedLinePrice != line.Price
+            ? line with
+            {
+                Id = Guid.NewGuid(),
+                Price = _draggedLinePrice,
+                IsLocked = false,
+                Alert = line.Alert is { } alert ? alert with { IsTriggered = false, LastTriggered = null } : null,
+            }
+            : null;
+
+    /// <summary>Linie do narysowania: linie użytkownika i ewentualny podgląd kopii.</summary>
+    private IEnumerable<PriceLine> DrawnLines()
+    {
+        var lines = Lines ?? [];
+        return CopyPreview is { } copy ? [.. lines, copy] : lines;
+    }
 
     // =====================================================================
     // Wyszukiwanie elementu pod kursorem
@@ -1712,8 +1737,10 @@ public sealed partial class ProfileChartControl : FrameworkElement
             return;
         }
 
+        // Ctrl + przeciąganie linii (także zablokowanej) – kopia linii; oryginał zostaje na miejscu.
         // Zablokowanej linii nie przesuwamy – wtedy przeciąganie przesuwa cały wykres.
-        var movableLine = line is { IsLocked: false } ? line : null;
+        _copyingLine = line is not null && Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+        var movableLine = _copyingLine || line is { IsLocked: false } ? line : null;
 
         _dragStart = position;
         _dragPanX = _panX;
@@ -1731,7 +1758,10 @@ public sealed partial class ProfileChartControl : FrameworkElement
         if (_dragStart is not { } start)
         {
             // Bez przeciągania – zmieniamy kursor nad odblokowaną linią, żeby było widać, że można ją złapać.
-            Cursor = HitTestLine(position) is { IsLocked: false } ? Cursors.SizeNS : CrosshairEnabled ? Cursors.Cross : null;
+            // Z Ctrl – nad każdą linią (kopiować można też zablokowaną).
+            var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            Cursor = HitTestLine(position) is { } hover && (ctrl || !hover.IsLocked) ? Cursors.SizeNS
+                : CrosshairEnabled ? Cursors.Cross : null;
             return;
         }
 
@@ -1753,13 +1783,21 @@ public sealed partial class ProfileChartControl : FrameworkElement
 
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
-        if (_draggedLine is { } line && _draggedLinePrice != line.Price)
+        if (_copyingLine)
+        {
+            if (CopyPreview is { } copy)
+            {
+                LineCopied?.Invoke(copy);
+            }
+        }
+        else if (_draggedLine is { } line && _draggedLinePrice != line.Price)
         {
             LineMoved?.Invoke(line, _draggedLinePrice);
         }
 
         _dragStart = null;
         _draggedLine = null;
+        _copyingLine = false;
         ReleaseMouseCapture();
         InvalidateVisual();
     }

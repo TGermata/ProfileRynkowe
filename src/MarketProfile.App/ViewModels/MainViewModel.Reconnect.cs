@@ -24,12 +24,14 @@ public sealed partial class MainViewModel
 
             try
             {
+                AppLog.Warning("Połączenie", $"utrata połączenia: {reason} – zatrzymuję źródło i łączę ponownie");
                 await StopAsync();
                 ShowError($"{reason} – ponowne łączenie...");
                 await ReconnectLoopAsync();
             }
             catch (Exception ex)
             {
+                AppLog.Error("Połączenie", $"ponowne łączenie po „{reason}” nie powiodło się", ex);
                 ShowError($"{reason}; ponowne łączenie nie powiodło się: {ex.Message}");
             }
         });
@@ -51,6 +53,7 @@ public sealed partial class MainViewModel
                     return;
                 }
 
+                AppLog.Info("Połączenie", $"próba ponownego połączenia nr {attempt + 1}");
                 await StartAsync();
                 if (IsRunning)
                 {
@@ -59,12 +62,13 @@ public sealed partial class MainViewModel
                 }
 
                 var next = ReconnectDelays[Math.Min(attempt + 1, ReconnectDelays.Length - 1)];
+                AppLog.Warning("Połączenie", $"próba nr {attempt + 1} nieudana ({ErrorTextOrDefault()}), kolejna za {next.TotalSeconds:0} s");
                 ShowError($"{ErrorTextOrDefault()} – kolejna próba połączenia za {next.TotalSeconds:0} s");
             }
         }
         catch (OperationCanceledException)
         {
-            // Przerwane przez działanie użytkownika.
+            AppLog.Info("Połączenie", "ponowne łączenie przerwane (działanie użytkownika)");
         }
         finally
         {

@@ -95,6 +95,30 @@ public sealed class OhlcBarsTests : IDisposable
     }
 
     [Fact]
+    public async Task SeriaTylkoSesjaKasowa_OsobnoOdPelnejDoby()
+    {
+        _store.SaveOhlcBars("ES", BarInterval.Day, [Day(2026, 11, 16, 6010m)], MarketDataStore.SourceBroker);
+        _store.SaveOhlcBars("ES", BarInterval.Day, [Day(2026, 11, 16, 6005m)], MarketDataStore.SourceBroker, cashOnly: true);
+
+        Assert.Equal(6010m, Assert.Single(_store.ReadOhlcBars("ES", BarInterval.Day)).Close);
+        Assert.Equal(6005m, Assert.Single(_store.ReadOhlcBars("ES", BarInterval.Day, cashOnly: true)).Close);
+        Assert.Null(_store.GetOhlcRange("ES", BarInterval.Week, cashOnly: true));
+
+        // Seria kasowa ma własny zakres – pierwsze uzupełnienie tygodni / miesięcy to pełna historia, dni – krótkie okno.
+        var requests = new List<string>();
+        var downloader = new OhlcBarDownloader(_store, (_, duration, _) =>
+        {
+            requests.Add(duration);
+            return Task.FromResult(new OhlcPage([Day(2026, 11, 16, 6007m)], null, false));
+        });
+        await downloader.UpdateAsync("ES", MarketDataStore.SourceBroker, Now, CancellationToken.None, cashOnly: true);
+
+        Assert.Equal(["20 Y", "10 Y", "3 D"], requests);
+        Assert.Equal(6007m, _store.ReadOhlcBars("ES", BarInterval.Day, cashOnly: true)[0].Close);
+        Assert.Equal(6010m, _store.ReadOhlcBars("ES", BarInterval.Day)[0].Close); // pełna doba bez zmian
+    }
+
+    [Fact]
     public async Task Uzupelnianie_PoLimicieZapytanPonawia_BladNieZapisujeNic()
     {
         var calls = 0;

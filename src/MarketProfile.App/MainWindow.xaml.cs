@@ -26,6 +26,7 @@ public partial class MainWindow : Window
         Chart.EditLineRequested += line => EditLine(line, isNew: false);
         Chart.DeleteLineRequested += _viewModel.DeleteLine;
         Chart.LineMoved += _viewModel.MoveLine;
+        Chart.LineCopied += _viewModel.AddLine;
         Chart.SplitRequested += _viewModel.SplitProfile;
         Chart.MergeRequested += _viewModel.MergeProfile;
         Chart.SimulateBackToRequested += async time => await _viewModel.SimulateBackToAsync(time); // błąd → globalna obsługa w App
@@ -49,13 +50,6 @@ public partial class MainWindow : Window
         DisplayPanel.PositionCommitted += _viewModel.SaveDisplayPanelPosition;
         OpeningPanel.MoveTo(_viewModel.Settings.OpeningPanelLeft, _viewModel.Settings.OpeningPanelTop);
         OpeningPanel.PositionCommitted += _viewModel.SaveOpeningPanelPosition;
-
-        // Szeroki rynek: wiersze wskaźników nad i pod wykresem przesuwają się razem ze świecami (przewijanie, zoom, kursor).
-        BroadChart.ViewportChanged += (_, viewport) =>
-        {
-            BroadPaneBottom1.Viewport = viewport;
-            BroadPaneBottom2.Viewport = viewport;
-        };
 
         // Zakładki w osobnych oknach (kilka monitorów): obsługa nagłówków i układ okien z ostatniego uruchomienia.
         InitializeDetachableTabs();
@@ -113,6 +107,25 @@ public partial class MainWindow : Window
 
     /// <summary>Pomoc – opis parametrów profili (EN wg Daltona i PL).</summary>
     private void OnHelpClick(object sender, RoutedEventArgs e) => HelpWindow.ShowHelp(this);
+
+    /// <summary>Otwiera dzisiejszy plik dziennika (domyślnym edytorem tekstu); bez pliku – folder dziennika.</summary>
+    private void OnLogClick(object sender, RoutedEventArgs e)
+    {
+        AppLog.Flush(TimeSpan.FromSeconds(1)); // ostatnie wpisy już w pliku
+        var file = AppLog.CurrentFile;
+        var directory = AppLog.Directory ?? Settings.AppSettings.DefaultLogDirectory;
+        var target = file is not null && System.IO.File.Exists(file) ? file : directory;
+        try
+        {
+            System.IO.Directory.CreateDirectory(directory);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Nie udało się otworzyć dziennika:\n{target}\n\n{ex.Message}", "Dziennik",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     /// <summary>F1 – pomoc.</summary>
     private void OnWindowPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)

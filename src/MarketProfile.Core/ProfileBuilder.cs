@@ -41,19 +41,26 @@ public sealed class ProfileBuilder
     public void ProcessTick(Tick tick)
     {
         // Strona transakcji: zmierzona (bid/ask) albo oszacowana regułą ticka – do profilu wolumenowego różnicowego (delta).
+        // Tick starszy od dotychczasowych danych (uzupełnianie luki po przerwie w połączeniu) nie przestawia punktu
+        // odniesienia reguły ticka dla transakcji na żywo – liczy się z własną stroną (źródło ją szacuje) albo bez niej.
         TradeSide side;
         lock (_tickRule)
         {
-            side = _tickRule.Classify(tick);
-            if (tick.Time > _tickRuleTime)
+            if (tick.Time < _tickRuleTime)
             {
+                side = tick.Side;
+            }
+            else
+            {
+                side = _tickRule.Classify(tick);
                 _tickRuleTime = tick.Time;
             }
         }
 
         if (TryResolve(tick.Time, out var profile, out var periodIndex, out var minute))
         {
-            profile.AddPriceRange(periodIndex, tick.Price, tick.Price, tick.Price, tick.Volume, minute: minute, side: side);
+            profile.AddPriceRange(periodIndex, tick.Price, tick.Price, tick.Price, tick.Volume, minute: minute, side: side,
+                time: tick.Time);
         }
     }
 
@@ -81,7 +88,7 @@ public sealed class ProfileBuilder
 
         if (TryResolve(bar.Time, out var profile, out var periodIndex, out var minute))
         {
-            profile.AddPriceRange(periodIndex, bar.Low, bar.High, bar.Close, bar.Volume, bar.Open, minute);
+            profile.AddPriceRange(periodIndex, bar.Low, bar.High, bar.Close, bar.Volume, bar.Open, minute, time: bar.Time);
         }
     }
 

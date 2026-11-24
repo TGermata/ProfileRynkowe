@@ -102,6 +102,23 @@ public sealed class IbDataFeed : IMarketDataFeed, IConnectionLossAware, IBidAskS
     private DateTimeOffset _lastDataAt;
     private int _silentResubscribes;   // kolejne ponowienia bez danych (np. rynek zamknięty) – coraz rzadsze
 
+    // Uzupełnianie luk po krótkiej przerwie w danych (TWS stracił kontakt z serwerami IB / farmą notowań, ponowna
+    // subskrypcja strażnika): IB nie przysyła ponownie transakcji z przerwy – pobieramy je z historii ticków.
+    private DateTimeOffset? _lastLiveTradeAt;   // czas ostatniej transakcji na żywo (tick-by-tick, wątek czytnika)
+    private decimal _lastLiveTradePrice;
+    private readonly SemaphoreSlim _ticksGate = new(1, 1);   // jedno zapytanie reqHistoricalTicks naraz
+    private readonly Lock _gapFillLock = new();
+    private Task _gapFill = Task.CompletedTask;              // kolejne luki uzupełniane po kolei
+
+    /// <summary>
+    /// Przerwa między kolejnymi transakcjami na żywo, od której sprawdzamy w historii IB, czy w tym czasie nie było
+    /// transakcji (przerwa w danych). Gdy rynek był po prostu spokojny – historia nic nie zwraca.
+    /// </summary>
+    public static readonly TimeSpan GapFillThreshold = TimeSpan.FromSeconds(30);
+
+    /// <summary>Najwięcej stron (po ok. 1000 transakcji) pobieranych przy uzupełnianiu jednej luki.</summary>
+    private const int MaxGapFillPages = 60;
+
     public IbDataFeed(IbConnectionSettings settings)
     {
         _settings = settings;
@@ -414,8 +431,10 @@ public sealed class IbDataFeed : IMarketDataFeed, IConnectionLossAware, IBidAskS
     /// Pełna doba (useRTH = 0), a dla indeksów (np. SPX – rynek szeroki) tylko sesja kasowa (useRTH = 1). Dla kontraktów terminowych – kontrakt ciągły (CONTFUT): wieloletnia historia
     /// sklejona z kolejnych serii; ceny starszych świec IB koryguje o różnice przy rolowaniu (nie leżą na ticku i różnią się
     /// od cen ówczesnego kontraktu). Najstarsze świece IB podaje niepełne (O=H=L=C, wolumen 0). Data świecy = data handlowa.
+    /// <paramref name="cashOnly"/> = true – tylko sesja kasowa (useRTH = 1) także dla kontraktów terminowych.
     /// </summary>
-    public async Task<OhlcPage> GetOhlcBarsAsync(BarInterval interval, string duration, CancellationToken cancellationToken = default)
+    public async Task<OhlcPage> GetOhlcBarsAsync(BarInterval interval, string duration, CancellationToken cancellationToken = default,
+        bool cashOnly = false)
     {
         var instrument = _instrument ?? throw new InvalidOperationException("Najpierw wywołaj ConnectAsync.");
         var contract = instrument.Type == InstrumentType.Future
@@ -428,11 +447,11 @@ public sealed class IbDataFeed : IMarketDataFeed, IConnectionLossAware, IBidAskS
             _ => "1 month",
         };
 
-        Status($"IB: pobieranie świec {interval.DisplayName().ToLowerInvariant()}ch ({duration})...");
+        Status($"IB: pobieranie świec {interval.DisplayName().ToLowerInvariant()}ch{(cashOnly ? " (sesja kasowa)" : string.Empty)} ({duration})...");
 
         // Dla kontraktu ciągłego IB wymaga pustego końca zapytania (= teraz). formatDate = 1 → data "yyyyMMdd".
         // Indeksy: tylko sesja kasowa (useRTH = 1) – świece dzienne SPX bez notowań spoza 9:30–16:00.
-        var useRth = instrument.Type == InstrumentType.Index ? 1 : 0;
+        var useRth = cashOnly || instrument.Type == InstrumentType.Index ? 1 : 0;
         return await RequestOhlcAsync(contract, string.Empty, duration, barSize, useRth, formatDate: 1, cancellationToken);
     }
 
@@ -753,10 +772,22 @@ public sealed class IbDataFeed : IMarketDataFeed, IConnectionLossAware, IBidAskS
     /// <paramref name="start"/> w przód. IB uzupełnia ostatnią sekundę do końca, więc następną stronę
     /// można zaczynać od sekundy po ostatniej transakcji. Strona nie przekracza końca sesji.
     /// </summary>
-    public async Task<TickPage> GetTicksPageAsync(DateTimeOffset start, CancellationToken cancellationToken = default)
+    public Task<TickPage> GetTicksPageAsync(DateTimeOffset start, CancellationToken cancellationToken = default) =>
+        RequestTicksPageAsync(start, end: null, cancellationToken);
+
+    /// <summary><see cref="RequestTicksAsync"/> z wynikiem i błędem – jedno zapytanie naraz (wspólne pola odpowiedzi).</summary>
+    private async Task<TickPage> RequestTicksPageAsync(DateTimeOffset? start, DateTimeOffset? end, CancellationToken cancellationToken)
     {
-        var ticks = await RequestTicksAsync(start, end: null, cancellationToken).ConfigureAwait(false);
-        return new TickPage(ticks, _ticksError, _ticksPacing);
+        await _ticksGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var ticks = await RequestTicksAsync(start, end, cancellationToken).ConfigureAwait(false);
+            return new TickPage(ticks, _ticksError, _ticksPacing);
+        }
+        finally
+        {
+            _ticksGate.Release();
+        }
     }
 
     /// <summary>
@@ -802,7 +833,15 @@ public sealed class IbDataFeed : IMarketDataFeed, IConnectionLossAware, IBidAskS
         // mimo tego ostrzeżenia TWS i tak wysyła dane historyczne). Nie przerywamy niczego, tylko informujemy.
         if (InfoCodes.Contains(code) || code is >= 2100 and < 2200)
         {
-            Status($"IB: {message}");
+            // Kod w dzienniku: np. 2103/2105/2157 – zerwane połączenie z farmą notowań / historii / definicji,
+            // 2104/2106/2158 – działa. „Działa” zapisujemy tylko po wcześniejszym zerwaniu (przy każdym połączeniu TWS
+            // wysyła listę wszystkich farm – to nie zdarzenie).
+            if (ShouldLogFarmStatus(code, message))
+            {
+                AppLog.Status($"IB#{_settings.ClientId} {_instrument?.Symbol}".TrimEnd(), $"IB kod {code}: {message}");
+            }
+
+            StatusChanged?.Invoke(this, $"IB: {message}");
             return;
         }
 
@@ -887,12 +926,14 @@ public sealed class IbDataFeed : IMarketDataFeed, IConnectionLossAware, IBidAskS
     /// <summary>Gniazdo TWS zostało zamknięte; jeśli nie przez nas – zgłaszamy utratę połączenia.</summary>
     private void OnConnectionClosed()
     {
-        Status("IB: połączenie z TWS zostało zamknięte");
-        if (!_disconnecting)
+        if (_disconnecting)
         {
-            _watchdogCts?.Cancel();
-            ConnectionLost?.Invoke(this, "Połączenie z TWS / IB Gateway zostało zerwane (np. restart TWS)");
+            return; // rozłączamy się sami – „rozłączono” zgłasza DisconnectAsync
         }
+
+        Status("IB: połączenie z TWS zostało zamknięte");
+        _watchdogCts?.Cancel();
+        ConnectionLost?.Invoke(this, "Połączenie z TWS / IB Gateway zostało zerwane (np. restart TWS)");
     }
 
     private void OnHistoricalBar(int reqId, IBApi.Bar bar)
@@ -916,10 +957,97 @@ public sealed class IbDataFeed : IMarketDataFeed, IConnectionLossAware, IBidAskS
     private void OnTickByTick(long time, double price, decimal size)
     {
         var p = Price(price);
+        var at = DateTimeOffset.FromUnixTimeSeconds(time);
         MarkDataReceived();
+
+        // Długa przerwa od poprzedniej transakcji – mogła to być przerwa w danych: transakcje z niej z historii IB.
+        if (_lastLiveTradeAt is { } previous && at - previous > GapFillThreshold && !_disconnecting)
+        {
+            QueueGapFill(previous, _lastLiveTradePrice, at);
+        }
+
+        if (_lastLiveTradeAt is null || at >= _lastLiveTradeAt)
+        {
+            _lastLiveTradeAt = at;
+            _lastLiveTradePrice = p;
+        }
+
         QuoteReceived?.Invoke(this, p);
-        TickReceived?.Invoke(this, new Tick(DateTimeOffset.FromUnixTimeSeconds(time), p, Math.Max(1, (long)size),
-            TradeSideClassifier.FromQuote(p, _bid, _ask)));
+        TickReceived?.Invoke(this, new Tick(at, p, Math.Max(1, (long)size), TradeSideClassifier.FromQuote(p, _bid, _ask)));
+    }
+
+    /// <summary>Dopisuje lukę (od ostatniej transakcji przed przerwą do pierwszej po niej) do kolejki uzupełniania.</summary>
+    private void QueueGapFill(DateTimeOffset lastBefore, decimal lastPrice, DateTimeOffset firstAfter)
+    {
+        AppLog.Info($"IB#{_settings.ClientId} {_instrument?.Symbol}".TrimEnd(),
+            $"przerwa między transakcjami {(firstAfter - lastBefore).TotalSeconds:0} s ({lastBefore.ToLocalTime():HH:mm:ss}–" +
+            $"{firstAfter.ToLocalTime():HH:mm:ss}) – sprawdzam w historii IB, czy brakuje transakcji");
+        lock (_gapFillLock)
+        {
+            _gapFill = _gapFill.ContinueWith(_ => FillGapAsync(lastBefore, lastPrice, firstAfter), TaskScheduler.Default).Unwrap();
+        }
+    }
+
+    /// <summary>
+    /// Pobiera z historii IB transakcje z luki i przekazuje je dalej (<see cref="TickReceived"/>) – profil, wolumen
+    /// i zapis w bazie uzupełniają się jak przy zwykłych tickach. Bez sekund brzegowych: transakcje z sekundy ostatniego
+    /// ticka przed przerwą i pierwszego po niej już przyszły na żywo. Strona transakcji – reguła ticka od ceny sprzed luki.
+    /// </summary>
+    private async Task FillGapAsync(DateTimeOffset lastBefore, decimal lastPrice, DateTimeOffset firstAfter)
+    {
+        try
+        {
+            var collected = new List<Tick>();
+            var start = lastBefore.AddSeconds(1);
+            string? error = null;
+            for (var page = 0; page < MaxGapFillPages && start < firstAfter && !_disconnecting; page++)
+            {
+                var result = await RequestTicksPageAsync(start, end: null, CancellationToken.None).ConfigureAwait(false);
+                if (result.Error is not null && result.Ticks.Count == 0)
+                {
+                    error = result.Error;
+                    break;
+                }
+
+                collected.AddRange(result.Ticks.Where(t => t.Time > lastBefore && t.Time < firstAfter));
+                if (result.Ticks.Count == 0 || result.Ticks[^1].Time >= firstAfter)
+                {
+                    break;
+                }
+
+                start = result.Ticks[^1].Time.AddSeconds(1); // IB podaje ostatnią sekundę strony w całości
+            }
+
+            if (_disconnecting)
+            {
+                return;
+            }
+
+            if (collected.Count == 0)
+            {
+                if (error is not null)
+                {
+                    Status($"IB: uwaga – nie udało się uzupełnić przerwy w danych {Local(lastBefore)}–{Local(firstAfter)} ({error})");
+                }
+
+                return; // rynek był spokojny – w przerwie nie było transakcji
+            }
+
+            var rule = new TickRule();
+            rule.Observe(lastPrice);
+            foreach (var tick in collected)
+            {
+                TickReceived?.Invoke(this, tick with { Side = rule.Classify(tick) });
+            }
+
+            Status($"IB: uzupełniono przerwę w danych {Local(lastBefore)}–{Local(firstAfter)} – {collected.Count} transakcji z historii IB");
+        }
+        catch (Exception ex)
+        {
+            Status($"IB: uwaga – błąd uzupełniania przerwy w danych: {ex.Message}");
+        }
+
+        string Local(DateTimeOffset t) => t.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
     }
 
     /// <summary>Notowanie bid/ask tick-by-tick.</summary>
@@ -1082,7 +1210,31 @@ public sealed class IbDataFeed : IMarketDataFeed, IConnectionLossAware, IBidAskS
         }
     }
 
-    private void Status(string message) => StatusChanged?.Invoke(this, message);
+    // Farmy danych IB z zerwanym połączeniem (wątek czytnika) – do zapisania w dzienniku ich powrotu.
+    private readonly HashSet<string> _brokenFarms = [];
+
+    /// <summary>Czy zapisać komunikat o farmie danych: zerwanie – zawsze, „działa” – tylko po wcześniejszym zerwaniu.</summary>
+    private bool ShouldLogFarmStatus(int code, string message)
+    {
+        var farm = message[(message.LastIndexOf(':') + 1)..].Trim();
+        switch (code)
+        {
+            case 2103 or 2105 or 2157:
+                _brokenFarms.Add(farm);
+                return true;
+            case 2104 or 2106 or 2158:
+                return _brokenFarms.Remove(farm);
+            default:
+                return true;
+        }
+    }
+
+    private void Status(string message)
+    {
+        // Każdy komunikat połączenia (także dodatkowych: pobieranie w tle, szeroki rynek) – do dziennika, z Client ID.
+        AppLog.Status($"IB#{_settings.ClientId} {_instrument?.Symbol}".TrimEnd(), message);
+        StatusChanged?.Invoke(this, message);
+    }
 
     /// <summary>
     /// Odbiorca wiadomości z TWS. TWS API wymaga obiektu z metodami-zwrotkami (EWrapper);

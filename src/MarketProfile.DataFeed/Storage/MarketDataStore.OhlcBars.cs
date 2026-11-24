@@ -80,12 +80,22 @@ public sealed partial class MarketDataStore
         transaction.Commit();
     }
 
+    /// <summary>Przyrostek kodu interwału serii „tylko sesja kasowa” (świece D/W/M kontraktu terminowego bez notowań nocnych).</summary>
+    public const string CashOnlySuffix = "-RTH";
+
+    /// <summary>
+    /// Kod interwału w kolumnie <c>interval</c>: "D" / "W" / "M" / "30m" – seria podstawowa (dla kontraktów terminowych
+    /// cała doba), z przyrostkiem <see cref="CashOnlySuffix"/> – osobna seria tylko z sesji kasowej (np. "D-RTH").
+    /// </summary>
+    private static string StoredIntervalCode(BarInterval interval, bool cashOnly) =>
+        cashOnly ? interval.Code() + CashOnlySuffix : interval.Code();
+
     /// <summary>
     /// Zapisuje świece interwału pod początkiem okresu (<see cref="BarIntervals.PeriodStart"/>). Świeca tego samego
     /// okresu jest zastępowana – bieżąca (niedomknięta) świeca jest aktualizowana przy każdym odświeżeniu.
     /// Zwraca liczbę zapisanych świec.
     /// </summary>
-    public int SaveOhlcBars(string symbol, BarInterval interval, IEnumerable<Bar> bars, string source)
+    public int SaveOhlcBars(string symbol, BarInterval interval, IEnumerable<Bar> bars, string source, bool cashOnly = false)
     {
         using var connection = Open();
         using var transaction = connection.BeginTransaction();
@@ -96,7 +106,7 @@ public sealed partial class MarketDataStore
             """;
 
         command.Parameters.AddWithValue("$s", symbol);
-        command.Parameters.AddWithValue("$i", interval.Code());
+        command.Parameters.AddWithValue("$i", StoredIntervalCode(interval, cashOnly));
         command.Parameters.AddWithValue("$src", source);
         var pTime = command.Parameters.Add("$t", SqliteType.Integer);
         var pOpen = command.Parameters.Add("$o", SqliteType.Integer);
@@ -125,7 +135,8 @@ public sealed partial class MarketDataStore
     /// <summary>
     /// Świece interwału w kolejności czasu, z zakresu [from, to) (null = bez ograniczenia).
     /// </summary>
-    public IReadOnlyList<Bar> ReadOhlcBars(string symbol, BarInterval interval, DateTimeOffset? from = null, DateTimeOffset? to = null)
+    public IReadOnlyList<Bar> ReadOhlcBars(string symbol, BarInterval interval, DateTimeOffset? from = null, DateTimeOffset? to = null,
+        bool cashOnly = false)
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
@@ -136,7 +147,7 @@ public sealed partial class MarketDataStore
             ORDER BY time
             """;
         command.Parameters.AddWithValue("$s", symbol);
-        command.Parameters.AddWithValue("$i", interval.Code());
+        command.Parameters.AddWithValue("$i", StoredIntervalCode(interval, cashOnly));
         command.Parameters.AddWithValue("$from", (object?)from?.ToUnixTimeMilliseconds() ?? DBNull.Value);
         command.Parameters.AddWithValue("$to", (object?)to?.ToUnixTimeMilliseconds() ?? DBNull.Value);
 
@@ -157,13 +168,13 @@ public sealed partial class MarketDataStore
     }
 
     /// <summary>Data najstarszej i najnowszej świecy interwału oraz ich liczba; null = brak świec.</summary>
-    public (DateTimeOffset Oldest, DateTimeOffset Newest, int Count)? GetOhlcRange(string symbol, BarInterval interval)
+    public (DateTimeOffset Oldest, DateTimeOffset Newest, int Count)? GetOhlcRange(string symbol, BarInterval interval, bool cashOnly = false)
     {
         using var connection = Open();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT MIN(time), MAX(time), COUNT(*) FROM ohlc_bars WHERE symbol = $s AND interval = $i";
         command.Parameters.AddWithValue("$s", symbol);
-        command.Parameters.AddWithValue("$i", interval.Code());
+        command.Parameters.AddWithValue("$i", StoredIntervalCode(interval, cashOnly));
 
         using var reader = command.ExecuteReader();
         if (!reader.Read() || reader.IsDBNull(0))

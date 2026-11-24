@@ -159,6 +159,8 @@
                         ToolTip="Tabela parametrów profili (kształt, otwarcie, migracja VA, IB, ogony, nietknięte POC…) – zapisywanych w bazie dla algorytmów" />
                 <Button Content="? Pomoc" Click="OnHelpClick" Padding="8,0" Margin="6,0,0,0"
                         ToolTip="Opis parametrów profili po angielsku (wg J. Daltona) i po polsku (F1)" />
+                <Button Content="📄 Dziennik" Click="OnLogClick" Padding="8,0" Margin="6,0,0,0"
+                        ToolTip="Dziennik zdarzeń i błędów z dzisiaj (połączenia z IB, przerwy w danych, błędy) – plik tekstowy w folderze z Ustawień (Dane i broker → Pobieranie i baza, domyślnie %AppData%\MarketProfile\logs).&#x0a;Pliki z ostatnich 30 dni są w tym samym folderze." />
 
                 <!-- Elementy tylko dla zakładki „Profil TPO” (sesje, liczba profili, powiększenie, wolumen). -->
                 <StackPanel Orientation="Horizontal" Visibility="{Binding IsTpoTab, Converter={StaticResource BoolToVisibility}}">
@@ -180,7 +182,7 @@
                 <Button Content="+" Width="26" Margin="3,0,0,0" Click="OnZoomInClick"
                         ToolTip="Przybliż – zbliżenie na profil (kółko myszy w górę, klawisz +)" />
                 <Button Content="⤢ Dopasuj" Padding="6,0" Margin="3,0,0,0" Click="OnZoomFitClick"
-                        ToolTip="Dopasuj do wybranej liczby profili i wróć do najnowszych (2× klik na wykresie, klawisz 0)&#x0a;Kółko – powiększenie w obu osiach, Ctrl+kółko – tylko poziomo, Shift+kółko – tylko pionowo, przeciągnij – przesuń.&#x0a;Przesunięcie w lewo za najstarszy profil doczytuje starszą historię." />
+                        ToolTip="Dopasuj do wybranej liczby profili i wróć do najnowszych (2× klik na wykresie, klawisz 0)&#x0a;Kółko – powiększenie w obu osiach, Ctrl+kółko – tylko poziomo, Shift+kółko – tylko pionowo, przeciągnij – przesuń.&#x0a;Ctrl+przeciągnij linię cenową – kopia linii na nowej cenie (oryginał zostaje).&#x0a;Przesunięcie w lewo za najstarszy profil doczytuje starszą historię." />
 
                 <!-- Profil wolumenowy: brak / tylko bieżący profil / wszystkie profile. -->
                 <TextBlock Text="Wolumen:" Foreground="#C8CDD4" VerticalAlignment="Center" Margin="20,0,6,0" />
@@ -545,6 +547,17 @@
                                 <RadioButton Content="OHLC" GroupName="CandleType" IsChecked="{Binding IsOhlcType}"
                                              Style="{StaticResource IntervalButton}" ToolTip="Słupki OHLC: kreska maksimum–minimum, otwarcie w lewo, zamknięcie w prawo" />
 
+                                <!-- Cała doba / tylko sesja kasowa (kontrakty terminowe; indeks ma zawsze tylko sesję kasową). -->
+                                <StackPanel Orientation="Horizontal" Visibility="{Binding HasCashSessionSwitch, Converter={StaticResource BoolToVisibility}}">
+                                    <Border Style="{StaticResource SimSeparator}" Margin="10,0" />
+                                    <RadioButton Content="Doba" GroupName="CandleSession" IsChecked="{Binding IsFullDaySession}"
+                                                 Style="{StaticResource IntervalButton}"
+                                                 ToolTip="Świece z całej doby handlowej (sesja nocna + dzienna)" />
+                                    <RadioButton Content="Kasowa" GroupName="CandleSession" IsChecked="{Binding IsCashSessionOnly}"
+                                                 Style="{StaticResource IntervalButton}"
+                                                 ToolTip="Świece tylko z sesji kasowej (dziennej, bez notowań nocnych) – osobna seria pobierana z IBKR" />
+                                </StackPanel>
+
                                 <!-- Skala: poziomo (szerokość świec) i pionowo (automatyczna / ręczna). -->
                                 <Border Style="{StaticResource SimSeparator}" Margin="10,0" />
                                 <Button Content="−" Width="26" Height="26" Click="OnCandleZoomOutClick"
@@ -717,20 +730,37 @@
                                        TextTrimming="CharacterEllipsis" ToolTip="{Binding BroadInfo}" />
                         </DockPanel>
                     </Border>
+                    <!-- Na dole zakładki: pasek 11 sektorów S&P 500 (od największej wagi): waga w indeksie i zmiana od otwarcia sesji kasowej (ETF-y SPDR). -->
+                    <Border DockPanel.Dock="Bottom" Background="#14171C" BorderBrush="#2C313A" BorderThickness="0,1,0,0"
+                            Visibility="{Binding ShowSectorStrip, Converter={StaticResource BoolToVisibility}}">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Bottom" Text="{Binding SectorInfo}" Foreground="#A0761E" FontSize="10" Margin="6,0,6,2"
+                                       TextTrimming="CharacterEllipsis">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <Trigger Property="Text" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <controls:SectorStripControl Tiles="{Binding SectorTiles}" Height="40" />
+                        </DockPanel>
+                    </Border>
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="70" />
                             <RowDefinition Height="*" MinHeight="150" />
-                            <RowDefinition Height="70" />
-                            <RowDefinition Height="92" />
                         </Grid.RowDefinitions>
-                        <!-- Wiersz nad wykresem: kolumny po 15% szerokości; w pierwszej – Oddech rynku (wolumen kupna / sprzedaży SPY z bid/ask od 9:30 ET). -->
+                        <!-- Wiersz nad wykresem: kolumny po 15% szerokości; w pierwszej – Oddech rynku (wolumen kupna / sprzedaży SPY z bid/ask od 9:30 ET),
+                             w drugiej – Oddech rynku NYSE (VOL-NYSE), w trzeciej i czwartej – spółki rosnące / spadające NYSE i NASDAQ (AD-NYSE, AD-NASD). -->
                         <Border Grid.Row="0" Background="#14171C" BorderBrush="#2C313A" BorderThickness="0,0,0,1">
                             <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="15*" /><ColumnDefinition Width="15*" /><ColumnDefinition Width="15*" />
-                                    <ColumnDefinition Width="15*" /><ColumnDefinition Width="15*" /><ColumnDefinition Width="15*" />
-                                    <ColumnDefinition Width="10*" />
+                                    <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <Border Grid.Column="0" BorderBrush="#2C313A" BorderThickness="0,0,1,0">
                                     <controls:MarketBreathControl Title="ODDECH RYNKU · SPY" Value="{Binding BreathValue}" Detail="{Binding BreathDetail}"
@@ -742,10 +772,33 @@
                                                                   ShowGauge="{Binding ShowBreathGauge}"
                                                                   ToolTip="Oddech rynku – cała NYSE: wolumen spółek rosnących / spadających względem wczorajszego zamknięcia (dane IB VOL-NYSE, od otwarcia).&#x0a;Przewaga wzrostów = w górę / w dół (np. +1,25), przewaga spadków = −(w dół / w górę) (np. −1,25)." />
                                 </Border>
-                                <Border Grid.Column="2" BorderBrush="#2C313A" BorderThickness="0,0,1,0" />
-                                <Border Grid.Column="3" BorderBrush="#2C313A" BorderThickness="0,0,1,0" />
-                                <Border Grid.Column="4" BorderBrush="#2C313A" BorderThickness="0,0,1,0" />
-                                <Border Grid.Column="5" BorderBrush="#2C313A" BorderThickness="0,0,1,0" />
+                                <Border Grid.Column="2" BorderBrush="#2C313A" BorderThickness="0,0,1,0">
+                                    <controls:AdvanceDeclineControl Title="SPÓŁKI ▲▼ · NYSE" Data="{Binding NyseAdvanceDecline}"
+                                                                    ShowGauge="{Binding ShowBreathGauge}"
+                                                                    >
+                                        <controls:AdvanceDeclineControl.ToolTip>
+                                            <TextBlock Text="{Binding NyseAdvanceDecline.Detail, StringFormat='Ile spółek NYSE rośnie (▲), a ile spada (▼) względem wczorajszego zamknięcia (dane IB AD-NYSE).&#x0a;Zielony – więcej rosnących, czerwony – więcej spadających.&#x0a;{0}'}" />
+                                        </controls:AdvanceDeclineControl.ToolTip>
+                                    </controls:AdvanceDeclineControl>
+                                </Border>
+                                <Border Grid.Column="3" BorderBrush="#2C313A" BorderThickness="0,0,1,0">
+                                    <controls:AdvanceDeclineControl Title="SPÓŁKI ▲▼ · NASDAQ" Data="{Binding NasdaqAdvanceDecline}"
+                                                                    ShowGauge="{Binding ShowBreathGauge}"
+                                                                    >
+                                        <controls:AdvanceDeclineControl.ToolTip>
+                                            <TextBlock Text="{Binding NasdaqAdvanceDecline.Detail, StringFormat='Ile spółek NASDAQ rośnie (▲), a ile spada (▼) względem wczorajszego zamknięcia (dane IB AD-NASD).&#x0a;Zielony – więcej rosnących, czerwony – więcej spadających.&#x0a;{0}'}" />
+                                        </controls:AdvanceDeclineControl.ToolTip>
+                                    </controls:AdvanceDeclineControl>
+                                </Border>
+                                <!-- Po prawej (żółte tło): o ile % cena SPX jest nad / pod EMA8 i EMA21 z wykresu 30 min. -->
+                                <Border Grid.Column="4" BorderBrush="#2C313A" BorderThickness="0,0,1,0">
+                                    <controls:EmaDistanceControl Title="SPX VS EMA8" Value="{Binding Ema8Distance}" Detail="{Binding Ema8Detail}"
+                                                                 ToolTip="O ile procent bieżąca cena SPX jest nad (▲) albo pod (▼) EMA8 ze świec 30 min (sesja kasowa) – tą samą co linia na wykresie.&#x0a;(cena − EMA8) / EMA8 × 100" />
+                                </Border>
+                                <Border Grid.Column="5">
+                                    <controls:EmaDistanceControl Title="SPX VS EMA21" Value="{Binding Ema21Distance}" Detail="{Binding Ema21Detail}"
+                                                                 ToolTip="O ile procent bieżąca cena SPX jest nad (▲) albo pod (▼) EMA21 ze świec 30 min (sesja kasowa) – tą samą co linia na wykresie.&#x0a;(cena − EMA21) / EMA21 × 100" />
+                                </Border>
                             </Grid>
                         </Border>
                         <controls:CandleChartControl x:Name="BroadChart" Grid.Row="1"
@@ -756,10 +809,7 @@
                                                      Appearance="{Binding BroadAppearance}"
                                                      EmptyText="{Binding BroadEmptyText}"
                                                      RightMarginPercent="{Binding BroadRightMargin}"
-                                                     ShowDateAxis="False" />
-                        <!-- Wiersze pod wykresem; najniższy rysuje oś dat. -->
-                        <controls:IndicatorPaneControl x:Name="BroadPaneBottom1" Grid.Row="2" Title="Wskaźnik D1 (wolny)" />
-                        <controls:IndicatorPaneControl x:Name="BroadPaneBottom2" Grid.Row="3" Title="Wskaźnik D2 (wolny)" ShowDateAxis="True" />
+                                                     ShowDateAxis="True" />
                     </Grid>
                 </DockPanel>
             </TabItem>
@@ -769,6 +819,7 @@
             Obsługa wykresu:
             przeciągnij – przesuń | kółko – zoom pionowy | Ctrl+kółko – zoom poziomy | 2× klik – śledź cenę
             prawy przycisk – menu: linie cenowe, rozbijanie i łączenie profili | przeciągnij linię – zmień jej cenę
+            Ctrl+przeciągnij linię – kopia linii
         -->
     </DockPanel>
 </Window>

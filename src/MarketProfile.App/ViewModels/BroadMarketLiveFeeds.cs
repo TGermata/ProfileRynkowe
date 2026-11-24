@@ -8,8 +8,10 @@ namespace MarketProfile.App.ViewModels;
 /// Dodatkowe połączenia na żywo z IB dla zakładki „Szeroki rynek” (obok głównego źródła danych wykresu TPO):
 ///  - rynek szeroki (indeks, np. SPX) – notowania do bieżącej świecy 30 min,
 ///  - SPY – transakcje z notowaniami bid/ask (rzeczywista strona kupno / sprzedaż) do wskaźnika „Oddech rynku · SPY”,
-///  - VOL-NYSE – wolumen spółek NYSE rosnących / spadających do wskaźnika „Oddech rynku · NYSE”.
-/// Każde źródło IB (TWS) obsługuje jeden instrument i ma własny Client ID: główny + 3 (indeks), + 4 (SPY), + 5 (VOL-NYSE).
+///  - VOL-NYSE – wolumen spółek NYSE rosnących / spadających do wskaźnika „Oddech rynku · NYSE”,
+///  - AD-NYSE i AD-NASD – liczba spółek rosnących / spadających NYSE i NASDAQ.
+/// Każde źródło IB (TWS) obsługuje jeden instrument i ma własny Client ID: główny + 3 (indeks), + 4 (SPY), + 5 (VOL-NYSE),
+/// + 6 (AD-NYSE), + 7 (AD-NASD).
 /// Instrument, który jest już instrumentem głównym, nie dostaje osobnego połączenia – jego ticki przekazuje model widoku.
 /// Ticki SPY są zapisywane w bazie (gdy włączone „Zapisuj do bazy”) – po ponownym uruchomieniu wskaźnik liczy od 9:30.
 /// </summary>
@@ -28,6 +30,25 @@ public sealed class BroadMarketLiveFeeds : IAsyncDisposable
         Description = "NYSE Volume Index",
         Type = InstrumentType.Index,
         Exchange = "NYSE",
+        TickSize = 10m, // min. tick w IB (inny – ostrzeżenie o niezgodnym ticku)
+        HasNightSession = false,
+    };
+
+    /// <summary>
+    /// IB „NYSE Advance/Decline” – liczba spółek NYSE rosnących (bid) i spadających (ask) względem zamknięcia
+    /// poprzedniej sesji. Przez TWS API IB może tych pól nie podawać (sprawdzone 23–24.11.2026) – wtedy komunikat.
+    /// </summary>
+    public static Instrument NyseAdvanceDecline { get; } = AdvanceDeclineIndex("AD-NYSE", "NYSE Advance/Decline", "NYSE");
+
+    /// <summary>IB „NASDAQ Advance/Decline” – jak <see cref="NyseAdvanceDecline"/> (wymaga subskrypcji danych NASDAQ).</summary>
+    public static Instrument NasdaqAdvanceDecline { get; } = AdvanceDeclineIndex("AD-NASD", "NASDAQ Advance/Decline", "NASDAQ");
+
+    private static Instrument AdvanceDeclineIndex(string symbol, string description, string exchange) => new()
+    {
+        Symbol = symbol,
+        Description = description,
+        Type = InstrumentType.Index,
+        Exchange = exchange,
         TickSize = 1m,
         HasNightSession = false,
     };
@@ -56,6 +77,17 @@ public sealed class BroadMarketLiveFeeds : IAsyncDisposable
 
     /// <summary>Wolumen spółek NYSE rosnących i spadających (VOL-NYSE, bid / ask) – z wątku źródła danych.</summary>
     public event Action<decimal, decimal>? NyseVolume;
+
+    /// <summary>
+    /// Liczba spółek rosnących i spadających (symbol AD-NYSE / AD-NASD, bid / ask) – z wątku źródła danych.
+    /// </summary>
+    public event Action<string, decimal, decimal>? AdvanceDecline;
+
+    /// <summary>
+    /// Problem połączenia AD-NYSE / AD-NASD (symbol, komunikat) – pokazywany w kolumnie wskaźnika, nie jako błąd aplikacji
+    /// (np. brak subskrypcji NASDAQ zgłaszałby się przy każdym połączeniu). Z wątku źródła danych.
+    /// </summary>
+    public event Action<string, string>? AdvanceDeclineProblem;
 
     /// <summary>Komunikat o problemie (np. brak uprawnień, zerwane połączenie) – z wątku źródła danych.</summary>
     public event Action<string>? Problem;
@@ -86,6 +118,22 @@ public sealed class BroadMarketLiveFeeds : IAsyncDisposable
                 }
             }).ConfigureAwait(false);
 
+        // Liczba spółek rosnących / spadających NYSE i NASDAQ – też w polach bid / ask.
+        var clientOffset = 6;
+        foreach (var market in new[] { NyseAdvanceDecline, NasdaqAdvanceDecline })
+        {
+            var symbol = market.Symbol;
+            await StartFeedAsync(mainConnection with { ClientId = mainConnection.ClientId + clientOffset++ }, market, _ => { }, token,
+                (bid, ask) =>
+                {
+                    if (bid is { } advancing && ask is { } declining)
+                    {
+                        AdvanceDecline?.Invoke(symbol, advancing, declining);
+                    }
+                },
+                message => AdvanceDeclineProblem?.Invoke(symbol, message)).ConfigureAwait(false);
+        }
+
         if (breath is not null)
         {
             _recorder = recordTo is null ? null : new MarketDataRecorder(recordTo, breath.Symbol, MarketDataStore.SourceBroker);
@@ -98,10 +146,12 @@ public sealed class BroadMarketLiveFeeds : IAsyncDisposable
         }
     }
 
-    /// <returns>Działające źródło albo null (błąd – zgłoszony w <see cref="Problem"/>).</returns>
+    /// <param name="onProblem">Odbiorca problemów tego połączenia; null – <see cref="Problem"/>.</param>
+    /// <returns>Działające źródło albo null (błąd – zgłoszony w <see cref="Problem"/> / <paramref name="onProblem"/>).</returns>
     private async Task<IMarketDataFeed?> StartFeedAsync(IbConnectionSettings connection, Instrument instrument, Action<Tick> onTick,
-        CancellationToken token, Action<decimal?, decimal?>? onBidAsk = null)
+        CancellationToken token, Action<decimal?, decimal?>? onBidAsk = null, Action<string>? onProblem = null)
     {
+        var report = onProblem ?? (message => Problem?.Invoke($"{instrument.Symbol} (szeroki rynek): {message}"));
         var feed = IbFeeds.Create(connection);
         try
         {
@@ -116,13 +166,13 @@ public sealed class BroadMarketLiveFeeds : IAsyncDisposable
             {
                 if (IsProblem(message))
                 {
-                    Problem?.Invoke($"{instrument.Symbol} (szeroki rynek): {message}");
+                    report(message);
                 }
             };
 
             if (feed is IConnectionLossAware aware)
             {
-                aware.ConnectionLost += (_, reason) => Problem?.Invoke($"{instrument.Symbol} (szeroki rynek): {reason}");
+                aware.ConnectionLost += (_, reason) => report(reason);
             }
 
             await feed.StartLiveAsync(token).ConfigureAwait(false);
@@ -141,7 +191,8 @@ public sealed class BroadMarketLiveFeeds : IAsyncDisposable
                 throw;
             }
 
-            Problem?.Invoke($"{instrument.Symbol} (szeroki rynek): {ex.Message}");
+            AppLog.Error("Szeroki rynek", $"połączenie {instrument.Symbol} (Client ID {connection.ClientId}) nie powiodło się", ex);
+            report(ex.Message);
             return null;
         }
     }

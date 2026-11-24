@@ -169,7 +169,11 @@ public sealed class IbWebSession : IAsyncDisposable
     /// <summary>Identyfikator sesji z <c>/tickle</c> – cookie „api” dla WebSocket.</summary>
     internal string? SessionCookie => _sessionCookie;
 
-    internal static void Status(string message) => StatusChanged?.Invoke(null, message);
+    internal static void Status(string message)
+    {
+        MarketProfile.Core.AppLog.Status("IBWeb sesja", message);
+        StatusChanged?.Invoke(null, message);
+    }
 
     // =====================================================================
     // Logowanie

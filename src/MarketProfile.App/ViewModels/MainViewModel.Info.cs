@@ -1,4 +1,5 @@
 using System.Windows.Threading;
+using MarketProfile.Core;
 using MarketProfile.DataFeed.Storage;
 
 namespace MarketProfile.App.ViewModels;
@@ -52,6 +53,7 @@ public sealed partial class MainViewModel
     /// <summary>Podpowiedź po akcji użytkownika – widoczna kilka sekund.</summary>
     private void Hint(string text)
     {
+        AppLog.Info("Komunikat", text);
         _hintText = text;
         _hintTimer ??= CreateHintTimer();
         _hintTimer.Stop();
@@ -62,6 +64,11 @@ public sealed partial class MainViewModel
     /// <summary>Błąd – widoczny, dopóki nie zostanie usunięty (np. udanym startem źródła danych).</summary>
     private void ShowError(string text)
     {
+        if (text != _errorText)
+        {
+            AppLog.Status("Komunikat", text);
+        }
+
         _errorText = text;
         NotifyInfo();
     }
@@ -82,6 +89,7 @@ public sealed partial class MainViewModel
         }
         catch (Exception ex)
         {
+            AppLog.Error("Aplikacja", context, ex);
             ShowError($"{context}: {ex.Message}");
         }
     }
@@ -116,6 +124,13 @@ public sealed partial class MainViewModel
         {
             _feedWarning = null;
             NotifyInfo();
+        }
+        else if (text.Contains("uzupełniono przerwę"))
+        {
+            // Dane wróciły, a brakujące transakcje z przerwy są już w profilu – ostrzeżenie o przerwie nieaktualne.
+            _feedWarning = null;
+            NotifyInfo();
+            Hint(message);
         }
     }
 

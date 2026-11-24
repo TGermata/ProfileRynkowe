@@ -49,6 +49,7 @@ public sealed class SettingsViewModel : ObservableObject
 
         // Baza danych.
         RecordToDatabase = settings.RecordToDatabase;
+        _logDirectory = settings.EffectiveLogDirectory;
         ShowDownloadProgress = settings.ShowDownloadProgress;
         ControlSize = settings.ControlSize;
         TempoGauge = settings.TempoGauge;
@@ -119,7 +120,29 @@ public sealed class SettingsViewModel : ObservableObject
             .Prepend(Instrument.DefaultBroadMarketSymbol)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         LoadBroadMarketChart(settings.BroadMarketChart);
+
+        // Sektory S&P 500: wagi (kolejność jak na pasku – od największej) i data zestawienia.
+        ShowSectorStrip = settings.ShowSectorStrip;
+        SectorWeightsDate = settings.SectorWeightsDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        foreach (var (sector, weight) in SectorPerformance.OrderedByWeight(settings.SectorWeights))
+        {
+            SectorWeightEditors.Add(new SectorWeightEditor(sector, weight.ToString("0.##", CultureInfo.CurrentCulture)));
+        }
     }
+
+    // --- Sektory S&P 500 (pasek na dole zakładki „Szeroki rynek”) ---
+
+    /// <summary>Czy pokazywać pasek sektorów na dole zakładki „Szeroki rynek”.</summary>
+    public bool ShowSectorStrip { get; set; }
+
+    /// <summary>Data zestawienia S&amp;P, z którego pochodzą wagi (RRRR-MM-DD).</summary>
+    public string SectorWeightsDate { get; set; } = string.Empty;
+
+    /// <summary>Wagi 11 sektorów – edytowalna tabela.</summary>
+    public ObservableCollection<SectorWeightEditor> SectorWeightEditors { get; } = [];
+
+    /// <summary>Strona S&amp;P 500 na spglobal.com (zakładka z wagami sektorów).</summary>
+    public const string SectorWeightsUrl = "https://www.spglobal.com/spdji/en/indices/equity/sp-500/#data";
 
     /// <summary>Symbol „rynku szerokiego” (indeks, np. SPX) – zakładka „Szeroki rynek”, przełącznik na wykresie D/W/M.</summary>
     public string BroadMarketSymbol { get; set; } = string.Empty;
@@ -239,6 +262,28 @@ public sealed class SettingsViewModel : ObservableObject
 
     // --- Średnie dzienne (wartości „na dziś”) jako linie na wykresie TPO ---
     public bool TpoAveragesEnabled { get; set; }
+
+    private bool _tpoAveragesIncludeNight;
+
+    /// <summary>Średnie na TPO z całej doby (z sesją nocną); false – tylko z sesji kasowej.</summary>
+    public bool TpoAveragesIncludeNight
+    {
+        get => _tpoAveragesIncludeNight;
+        set
+        {
+            if (SetProperty(ref _tpoAveragesIncludeNight, value))
+            {
+                OnPropertyChanged(nameof(TpoAveragesCashOnly)); // ten sam przełącznik w dwóch zakładkach
+            }
+        }
+    }
+
+    /// <summary>Średnie na TPO tylko z sesji kasowej (para przycisków z <see cref="TpoAveragesIncludeNight"/>).</summary>
+    public bool TpoAveragesCashOnly
+    {
+        get => !_tpoAveragesIncludeNight;
+        set => TpoAveragesIncludeNight = !value;
+    }
     public bool TpoAveragesLabelLeft { get; set; }
     public bool TpoAveragesLabelRight { get; set; }
     public bool TpoAveragesShowValue { get; set; }
@@ -252,6 +297,7 @@ public sealed class SettingsViewModel : ObservableObject
     private void LoadTpoAverages(TpoAveragesStyle style)
     {
         TpoAveragesEnabled = style.Enabled;
+        TpoAveragesIncludeNight = style.IncludeNightSession;
         TpoAveragesLabelLeft = style.LabelPosition == LabelPosition.Left;
         TpoAveragesLabelRight = style.LabelPosition == LabelPosition.Right;
         TpoAveragesShowValue = style.ShowValueInLabel;
@@ -294,6 +340,7 @@ public sealed class SettingsViewModel : ObservableObject
         return new TpoAveragesStyle
         {
             Enabled = TpoAveragesEnabled,
+            IncludeNightSession = TpoAveragesIncludeNight,
             LabelPosition = TpoAveragesLabelRight ? LabelPosition.Right : LabelPosition.Left,
             ShowValueInLabel = TpoAveragesShowValue,
             ShowAxisLabel = TpoAveragesAxisLabel,
@@ -365,6 +412,7 @@ public sealed class SettingsViewModel : ObservableObject
         return new CandleChartStyle
         {
             RightMarginPercent = _original.CandleChart.RightMarginPercent, // ustawiane na wykresie, nie w tym oknie
+            CashSessionOnly = _original.CandleChart.CashSessionOnly,       // przełącznik na pasku wykresu
             Type = CandleTypeOhlc ? CandleChartType.OhlcBars : CandleChartType.Candles,
             UpColor = CandleUpColor.Trim().ToUpperInvariant(),
             DownColor = CandleDownColor.Trim().ToUpperInvariant(),
@@ -1110,6 +1158,22 @@ public sealed class SettingsViewModel : ObservableObject
     // --- Baza danych ---
     public bool RecordToDatabase { get; set; }
 
+    // --- Dziennik zdarzeń ---
+    private string _logDirectory = string.Empty;
+
+    /// <summary>Folder dziennika zdarzeń i błędów (domyślnie %AppData%\MarketProfile\logs).</summary>
+    public string LogDirectory
+    {
+        get => _logDirectory;
+        set => SetProperty(ref _logDirectory, value);
+    }
+
+    /// <summary>Domyślny folder dziennika (podpowiedź i przycisk „Domyślny”).</summary>
+    public string DefaultLogDirectory => AppSettings.DefaultLogDirectory;
+
+    /// <summary>Przywraca domyślny folder dziennika.</summary>
+    public void ResetLogDirectory() => LogDirectory = AppSettings.DefaultLogDirectory;
+
     /// <summary>Czy pokazywać postęp pobierania w tle w polu informacji okna głównego.</summary>
     public bool ShowDownloadProgress { get; set; }
 
@@ -1594,6 +1658,31 @@ public sealed class SettingsViewModel : ObservableObject
                         "bo wykres pokazuje świece tylko z sesji kasowej.");
         }
 
+        var logDirectory = string.IsNullOrWhiteSpace(LogDirectory) ? AppSettings.DefaultLogDirectory : LogDirectory.Trim();
+        if (!Path.IsPathFullyQualified(logDirectory) || logDirectory.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+        {
+            return Fail($"Dziennik: „{logDirectory}” nie jest pełną ścieżką folderu (np. C:\\Logi\\MarketProfile).");
+        }
+
+        // Sektory: każda waga 0–100 %, data zestawienia S&P.
+        var sectorWeights = new List<SectorWeight>();
+        foreach (var editor in SectorWeightEditors)
+        {
+            var text = editor.WeightText?.Trim().Replace(',', '.') ?? string.Empty;
+            if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var weight) || weight is < 0 or > 100)
+            {
+                return Fail($"Sektory: waga „{editor.Name}” musi być liczbą od 0 do 100 (%).");
+            }
+
+            sectorWeights.Add(new SectorWeight(editor.Key, weight));
+        }
+
+        if (!DateOnly.TryParseExact(SectorWeightsDate?.Trim(), ["yyyy-MM-dd", "dd.MM.yyyy"], CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var weightsDate))
+        {
+            return Fail("Sektory: data wag w formacie RRRR-MM-DD (np. 2026-10-31).");
+        }
+
         // Wybrany instrument zostaje, chyba że został usunięty – wtedy pierwszy z listy.
         var selectedSymbol = instruments.Any(i => i.Symbol == _original.InstrumentSymbol)
             ? _original.InstrumentSymbol
@@ -1610,6 +1699,7 @@ public sealed class SettingsViewModel : ObservableObject
             HistoryDays = historyDays,
             SimulatorSpeed = speed,
             RecordToDatabase = RecordToDatabase,
+            LogDirectory = logDirectory,
             ShowDownloadProgress = ShowDownloadProgress,
             ControlSize = ControlSize,
             TempoGauge = TempoGauge,
@@ -1701,6 +1791,9 @@ public sealed class SettingsViewModel : ObservableObject
             BroadMarketChart = broadMarketChart,
             TpoAverages = tpoAverages,
             BroadMarketSymbol = broadInstrument.Symbol,
+            ShowSectorStrip = ShowSectorStrip,
+            SectorWeights = sectorWeights,
+            SectorWeightsDate = weightsDate,
             PeriodTimer = new PeriodTimerStyle
             {
                 Enabled = TimerEnabled,

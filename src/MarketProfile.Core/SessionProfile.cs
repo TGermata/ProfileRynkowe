@@ -40,6 +40,8 @@ public sealed class SessionProfile
         public decimal High;
         public decimal Low;
         public decimal Close;
+        public DateTimeOffset? OpenTime;  // czas danych, z których jest Open / Close (null – nieznany)
+        public DateTimeOffset? CloseTime;
     }
 
     /// <summary>Tworzy pusty profil dla sesji rozpoczynającej się w <paramref name="sessionStart"/>.</summary>
@@ -99,8 +101,12 @@ public sealed class SessionProfile
     /// Strona transakcji (tylko dla ticka, gdzie low = high). Wolumen ze znaną stroną trafia także do delty wiersza;
     /// świece i transakcje o nieznanej stronie liczą się tylko do wolumenu całkowitego.
     /// </param>
+    /// <param name="time">
+    /// Czas ruchu (null – nieznany: dane w kolejności). Ruch starszy od dotychczasowych danych okresu (np. ticki
+    /// uzupełniane po przerwie w połączeniu) nie zmienia ceny zamknięcia okresu, a wcześniejszy od pierwszego – zmienia otwarcie.
+    /// </param>
     public void AddPriceRange(int periodIndex, decimal low, decimal high, decimal lastPrice, long volume, decimal? openPrice = null,
-        int? minute = null, TradeSide side = TradeSide.Unknown)
+        int? minute = null, TradeSide side = TradeSide.Unknown, DateTimeOffset? time = null)
     {
         lock (_sync)
         {
@@ -114,13 +120,23 @@ public sealed class SessionProfile
             // 1. Aktualizujemy zakres cen okresu TPO (pierwszy ruch w okresie wyznacza jego cenę otwarcia).
             if (!_periods.TryGetValue(periodIndex, out var period))
             {
-                period = new PeriodData { Open = openPrice ?? lastPrice, High = high, Low = low };
+                period = new PeriodData { Open = openPrice ?? lastPrice, High = high, Low = low, OpenTime = time };
                 _periods[periodIndex] = period;
+            }
+            else if (time < period.OpenTime)
+            {
+                // Spóźnione dane sprzed pierwszego ruchu okresu – to one otwierają okres.
+                period.Open = openPrice ?? lastPrice;
+                period.OpenTime = time;
             }
 
             period.High = Math.Max(period.High, high);
             period.Low = Math.Min(period.Low, low);
-            period.Close = lastPrice;
+            if (time is null || period.CloseTime is null || time >= period.CloseTime)
+            {
+                period.Close = lastPrice;
+                period.CloseTime = time ?? period.CloseTime;
+            }
 
             // 2. Oznaczamy literą okresu wszystkie wiersze pomiędzy low i high okresu.
             //    (Cena przechodzi przez wszystkie poziomy pomiędzy – dlatego wypełniamy cały zakres.)

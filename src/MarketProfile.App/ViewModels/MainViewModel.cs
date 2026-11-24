@@ -65,6 +65,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         // Problemy z plikami ustawień (uszkodzony plik, nieudany zapis) – do pola informacji zamiast cichej utraty danych.
         JsonFileStore.Problem += OnSettingsFileProblem;
         _settings = SettingsStore.Load();
+        StartLog(_settings.EffectiveLogDirectory);
         _appearance = ChartStyle.Create(_settings);
         _drawings = DrawingsStore.Load();
         LoadDrawingsForInstrument();
@@ -92,6 +93,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             UpdatePeriodTimer();
             OnCandleTimer();
             OnBroadTimer();
+            OnSectorTimer();
             CheckPriceAlerts();
         };
 
@@ -727,13 +729,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception ex)
         {
+            AppLog.Error("Pobieranie w tle", "biblioteka TWS API niedostępna", ex);
             _backgroundError = $"biblioteka TWS API: {ex.Message} – sprawdź ścieżkę w Ustawieniach → Dane i broker → Źródło i połączenie";
             RefreshTickDownloadText();
             return;
         }
 
         var downloader = new BackgroundHistoryDownloader(instruments, _settings.ToIbSettings(), GetStore(),
-            _settings.BackgroundHistoryDays, _settings.BackgroundTickDays, _settings.BroadMarketInstrument);
+            _settings.BackgroundHistoryDays, _settings.BackgroundTickDays, _settings.BroadMarketInstrument,
+            _settings.NeedsCashSeries);
         var cts = new CancellationTokenSource();
         downloader.Progress += (_, message) =>
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
@@ -767,6 +771,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                     _tickActive = null;
                     _backgroundActivity = null;
                     _backgroundError = pass.Error;
+                    if (pass.Error is { } passError)
+                    {
+                        AppLog.Warning("Pobieranie w tle", passError);
+                    }
                     _nextTickCheck = pass.MoreTicks ? null : DateTime.Now + BackgroundHistoryDownloader.RepeatAfter;
                     RefreshTickDownloadText();
                     OnCandleBackgroundPass();
@@ -788,6 +796,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             catch (OperationCanceledException)
             {
                 // Zatrzymanie pobierania.
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Pobieranie w tle", "pobieranie w tle przerwane nieoczekiwanym błędem", ex);
+                throw;
             }
         });
     }
@@ -1036,7 +1049,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 recorder?.RecordBars(ibBars);
 
                 // Minuty, które są już w bazie (i w profilach), pomijamy – inaczej wolumen liczyłby się dwa razy.
-                var newBars = lastDbBar is { } lastTime ? ibBars.Where(b => b.Time > lastTime).ToList() : [.. ibBars];
+                // Minuty, których w bazie brak (np. przerwa w danych przed restartem połączenia), bierzemy z IB.
+                var dbMinutes = dbBars.Select(b => b.Time).ToHashSet();
+                var newBars = ibBars.Where(b => !dbMinutes.Contains(b.Time)).ToList();
                 foreach (var bar in newBars)
                 {
                     builder.ProcessBar(bar);
@@ -1077,6 +1092,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 return false;
             }
 
+            AppLog.Info("Źródło danych", $"działa: {feed.GetType().Name}, {_settings.InstrumentSymbol}, historia {historyDays} dni " +
+                                         $"(z bazy {dbBars.Count} min, koniec historii {new DateTimeOffset(historyEndUtcTicks, TimeSpan.Zero).ToLocalTime():yyyy-MM-dd HH:mm})");
             _refreshTimer.Start();
             RefreshSnapshots();
             SetAlertsLive(true); // od teraz przebicia poziomów alarmowych uruchamiają dźwięk
@@ -1101,6 +1118,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
             _historyLoadId++;
             _loadingOlder = false;
+            AppLog.Error("Źródło danych", $"start źródła {feed.GetType().Name} ({_settings.InstrumentSymbol}) nie powiódł się", ex);
             await StopAsync();
             ShowError($"Błąd: {ex.Message}");
             return false;
@@ -1111,9 +1129,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private bool IsCurrent(IMarketDataFeed feed, ProfileBuilder? builder) =>
         ReferenceEquals(_feed, feed) && ReferenceEquals(_builder, builder);
 
-    private void OnRecorderWriteFailed(Exception ex) =>
+    private void OnRecorderWriteFailed(Exception ex)
+    {
+        AppLog.Error("Baza", "zapis ticków do bazy nie powiódł się (ticki czekają w pamięci)", ex);
         System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
             ShowError($"Zapis do bazy nie działa (ticki czekają w pamięci i zostaną zapisane później): {ex.Message}"));
+    }
 
     private void OnRecorderWriteRecovered() =>
         System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => Hint("Zapis do bazy działa ponownie"));
@@ -1128,6 +1149,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         if (_feed is { } feed)
         {
+            AppLog.Info("Źródło danych", $"zatrzymanie: {feed.GetType().Name}, {_settings.InstrumentSymbol}");
+
             // Najpierw zerujemy pole – trwający start (StartFeedAsync) po swoim await zobaczy, że źródło już nie jest bieżące.
             _feed = null;
             feed.TickReceived -= OnTickReceived;
@@ -1182,6 +1205,22 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     private static bool IsBrokerFeed(IMarketDataFeed feed) => feed is not SimulatedDataFeed and not DatabaseReplayFeed;
 
+    /// <summary>
+    /// Dziennik zdarzeń w folderze z ustawień; gdy folderu nie da się utworzyć (np. brak dostępu, odłączony dysk) –
+    /// w folderze domyślnym, z komunikatem.
+    /// </summary>
+    private void StartLog(string directory)
+    {
+        if (AppLog.Initialize(directory) || directory == AppSettings.DefaultLogDirectory)
+        {
+            return;
+        }
+
+        AppLog.Initialize(AppSettings.DefaultLogDirectory);
+        AppLog.Warning("Dziennik", $"nie można utworzyć folderu dziennika {directory} – zapis w folderze domyślnym");
+        ShowError($"Nie można utworzyć folderu dziennika {directory} – dziennik zapisywany w {AppSettings.DefaultLogDirectory}");
+    }
+
     /// <summary>Lokalna baza danych (otwierana przy pierwszym użyciu).</summary>
     public MarketDataStore GetStore() => _store ??= new MarketDataStore(MarketDataStore.DefaultPath);
 
@@ -1193,7 +1232,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public async Task ApplySettingsAsync(AppSettings newSettings)
     {
         CancelReconnect();
+        if (newSettings.EffectiveLogDirectory != _settings.EffectiveLogDirectory)
+        {
+            StartLog(newSettings.EffectiveLogDirectory);
+        }
+
         var rebuild = _settings.RequiresRebuild(newSettings);
+        AppLog.Info("Ustawienia", $"zmienione – instrument {newSettings.InstrumentSymbol}, źródło {newSettings.LiveSource}" +
+                                  (rebuild ? ", profile budowane od nowa" : string.Empty) +
+                                  (newSettings.InstrumentSymbol != _settings.InstrumentSymbol ? $" (poprzednio {_settings.InstrumentSymbol})" : string.Empty));
         if (_settings.RequiresDownloadRestart(newSettings))
         {
             await StopBackgroundDownloadAsync(); // wystartuje ponownie po połączeniu z nowymi ustawieniami
@@ -1206,6 +1253,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         var instrumentChanged = newSettings.InstrumentSymbol != _settings.InstrumentSymbol;
+
+        // Średnie na TPO z innej serii świec (sesja kasowa / cała doba) – wczytanie od nowa; nowa potrzebna seria
+        // kasowa – od razu z IB (gdy połączony).
+        var tpoAveragesSourceChanged = newSettings.TpoAverages.IncludeNightSession != _settings.TpoAverages.IncludeNightSession;
+        if (newSettings.NeedsCashSeries && !_settings.NeedsCashSeries)
+        {
+            _nextCandleIbRefresh = null;
+        }
 
         _settings = newSettings;
         SettingsStore.Save(newSettings);
@@ -1222,6 +1277,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         NotifyDataSource();
         OnPropertyChanged(nameof(StartStopText));
         OnPropertyChanged(nameof(ShowStartStop));
+        if (tpoAveragesSourceChanged && !instrumentChanged) // nowy instrument wczytuje świece sam
+        {
+            RunSafely(LoadDailyBarsAsync());
+        }
 
         if (instrumentChanged)
         {
@@ -1387,9 +1446,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _builder?.ProcessTick(tick);
+        _recorder?.Record(tick);
+
+        // Tick spóźniony (uzupełnianie luki po przerwie w danych) – tylko do profilu i bazy: nie cofa zegara okresu TPO
+        // i nie podsuwa alarmom starych cen.
+        if (tick.Time.UtcTicks < Interlocked.Read(ref _lastTickUtcTicks))
+        {
+            return;
+        }
+
         TrackAlertPrice(tick.Price, tick.Price, tick.Price);
         Interlocked.Exchange(ref _lastTickUtcTicks, tick.Time.UtcTicks); // czas danych – dla zegara okresu TPO
-        _recorder?.Record(tick);
     }
 
     /// <summary>

@@ -22,16 +22,23 @@ public sealed partial class MainViewModel
         private set => SetProperty(ref _tpoAverages, value);
     }
 
+    /// <summary>
+    /// Świece dzienne do średnich tylko z sesji kasowej (osobna seria w bazie): kontrakt terminowy bez zaznaczonej
+    /// „całej doby” w ustawieniach (Ustawienia → Profile). Indeksy mają w bazie tylko sesję kasową, akcje – jedną serię.
+    /// </summary>
+    private bool TpoAveragesCashOnly => OhlcBarUpdater.HasCashSeries(_settings.Instrument, !_settings.TpoAverages.IncludeNightSession);
+
     /// <summary>Wczytuje (w tle) pełne świece dzienne bieżącego instrumentu z bazy i przelicza średnie.</summary>
     private async Task LoadDailyBarsAsync()
     {
         var version = ++_dailyBarsVersion;
         var symbol = _settings.InstrumentSymbol;
+        var cashOnly = TpoAveragesCashOnly;
         IReadOnlyList<Bar> bars;
         try
         {
             var store = GetStore();
-            bars = await Task.Run(() => BarExtensions.CompleteOnly(store.ReadOhlcBars(symbol, BarInterval.Day)));
+            bars = await Task.Run(() => BarExtensions.CompleteOnly(store.ReadOhlcBars(symbol, BarInterval.Day, cashOnly: cashOnly)));
         }
         catch (Exception)
         {

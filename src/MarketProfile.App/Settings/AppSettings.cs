@@ -131,6 +131,17 @@ public sealed record AppSettings
     /// <summary>Czy zapisywać dane od brokera (ticki i świece) w lokalnej bazie do późniejszych symulacji.</summary>
     public bool RecordToDatabase { get; init; } = true;
 
+    /// <summary>Domyślny folder dziennika zdarzeń i błędów: %AppData%\MarketProfile\logs.</summary>
+    public static string DefaultLogDirectory { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MarketProfile", "logs");
+
+    /// <summary>Folder dziennika zdarzeń i błędów (pliki app-RRRR-MM-DD.log); pusty – <see cref="DefaultLogDirectory"/>.</summary>
+    public string LogDirectory { get; init; } = DefaultLogDirectory;
+
+    /// <summary>Folder dziennika do użycia (pusty w ustawieniach = domyślny).</summary>
+    [JsonIgnore]
+    public string EffectiveLogDirectory => string.IsNullOrWhiteSpace(LogDirectory) ? DefaultLogDirectory : LogDirectory.Trim();
+
     /// <summary>
     /// Ile dni historii (świece 1-min) trzymać w bazie dla instrumentów z zaznaczonym „Pobieraj dane”.
     /// Brakujące dni są pobierane w tle po połączeniu z brokerem.
@@ -236,6 +247,7 @@ public sealed record AppSettings
     /// (inne instrumenty, liczba dni albo parametry połączenia z brokerem).
     /// </summary>
     public bool RequiresDownloadRestart(AppSettings other) =>
+        NeedsCashSeries != other.NeedsCashSeries ||
         BackgroundHistoryDays != other.BackgroundHistoryDays || BackgroundTickDays != other.BackgroundTickDays ||
         RecordToDatabase != other.RecordToDatabase ||
         LiveSource != other.LiveSource || IbApiPath != other.IbApiPath || IbHost != other.IbHost ||
@@ -243,6 +255,13 @@ public sealed record AppSettings
         IbWebApiCompete != other.IbWebApiCompete ||
         !DownloadInstruments.SequenceEqual(other.DownloadInstruments) ||
         !Equals(BroadMarketInstrument, other.BroadMarketInstrument);
+
+    /// <summary>
+    /// Czy pobierać z IB serie świec D/W/M „tylko sesja kasowa” (kontrakty terminowe): potrzebne wykresowi D/W/M
+    /// w trybie „Kasowa” albo średnim na wykresie TPO liczonym z sesji kasowej.
+    /// </summary>
+    [JsonIgnore]
+    public bool NeedsCashSeries => CandleChart.CashSessionOnly || (TpoAverages.Enabled && !TpoAverages.IncludeNightSession);
 
     /// <summary>Ile dni danych testowych generować do bazy.</summary>
     public int TestDataDays { get; init; } = 5;
@@ -314,6 +333,18 @@ public sealed record AppSettings
     /// instrument; jego świece D/W/M są pobierane w tle i zapisywane w bazie (do analiz).
     /// </summary>
     public string BroadMarketSymbol { get; init; } = Instrument.DefaultBroadMarketSymbol;
+
+    /// <summary>Czy pokazywać na dole zakładki „Szeroki rynek” pasek 11 sektorów S&amp;P 500 (waga i zmiana od otwarcia sesji kasowej).</summary>
+    public bool ShowSectorStrip { get; init; } = true;
+
+    /// <summary>
+    /// Wagi sektorów w S&amp;P 500 (%) – wpisywane w Ustawieniach → Szeroki rynek wg comiesięcznych danych S&amp;P
+    /// (spglobal.com); kolejność kafelków na pasku wynika z wag.
+    /// </summary>
+    public IReadOnlyList<SectorWeight> SectorWeights { get; init; } = SectorPerformance.DefaultWeights;
+
+    /// <summary>Data zestawienia S&amp;P, z którego pochodzą wagi (po <see cref="SectorPerformance.WeightsMaxAgeDays"/> dniach – ostrzeżenie).</summary>
+    public DateOnly SectorWeightsDate { get; init; } = SectorPerformance.DefaultWeightsDate;
 
     /// <summary>Instrument rynku szerokiego (z listy, a gdy go tam nie ma – z listy wbudowanej); null = nieznany symbol.</summary>
     [JsonIgnore]
@@ -833,6 +864,12 @@ public sealed record CandleChartStyle
     /// <summary>Wolne miejsce za najnowszą świecą w % szerokości wykresu (przeciąganie znacznika na wykresie).</summary>
     public int RightMarginPercent { get; init; } = 10;
 
+    /// <summary>
+    /// Świece D/W/M kontraktów terminowych tylko z sesji kasowej (przełącznik „Doba / Kasowa” na pasku wykresu).
+    /// Wtedy z IB pobierana jest dodatkowo osobna seria świec z samej sesji kasowej. Indeksy (np. SPX) zawsze mają tylko sesję kasową.
+    /// </summary>
+    public bool CashSessionOnly { get; init; }
+
     /// <summary>Średnie kroczące rysowane na wykresie (w kolejności z listy).</summary>
     public List<MovingAverageStyle> MovingAverages { get; init; } =
     [
@@ -967,6 +1004,13 @@ public sealed record TpoAveragesStyle
 {
     /// <summary>Czy rysować średnie na wykresie TPO.</summary>
     public bool Enabled { get; init; } = true;
+
+    /// <summary>
+    /// Z jakich świec dziennych liczyć średnie: false (domyślnie) – tylko z sesji kasowej (osobna seria w bazie,
+    /// jak „Kasowa” na wykresie D/W/M), true – z całej doby, z sesją nocną. Dotyczy kontraktów terminowych
+    /// (indeksy mają tylko sesję kasową, akcje – jedną serię).
+    /// </summary>
+    public bool IncludeNightSession { get; init; }
 
     /// <summary>Po której stronie wykresu opis linii.</summary>
     [JsonConverter(typeof(JsonStringEnumConverter<LabelPosition>))]

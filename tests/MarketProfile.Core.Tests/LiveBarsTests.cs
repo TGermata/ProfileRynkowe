@@ -39,6 +39,26 @@ public sealed class LiveBarsTests
     }
 
     [Fact]
+    public void LiveDayBar_TylkoSesjaKasowa_PomijaSesjeNocna()
+    {
+        var builder = new ProfileBuilder(new ProfileSettings { TicksPerRow = 4 });
+        builder.ProcessTick(At(11, 15, 18, 5, 6800m, 10));  // sesja nocna 16.11
+        builder.ProcessTick(At(11, 16, 3, 0, 6790m, 20));
+        builder.ProcessTick(At(11, 16, 9, 35, 6815m, 30));  // sesja dzienna 16.11
+        builder.ProcessTick(At(11, 16, 10, 0, 6808m, 40));
+
+        var snapshots = builder.Profiles.Select(p => p.GetSnapshot()).ToList();
+        var bar = LiveBars.LiveDayBar(snapshots, new DateOnly(2026, 11, 16), cashOnly: true);
+
+        Assert.Equal(Live(11, 16, 6815m, 6815m, 6808m, 6808m, 70), bar);
+
+        // Przed otwarciem sesji kasowej (sama noc) – brak świecy dnia.
+        var nightOnly = new ProfileBuilder(new ProfileSettings { TicksPerRow = 4 });
+        nightOnly.ProcessTick(At(11, 15, 18, 5, 6800m, 10));
+        Assert.Null(LiveBars.LiveDayBar(nightOnly.Profiles.Select(p => p.GetSnapshot()), new DateOnly(2026, 11, 16), cashOnly: true));
+    }
+
+    [Fact]
     public void MergeLive_TaSamaSwieca_RozszerzaZakresIZamkniecie_StarszeBezZmian()
     {
         var older = Bar(11, 13, 6700m, 6750m, 6690m, 6740m, 900);

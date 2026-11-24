@@ -163,6 +163,7 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(IsBaseSelected));
         OnPropertyChanged(nameof(IsBroadSelected));
         OnPropertyChanged(nameof(CandleTickSize));
+        OnPropertyChanged(nameof(HasCashSessionSwitch));
         RunSafely(LoadCandlesAsync());
     }
 
@@ -208,6 +209,47 @@ public sealed partial class MainViewModel
         }
     }
 
+    // --- Przełącznik: cała doba / tylko sesja kasowa (dla kontraktów terminowych; zapisywany w ustawieniach) ---
+
+    /// <summary>Czy pokazać przełącznik „Doba / Kasowa” – wyświetlany instrument to kontrakt terminowy (indeks ma tylko sesję kasową).</summary>
+    public bool HasCashSessionSwitch => CandleInstrument.Type == InstrumentType.Future;
+
+    /// <summary>Czy na wykresie są świece tylko z sesji kasowej (osobna seria w bazie).</summary>
+    private bool CandleCashOnly => OhlcBarUpdater.HasCashSeries(CandleInstrument, _settings.CandleChart.CashSessionOnly);
+
+    public bool IsFullDaySession
+    {
+        get => !_settings.CandleChart.CashSessionOnly;
+        set { if (value) SetCandleCashSessionOnly(false); }
+    }
+
+    public bool IsCashSessionOnly
+    {
+        get => _settings.CandleChart.CashSessionOnly;
+        set { if (value) SetCandleCashSessionOnly(true); }
+    }
+
+    private void SetCandleCashSessionOnly(bool cashOnly)
+    {
+        if (_settings.CandleChart.CashSessionOnly == cashOnly)
+        {
+            return;
+        }
+
+        // Bez ApplySettingsAsync – nic poza wykresem D/W/M się nie zmienia (pobieranie w tle bierze ustawienie przy następnym starcie,
+        // a do tego czasu seria kasowa jest odświeżana przez RefreshCandlesFromIbIfDue).
+        _settings = _settings with { CandleChart = _settings.CandleChart with { CashSessionOnly = cashOnly } };
+        SettingsStore.Save(_settings);
+        OnPropertyChanged(nameof(IsFullDaySession));
+        OnPropertyChanged(nameof(IsCashSessionOnly));
+        if (cashOnly)
+        {
+            _nextCandleIbRefresh = null; // seria kasowa może jeszcze nie istnieć – z IB od razu (gdy połączony)
+        }
+
+        RunSafely(LoadCandlesAsync());
+    }
+
     /// <summary>Zmieniono ustawienia – wygląd wykresu D/W/M budowany od nowa.</summary>
     private void OnCandleSettingsChanged()
     {
@@ -217,6 +259,9 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(IsOhlcType));
         OnPropertyChanged(nameof(CandleTickSize));
         OnPropertyChanged(nameof(HasBroadMarketSwitch));
+        OnPropertyChanged(nameof(HasCashSessionSwitch));
+        OnPropertyChanged(nameof(IsFullDaySession));
+        OnPropertyChanged(nameof(IsCashSessionOnly));
         OnPropertyChanged(nameof(BaseSymbolLabel));
         OnPropertyChanged(nameof(BroadSymbolLabel));
         OnPropertyChanged(nameof(BroadSymbolToolTip));
@@ -226,6 +271,7 @@ public sealed partial class MainViewModel
         }
 
         OnBroadSettingsChanged();
+        OnSectorSettingsChanged();
     }
 
     /// <summary>Świece wybranego interwału (z bazy).</summary>
@@ -257,6 +303,7 @@ public sealed partial class MainViewModel
     {
         OnPropertyChanged(nameof(CandleTickSize));
         OnPropertyChanged(nameof(HasBroadMarketSwitch));
+        OnPropertyChanged(nameof(HasCashSessionSwitch));
         OnPropertyChanged(nameof(BaseSymbolLabel));
         _nextCandleIbRefresh = null; // świece nowego instrumentu – z IB od razu (gdy połączony)
         RunSafely(LoadDailyBarsAsync()); // średnie dzienne na wykresie TPO – nowego instrumentu
@@ -287,13 +334,14 @@ public sealed partial class MainViewModel
         var version = ++_candleLoadVersion;
         var symbol = CandleInstrument.Symbol;
         var interval = _candleInterval;
+        var cashOnly = CandleCashOnly;
         var store = GetStore();
 
         var (bars, skipped) = await Task.Run(() =>
         {
             // Niepełne świece (sama cena zamknięcia, bez wolumenu – najstarsze dane kontraktu ciągłego) zostają w bazie,
             // ale nie są pokazywane ani brane do średnich.
-            var all = store.ReadOhlcBars(symbol, interval);
+            var all = store.ReadOhlcBars(symbol, interval, cashOnly: cashOnly);
             var complete = BarExtensions.CompleteOnly(all);
             return (complete, all.Count - complete.Count);
         });
@@ -334,7 +382,7 @@ public sealed partial class MainViewModel
         var bars = _candleStored;
         var live = false;
         if (CandlesLiveAvailable && _snapshots.LastOrDefault(s => !s.IsEmpty) is { } latest &&
-            LiveBars.LiveDayBar(_snapshots, latest.TradingDate) is { } liveDay)
+            LiveBars.LiveDayBar(_snapshots, latest.TradingDate, CandleCashOnly) is { } liveDay)
         {
             bars = LiveBars.MergeLive(_candleStored, _candleInterval, liveDay);
             live = true;
@@ -410,6 +458,11 @@ public sealed partial class MainViewModel
               $"{bars.Count.ToString("N0", CultureInfo.CurrentCulture)} świec, " +
               $"{bars[0].Time.UtcDateTime:dd.MM.yyyy} – {bars[^1].Time.UtcDateTime:dd.MM.yyyy}";
 
+        if (CandleCashOnly)
+        {
+            text += "   ·   tylko sesja kasowa";
+        }
+
         if (_candleSkipped > 0)
         {
             text += $" (pominięto niepełnych: {_candleSkipped.ToString("N0", CultureInfo.CurrentCulture)})";
@@ -445,7 +498,9 @@ public sealed partial class MainViewModel
             var connection = _settings.ToIbSettings();
             var store = GetStore();
             var intraday = symbol == BroadMarket?.Symbol; // rynek szeroki – także świece 30 min (zakładka „Szeroki rynek”)
-            var results = await Task.Run(() => OhlcBarUpdater.ConnectAndUpdateAsync(instrument, connection, store, CancellationToken.None, intraday));
+            var withCashSeries = OhlcBarUpdater.HasCashSeries(instrument, _settings.NeedsCashSeries); // D/W/M „Kasowa” albo średnie TPO
+            var results = await Task.Run(() => OhlcBarUpdater.ConnectAndUpdateAsync(instrument, connection, store, CancellationToken.None, intraday,
+                withCashSeries));
 
             _candleIbNotes[symbol] = OhlcBarUpdater.Errors(results) is { } error
                 ? $"IBKR {DateTime.Now:HH:mm}: {error}"

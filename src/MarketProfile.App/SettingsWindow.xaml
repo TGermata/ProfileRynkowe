@@ -367,6 +367,19 @@
                                     </Grid>
                                 </GroupBox>
 
+                                <!-- Te same ustawienie co w „Wykres D/W/M → Średnie dzienne na wykresie TPO” (wspólna właściwość). -->
+                                <GroupBox Header="Średnie dzienne na wykresie TPO – sesja">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="Średnie liczone z:" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                            <RadioButton Content="sesji kasowej" GroupName="TpoAvgSessionProfile" IsChecked="{Binding TpoAveragesCashOnly}" Margin="0,0,12,0" />
+                                            <RadioButton Content="całej doby (z sesją nocną)" GroupName="TpoAvgSessionProfile" IsChecked="{Binding TpoAveragesIncludeNight}" />
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                                   Text="Linie średnich (np. SMA20 D) na wykresie TPO: z dziennych świec samej sesji kasowej (jak „Kasowa” na wykresie D/W/M) albo całej doby z sesją nocną (jak „Doba”). Dotyczy kontraktów terminowych – indeksy mają tylko sesję kasową. Pozostałe ustawienia tych linii: zakładka „Wykres D/W/M”." />
+                                    </StackPanel>
+                                </GroupBox>
+
                                 <GroupBox Header="Elementy profilu">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -850,6 +863,12 @@
                             <StackPanel>
                                 <CheckBox Content="Rysuj poziomy średnich dziennych na wykresie profili TPO" IsChecked="{Binding TpoAveragesEnabled}" />
                                 <StackPanel IsEnabled="{Binding TpoAveragesEnabled}">
+                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0"
+                                                ToolTip="Z jakich świec dziennych liczyć średnie na wykresie TPO (kontrakty terminowe). Sesja kasowa – jak „Kasowa” na wykresie D/W/M; cała doba – jak „Doba”. To samo ustawienie jest w zakładce „Profile”.">
+                                        <TextBlock Text="Średnie liczone z:" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                        <RadioButton Content="sesji kasowej" GroupName="TpoAvgSessionDwm" IsChecked="{Binding TpoAveragesCashOnly}" Margin="0,0,12,0" />
+                                        <RadioButton Content="całej doby (z sesją nocną)" GroupName="TpoAvgSessionDwm" IsChecked="{Binding TpoAveragesIncludeNight}" />
+                                    </StackPanel>
                                     <!-- Nagłówek kolumn. -->
                                     <Grid Margin="0,6,0,2">
                                         <Grid.ColumnDefinitions>
@@ -1030,9 +1049,38 @@
                             </StackPanel>
                         </GroupBox>
 
+                        <!-- Sektory S&P 500: wagi z comiesięcznego zestawienia S&P (spglobal.com) – kolejność kafelków na pasku. -->
+                        <GroupBox Header="Sektory S&amp;P 500 (pasek na dole zakładki „Szeroki rynek”)">
+                            <StackPanel>
+                                <CheckBox Content="Pokazuj pasek sektorów (waga w S&amp;P 500 i zmiana od otwarcia sesji kasowej)"
+                                          IsChecked="{Binding ShowSectorStrip}" />
+                                <ItemsControl ItemsSource="{Binding SectorWeightEditors}" Margin="4,6,4,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" ToolTip="{Binding Description}">
+                                                <TextBlock Text="{Binding Icon}" Width="26" FontFamily="Segoe UI Emoji" />
+                                                <TextBlock Text="{Binding Name}" Width="230" />
+                                                <TextBlock Text="{Binding Etf}" Width="50" Foreground="#808894" />
+                                                <TextBox Text="{Binding WeightText, UpdateSourceTrigger=PropertyChanged}" Width="60" Margin="2,1" />
+                                                <TextBlock Style="{StaticResource Hint}" Text="%" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <TextBlock Text="Wagi z dnia" Width="100" VerticalAlignment="Center" />
+                                    <TextBox Text="{Binding SectorWeightsDate, UpdateSourceTrigger=PropertyChanged}" Width="100" />
+                                    <Button Content="Otwórz stronę S&amp;P" Margin="10,4,4,4" Padding="8,0" Click="OnSectorWeightsSiteClick"
+                                            ToolTip="spglobal.com – indeks S&amp;P 500, zakładka z wagami sektorów (Sector Breakdown)" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                           Text="S&amp;P publikuje wagi sektorów co miesiąc (spglobal.com → S&amp;P 500 → Sector Breakdown). Wpisz je tutaj razem z datą zestawienia – kafelki ułożą się od największej wagi; po 35 dniach pasek przypomni o aktualizacji. Zmiana od otwarcia pochodzi z ETF-ów sektorowych SPDR (XLK, XLF…) przez TWS – osobne połączenie, Client ID + 8. Wagi startowe są przybliżone – sprawdź je na stronie S&amp;P." />
+                            </StackPanel>
+                        </GroupBox>
+
                         <GroupBox Header="Wiersze wskaźników">
                             <TextBlock Style="{StaticResource Hint}" Margin="0"
-                                       Text="Nad wykresem: Oddech rynku. Pod wykresem dwa wiersze (D1, D2) – na razie wolne. Wiersze przesuwają się razem ze świecami (przewijanie, zoom, kursor)." />
+                                       Text="Nad wykresem: Oddech rynku (SPY, NYSE) oraz spółki rosnące / spadające (NYSE, NASDAQ). Pod wykresem: pasek 11 sektorów S&amp;P 500." />
                         </GroupBox>
                     </StackPanel>
                 </ScrollViewer>
@@ -1241,6 +1289,23 @@
                                     <StackPanel>
                                         <TextBlock Text="{Binding DatabaseInfo}" TextWrapping="Wrap" />
                                         <TextBlock Style="{StaticResource Hint}" Text="{Binding DatabasePath}" />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <!-- Folder dziennika zdarzeń i błędów (app-RRRR-MM-DD.log); zmiana działa od razu po „Zapisz”. -->
+                                <GroupBox Header="Dziennik zdarzeń i błędów">
+                                    <StackPanel>
+                                        <DockPanel>
+                                            <Button DockPanel.Dock="Right" Content="Otwórz folder" Margin="4,4,0,4" Click="OnLogOpenFolderClick"
+                                                    ToolTip="Otwórz wskazany folder w Eksploratorze" />
+                                            <Button DockPanel.Dock="Right" Content="Domyślny" Margin="4,4,0,4" Click="OnLogDefaultClick"
+                                                    ToolTip="{Binding DefaultLogDirectory}" />
+                                            <Button DockPanel.Dock="Right" Content="Przeglądaj…" Margin="4,4,0,4" Click="OnLogBrowseClick" />
+                                            <TextBox Text="{Binding LogDirectory, UpdateSourceTrigger=PropertyChanged}" Width="Auto"
+                                                     ToolTip="Folder, w którym aplikacja zapisuje dziennik (jeden plik na dzień: app-RRRR-MM-DD.log)" />
+                                        </DockPanel>
+                                        <TextBlock Style="{StaticResource Hint}" TextWrapping="Wrap"
+                                                   Text="Połączenia z IB, przerwy w danych, ponowne łączenie, błędy – jeden plik na dzień, pliki starsze niż 30 dni są usuwane. Nowy folder działa od razu po „Zapisz”; wcześniejsze pliki zostają w starym folderze. Gdy folderu nie da się utworzyć, dziennik trafia do folderu domyślnego." />
                                     </StackPanel>
                                 </GroupBox>
                             </StackPanel>

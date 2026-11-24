@@ -22,6 +22,21 @@ public sealed class IndicatorsTests
     }
 
     [Fact]
+    public void PercentFromAverage_NadPodSrednia_BrakSredniejToNull()
+    {
+        Assert.Equal(1m, Indicators.PercentFromAverage(7272.72m, 7200.72m)!.Value, 2);
+        Assert.Equal(-0.5m, Indicators.PercentFromAverage(199m, 200m));
+        Assert.Equal(0m, Indicators.PercentFromAverage(200m, 200m));
+        Assert.Null(Indicators.PercentFromAverage(200m, null));
+        Assert.Null(Indicators.PercentFromAverage(200m, 0m));
+
+        // Na ostatniej świecy – jak wskaźnik „SPX vs EMA”: EMA3 z 10, 11, 12, 13 = 12 (SMA 11, potem +0,5×(13−11)).
+        var ema = Indicators.Ema(Closes(10, 11, 12, 13), 3);
+        Assert.Equal(12m, ema[^1]);
+        Assert.Equal(8.333m, Indicators.PercentFromAverage(13m, ema[^1])!.Value, 3);
+    }
+
+    [Fact]
     public void Sma_Okres1_ToZamkniecia_ZaMaloSwiec_SameNulle()
     {
         Assert.Equal([10m, 11m], Indicators.Sma(Closes(10, 11), 1).Select(v => v!.Value));

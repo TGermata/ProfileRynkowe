@@ -44,6 +44,7 @@ public sealed class BackgroundHistoryDownloader
     private readonly MarketDataStore _store;
     private readonly int _days;
     private readonly int _tickDays;
+    private readonly bool _cashSessionOnly;      // świece D/W/M kontraktów terminowych także z samej sesji kasowej
 
     // Instrumenty, dla których starsza historia świec została już pobrana (albo broker jej nie ma) –
     // przy kolejnych przebiegach pobieramy tylko nowe dane.
@@ -56,8 +57,9 @@ public sealed class BackgroundHistoryDownloader
     private readonly Dictionary<string, DateTimeOffset> _ohlcUpdatedAt = [];
 
     public BackgroundHistoryDownloader(IReadOnlyList<Instrument> instruments, IbConnectionSettings mainConnection,
-        MarketDataStore store, int days, int tickDays, Instrument? broadMarket = null)
+        MarketDataStore store, int days, int tickDays, Instrument? broadMarket = null, bool cashSessionOnly = false)
     {
+        _cashSessionOnly = cashSessionOnly;
         _instruments = instruments;
         _broadMarket = broadMarket is { } b && instruments.All(i => i.Symbol != b.Symbol) ? b : null;
         _connection = mainConnection with { ClientId = mainConnection.ClientId + 1 };
@@ -246,7 +248,8 @@ public sealed class BackgroundHistoryDownloader
         if (ohlcDue)
         {
             Progress?.Invoke(this, $"{prefix} – świece D/W/M...");
-            var ohlc = await OhlcBarUpdater.UpdateAsync(feed, symbol, _store, token).ConfigureAwait(false);
+            var ohlc = await OhlcBarUpdater.UpdateAsync(feed, symbol, _store, token,
+                OhlcBarUpdater.HasCashSeries(instrument, _cashSessionOnly)).ConfigureAwait(false);
             _ohlcUpdatedAt[symbol] = DateTimeOffset.UtcNow;
             savedBars += ohlc.Sum(r => r.Saved);
             if (OhlcBarUpdater.Errors(ohlc) is { } ohlcError)

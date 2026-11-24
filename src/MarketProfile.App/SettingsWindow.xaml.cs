@@ -83,6 +83,60 @@ public partial class SettingsWindow : Window
         }
     }
 
+    // --- Sektory S&P 500 ---
+
+    /// <summary>Strona S&amp;P 500 na spglobal.com (wagi sektorów) w przeglądarce.</summary>
+    private void OnSectorWeightsSiteClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(ViewModels.SettingsViewModel.SectorWeightsUrl)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Nie udało się otworzyć strony:\n{ViewModels.SettingsViewModel.SectorWeightsUrl}\n\n{ex.Message}",
+                "Sektory S&P 500", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    // --- Dziennik zdarzeń ---
+
+    /// <summary>Wybór folderu dziennika.</summary>
+    private void OnLogBrowseClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = "Folder dziennika zdarzeń i błędów",
+            InitialDirectory = System.IO.Directory.Exists(_viewModel.LogDirectory) ? _viewModel.LogDirectory : _viewModel.DefaultLogDirectory,
+        };
+
+        if (dialog.ShowDialog(this) == true)
+        {
+            _viewModel.LogDirectory = dialog.FolderName;
+        }
+    }
+
+    private void OnLogDefaultClick(object sender, RoutedEventArgs e) => _viewModel.ResetLogDirectory();
+
+    /// <summary>Otwiera wskazany folder dziennika (tworzy go, jeśli nie istnieje).</summary>
+    private void OnLogOpenFolderClick(object sender, RoutedEventArgs e)
+    {
+        var folder = string.IsNullOrWhiteSpace(_viewModel.LogDirectory) ? _viewModel.DefaultLogDirectory : _viewModel.LogDirectory.Trim();
+        try
+        {
+            System.IO.Directory.CreateDirectory(folder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(folder) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Nie udało się otworzyć folderu:\n{folder}\n\n{ex.Message}", "Dziennik",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     /// <summary>Automatyczne wyszukanie biblioteki TWS API.</summary>
     private void OnIbAutoDetectClick(object sender, RoutedEventArgs e) => _viewModel.AutoDetectIbApi();
 

@@ -10,11 +10,12 @@ public static class LiveBars
     /// Świeca dzienna z profili danego dnia handlowego (wszystkie sesje i części): otwarcie najwcześniejszego,
     /// maksimum / minimum wszystkich, zamknięcie = ostatnia cena najnowszego, wolumen = suma. Null – brak profili.
     /// Czas świecy: data handlowa, 00:00 UTC (jak świece dzienne w bazie).
+    /// <paramref name="cashOnly"/> = true – tylko profile sesji dziennej (kasowej), bez nocnej.
     /// </summary>
-    public static Bar? LiveDayBar(IEnumerable<ProfileSnapshot> profiles, DateOnly tradingDate)
+    public static Bar? LiveDayBar(IEnumerable<ProfileSnapshot> profiles, DateOnly tradingDate, bool cashOnly = false)
     {
         var day = profiles
-            .Where(p => !p.IsEmpty && p.TradingDate == tradingDate)
+            .Where(p => !p.IsEmpty && p.TradingDate == tradingDate && (!cashOnly || SessionNames.IsDay(p.Session.Name)))
             .OrderBy(p => p.PartStart)
             .ToList();
         if (day.Count == 0)

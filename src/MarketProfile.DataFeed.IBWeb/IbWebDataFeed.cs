@@ -352,8 +352,10 @@ public sealed class IbWebDataFeed : IMarketDataFeed, IBidAskSource, IMarketDataK
     /// <summary>
     /// Świece D/W/M za okres <paramref name="duration"/> (format TWS, np. „5 Y”) wstecz od teraz.
     /// Dla futures – tylko bieżący kontrakt (Web API nie udostępnia kontraktu ciągłego ani wygasłych serii).
+    /// <paramref name="cashOnly"/> = true – tylko sesja kasowa (outsideRth = false) także dla kontraktów terminowych.
     /// </summary>
-    public async Task<OhlcPage> GetOhlcBarsAsync(BarInterval interval, string duration, CancellationToken cancellationToken = default)
+    public async Task<OhlcPage> GetOhlcBarsAsync(BarInterval interval, string duration, CancellationToken cancellationToken = default,
+        bool cashOnly = false)
     {
         RequireConnected();
         var bar = interval switch
@@ -366,7 +368,8 @@ public sealed class IbWebDataFeed : IMarketDataFeed, IBidAskSource, IMarketDataK
         Status($"IBKR Web API: pobieranie świec {interval.DisplayName().ToLowerInvariant()}ch ({duration})...");
         try
         {
-            var bars = await RequestBarsAsync(bar, IbWebFormats.ToPeriod(duration), end: null, cancellationToken).ConfigureAwait(false);
+            var bars = await RequestBarsAsync(bar, IbWebFormats.ToPeriod(duration), end: null, cancellationToken,
+                outsideRth: cashOnly ? false : null).ConfigureAwait(false);
             return new OhlcPage(bars.OrderBy(b => b.Time).ToList(), null, false);
         }
         catch (IbWebPacingException ex)
@@ -530,7 +533,12 @@ public sealed class IbWebDataFeed : IMarketDataFeed, IBidAskSource, IMarketDataK
         }
     }
 
-    private void OnSessionStatus(object? sender, string message) => Status(message);
+    // Komunikaty wspólnej sesji trafiają do dziennika raz (w IbWebSession) – tu tylko dalej do odbiorców.
+    private void OnSessionStatus(object? sender, string message) => StatusChanged?.Invoke(this, message);
 
-    private void Status(string message) => StatusChanged?.Invoke(this, message);
+    private void Status(string message)
+    {
+        AppLog.Status($"IBWeb {_instrument?.Symbol}".TrimEnd(), message);
+        StatusChanged?.Invoke(this, message);
+    }
 }
